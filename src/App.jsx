@@ -6,16 +6,13 @@ import { useState, useEffect, useCallback } from 'react';
 import FoldersScreen from './components/FoldersScreen';
 import NotesListScreen from './components/NotesListScreen';
 import NoteEditor from './components/NoteEditor';
-import SlideUpPanel from './components/SlideUpPanel';
+import StudyScreen from './components/StudyScreen';
 import { db, ensureSeeded } from './store/db';
-import { updateNote } from './store/db';
 
 export default function App() {
-  const [screen, setScreen] = useState('folders'); // folders | list | editor
+  const [screen, setScreen] = useState('folders'); // folders | list | editor | study
   const [folder, setFolder] = useState(null);
   const [note, setNote] = useState(null);
-  const [panelOpen, setPanelOpen] = useState(false);
-  const [selectedLineId, setSelectedLineId] = useState(null);
 
   // Seed default folders on first load
   useEffect(() => {
@@ -43,30 +40,14 @@ export default function App() {
     setNote(null);
   };
 
-  const handleScanComplete = useCallback(async blocks => {
+  // Refresh note from DB when returning from Study
+  const handleBackFromStudy = async () => {
     if (note) {
-      await updateNote(note.id, { blocks });
-      setNote({ ...note, blocks });
+      const fresh = await db.notes.get(note.id);
+      setNote(fresh);
     }
-    setSelectedLineId(blocks[0]?.id || null);
-    setPanelOpen(true);
-  }, [note]);
-
-  const handleLineSelect = useCallback(id => {
-    setSelectedLineId(id);
-  }, []);
-
-  const handleExplainSimpler = useCallback(async lineId => {
-    const block = note?.blocks?.find(b => b.id === lineId);
-    if (!block) return;
-    alert(`"Explain simpler" for: ${block.text.slice(0, 50)}…`);
-  }, [note?.blocks]);
-
-  const handleGiveExample = useCallback(async lineId => {
-    const block = note?.blocks?.find(b => b.id === lineId);
-    if (!block) return;
-    alert(`"Give example" for: ${block.text.slice(0, 50)}…`);
-  }, [note?.blocks]);
+    setScreen('editor');
+  };
 
   // Render current screen
   return (
@@ -82,19 +63,15 @@ export default function App() {
         />
       )}
       {screen === 'editor' && note && (
-        <NoteEditor note={note} onScanComplete={handleScanComplete} />
+        <NoteEditor
+          key={note.id}
+          note={note}
+          onOpenStudy={() => setScreen('study')}
+        />
       )}
-
-      {/* Slide-up panel (works on the editor screen) */}
-      <SlideUpPanel
-        open={panelOpen}
-        onClose={() => setPanelOpen(false)}
-        blocks={note?.blocks || []}
-        selectedLineId={selectedLineId}
-        onSelectLine={handleLineSelect}
-        onExplainSimpler={handleExplainSimpler}
-        onGiveExample={handleGiveExample}
-      />
+      {screen === 'study' && note && (
+        <StudyScreen note={note} onBack={handleBackFromStudy} />
+      )}
     </div>
   );
 }

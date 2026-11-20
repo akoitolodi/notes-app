@@ -80,6 +80,107 @@ a:active { opacity: 0.7; }
 .safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
 
 /* ============================================================
+   Read mode — rendered note lines with explanation layer
+   ============================================================ */
+.read-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.2;
+  padding: 8px 0 12px;
+}
+.note-line-wrap { margin-bottom: 4px; }
+.note-line {
+  font-size: 17px;
+  line-height: 1.5;
+  color: var(--text);
+  padding: 4px 0;
+  word-break: break-word;
+}
+.note-line.has-mistake {
+  text-decoration: underline;
+  text-decoration-color: var(--mistake);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+/* Margin dot marking a line that has an explanation */
+.line-dot {
+  position: absolute;
+  left: -12px;
+  top: 14px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.note-lines { position: relative; padding-left: 12px; }
+
+/* Inline explanation (collapsed one-liner under the line) */
+.inline-explanation {
+  margin: 2px 0 6px;
+  padding-left: 12px;
+}
+.inline-collapsed {
+  font-size: 13px;
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  border-left: 2px solid var(--accent);
+  cursor: pointer;
+}
+.inline-expanded {
+  margin-top: 8px;
+  background: var(--bg-elevated);
+  border-radius: 10px;
+  padding: 12px;
+}
+.inline-mistake {
+  font-size: 12px;
+  color: var(--mistake);
+  padding: 4px 0 4px 12px;
+}
+.inline-mistake em { opacity: 0.8; }
+
+/* Swipe view — horizontal snap pages */
+.swipe-container {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  flex: 1;
+}
+.swipe-page {
+  min-width: 100%;
+  scroll-snap-align: start;
+  display: flex;
+  flex-direction: column;
+}
+.swipe-page .editor { flex: 1; }
+
+/* View switcher (segmented control) */
+.view-switcher {
+  display: flex;
+  margin: 0 16px 8px;
+  background: var(--bg-elevated);
+  border-radius: 10px;
+  padding: 3px;
+}
+.view-switch-btn {
+  flex: 1;
+  padding: 6px 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.view-switch-btn.active {
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* ============================================================
    Navigation bar (iOS style)
    ============================================================ */
 .navbar {

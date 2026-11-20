@@ -27,6 +27,20 @@ app.post('/api/scan', async (req, res) => {
   }
 });
 
+app.post('/api/scan-line', async (req, res) => {
+  try {
+    const { note, line, request } = req.body || {};
+    if (!line || !line.trim()) {
+      return res.status(400).json({ error: 'Missing "line" string in request body' });
+    }
+    const result = await scanLine({ note: note || '', line, request: request || 'simpler' });
+    return res.json(result);
+  } catch (err) {
+    console.error('[api/scan-line] error:', err);
+    return res.status(500).json({ error: err.message || 'Scan failed' });
+  }
+});
+
 // Serve built frontend
 app.use(express.static(join(__dirname, 'dist')));
 
