@@ -1,8 +1,10 @@
 /**
  * Frontend API client — calls /api/scan-line which proxies to the AI.
  */
+import { API_BASE } from '../config';
+
 export async function scanLine(note, line, request = 'simpler') {
-  const res = await fetch('/api/scan-line', {
+  const res = await fetch(`${API_BASE}/api/scan-line`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ note, line, request }),

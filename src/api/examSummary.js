@@ -1,8 +1,10 @@
 /**
  * Frontend API client — /api/exam-summary.
  */
+import { API_BASE } from '../config';
+
 export async function examSummary(subject, notes) {
-  const res = await fetch('/api/exam-summary', {
+  const res = await fetch(`${API_BASE}/api/exam-summary`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ subject, notes }),
