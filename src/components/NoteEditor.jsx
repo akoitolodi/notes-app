@@ -20,7 +20,12 @@ import SlideUpPanel from './SlideUpPanel';
 const VIEW_KEY = 'ai-class-notes:view';
 
 export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
-  const [mode, setMode] = useState('read'); // read | edit
+  const [mode, setMode] = useState(() => {
+    // New (empty) notes open straight into editing, like iOS Notes.
+    // Existing notes open in read mode.
+    const isNew = !(note?.title || '').trim() && !(note?.body || '').trim();
+    return isNew ? 'edit' : 'read';
+  }); // read | edit
   const [title, setTitle] = useState(note?.title || '');
   const [body, setBody] = useState(note?.body || '');
   const [blocks, setBlocks] = useState(note?.blocks || []);
@@ -93,12 +98,14 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
     setBusyLine(lineId);
     try {
       const { explanation } = await scanLine(body, block.text, request);
+      const field = request === 'simpler' ? 'simpler' : 'example';
       const updated = blocks.map(b =>
         b.id === lineId
-          ? { ...b, [request === 'simpler' ? 'simpler' : 'example']: explanation }
+          ? { ...b, [field]: explanation, show: field }
           : b
       );
       setBlocks(updated);
+      setExpandedInline(prev => ({ ...prev, [lineId]: field }));
       await updateNote(note.id, { blocks: updated });
     } catch (err) {
       setScanError(err.message);
@@ -106,6 +113,14 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
       setBusyLine(null);
     }
   }, [blocks, body, note, busyLine]);
+
+  /** Switch a block back to its original explanation. */
+  const handleShowOriginal = useCallback(async lineId => {
+    const updated = blocks.map(b => (b.id === lineId ? { ...b, show: 'main' } : b));
+    setBlocks(updated);
+    setExpandedInline(prev => ({ ...prev, [lineId]: 'main' }));
+    await updateNote(note.id, { blocks: updated });
+  }, [blocks, note]);
 
   /** Accept a mistake's suggested fix: replaces that line in the body. */
   const applyCorrection = useCallback(async (block, mistake) => {
@@ -179,30 +194,42 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
   const lineMistake = i => blockByLine[i]?.mistake || null;
 
   const activeVariant = block => {
-    // Which explanation text to show for a block right now
-    const ex = expandedInline[block.id];
-    if (ex === 'simpler' && block.simpler) return block.simpler;
-    if (ex === 'example' && block.example) return block.example;
+    // Which explanation text to show for a block right now.
+    // block.show is persisted ('simpler' | 'example' | 'main') so panel and
+    // swipe views display variants without inline-view state.
+    if (block.show === 'simpler' && block.simpler) return block.simpler;
+    if (block.show === 'example' && block.example) return block.example;
     return block.explanation || '';
   };
 
   const VariantButtons = ({ block }) => (
-    <div className="explanation-actions">
-      <button
-        className="btn btn-secondary"
-        disabled={busyLine === block.id}
-        onClick={() => handleLineRequest(block.id, 'simpler')}
-      >
-        {busyLine === block.id && expandedInline[block.id] === 'simpler' ? '…' : 'Explain simpler'}
-      </button>
-      <button
-        className="btn btn-secondary"
-        disabled={busyLine === block.id}
-        onClick={() => handleLineRequest(block.id, 'example')}
-      >
-        {busyLine === block.id && expandedInline[block.id] === 'example' ? '…' : 'Give example'}
-      </button>
-    </div>
+    <>
+      <div className="explanation-actions">
+        <button
+          className="btn btn-secondary"
+          disabled={busyLine === block.id}
+          onClick={() => handleLineRequest(block.id, 'simpler')}
+        >
+          {busyLine === block.id && expandedInline[block.id] === 'simpler' ? '…' : 'Explain simpler'}
+        </button>
+        <button
+          className="btn btn-secondary"
+          disabled={busyLine === block.id}
+          onClick={() => handleLineRequest(block.id, 'example')}
+        >
+          {busyLine === block.id && expandedInline[block.id] === 'example' ? '…' : 'Give example'}
+        </button>
+      </div>
+      {block.show && block.show !== 'main' && (
+        <button
+          className="btn btn-ghost"
+          style={{ width: '100%', padding: '6px 0', fontSize: 13 }}
+          onClick={() => handleShowOriginal(block.id)}
+        >
+          Show original explanation
+        </button>
+      )}
+    </>
   );
 
   /** One rendered note line (used in all three views). */
@@ -237,7 +264,7 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
               className="inline-collapsed"
               onClick={() => setExpandedInline(prev => ({ ...prev, [b.id]: prev[b.id] ? null : 'main' }))}
             >
-              {activeVariant(b).slice(0, 90)}{activeVariant(b).length > 90 ? '…' : ''}
+              {b.show && b.show !== 'main' ? `(${b.show}) ` : ''}{activeVariant(b).slice(0, 90)}{activeVariant(b).length > 90 ? '…' : ''}
             </div>
             {open && (
               <div className="inline-expanded">
@@ -343,6 +370,8 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
         onSelectLine={setSelectedLineId}
         onExplainSimpler={id => handleLineRequest(id, 'simpler')}
         onGiveExample={id => handleLineRequest(id, 'example')}
+        onShowOriginal={handleShowOriginal}
+        busyLineId={busyLine}
       />
     </div>
   );
