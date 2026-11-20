@@ -16,7 +16,7 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = notesStore.subscribe(() => {
       const active = notesStore.getActiveNote();
-      setNote(active);
+      if (active) setNote(active);
     });
     // Initial load
     const active = notesStore.getActiveNote();
@@ -30,11 +30,13 @@ export default function App() {
   }, []);
 
   const handleSave = useCallback(updated => {
+    if (!note) return;
     notesStore.updateNote(note.id, updated);
     setNote({ ...note, ...updated });
   }, [note]);
 
   const handleScanComplete = useCallback(blocks => {
+    if (!note) return;
     // Update local note with blocks
     const updated = { ...note, blocks };
     setNote(updated);
@@ -47,17 +49,17 @@ export default function App() {
   }, []);
 
   const handleExplainSimpler = useCallback(async lineId => {
-    const block = note.blocks.find(b => b.id === lineId);
+    const block = note?.blocks?.find(b => b.id === lineId);
     if (!block) return;
     // For Phase 1, just show a placeholder — Phase 3 adds re-scan per line
     alert(`"Explain simpler" for: ${block.text.slice(0, 50)}…`);
-  }, [note.blocks]);
+  }, [note?.blocks]);
 
   const handleGiveExample = useCallback(async lineId => {
-    const block = note.blocks.find(b => b.id === lineId);
+    const block = note?.blocks?.find(b => b.id === lineId);
     if (!block) return;
     alert(`"Give example" for: ${block.text.slice(0, 50)}…`);
-  }, [note.blocks]);
+  }, [note?.blocks]);
 
   if (!note) return null; // Loading
 
