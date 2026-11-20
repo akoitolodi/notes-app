@@ -249,15 +249,16 @@ a:active { opacity: 0.7; }
 }
 .editor-body::placeholder { color: var(--text-tertiary); }
 
-/* Save button in top-right of editor */
+/* Save button in editor — sits below the navbar */
 .editor-save {
   position: fixed;
-  top: 12px;
+  top: calc(env(safe-area-inset-top, 0px) + 52px);
   right: 12px;
-  z-index: 5;
+  z-index: 6;
   padding: 8px 16px;
   font-size: 15px;
   font-weight: 600;
+  box-shadow: 0 2px 8px var(--shadow);
 }
 
 /* ============================================================
