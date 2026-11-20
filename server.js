@@ -7,6 +7,7 @@ import express from 'express';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { scanNote } from './lib/ai.js';
+import { scanLine } from './lib/scanLine.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
