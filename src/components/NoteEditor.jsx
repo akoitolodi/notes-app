@@ -23,6 +23,9 @@ export default function NoteEditor({ note, onOpenStudy }) {
   const [mode, setMode] = useState('read'); // read | edit
   const [title, setTitle] = useState(note?.title || '');
   const [body, setBody] = useState(note?.body || '');
+  const [blocks, setBlocks] = useState(note?.blocks || []);
+  const [flashcards, setFlashcards] = useState(note?.flashcards || []);
+  const [quiz, setQuiz] = useState(note?.quiz || []);
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState(null);
   const [view, setView] = useState(() => localStorage.getItem(VIEW_KEY) || 'panel');
@@ -38,6 +41,9 @@ export default function NoteEditor({ note, onOpenStudy }) {
   useEffect(() => {
     setTitle(note?.title || '');
     setBody(note?.body || '');
+    setBlocks(note?.blocks || []);
+    setFlashcards(note?.flashcards || []);
+    setQuiz(note?.quiz || []);
     savedRef.current = { title: note?.title || '', body: note?.body || '' };
     setScanError(null);
     setMode('read');
@@ -62,9 +68,12 @@ export default function NoteEditor({ note, onOpenStudy }) {
     try {
       const result = await scanNote(body, note.subject || 'General', changedLines);
       savedRef.current = { title, body };
-      const blocks = result.blocks || [];
+      const newBlocks = result.blocks || [];
+      setBlocks(newBlocks);
+      setFlashcards(result.flashcards || []);
+      setQuiz(result.quiz || []);
       await updateNote(note.id, {
-        blocks,
+        blocks: newBlocks,
         flashcards: result.flashcards || [],
         quiz: result.quiz || [],
       });
@@ -78,24 +87,24 @@ export default function NoteEditor({ note, onOpenStudy }) {
 
   /** Re-scan one line: request = 'simpler' | 'example' */
   const handleLineRequest = useCallback(async (lineId, request) => {
-    const blocks = note?.blocks || [];
     const block = blocks.find(b => b.id === lineId);
     if (!block || busyLine) return;
     setBusyLine(lineId);
     try {
-      const { explanation } = await scanLine(note.body, block.text, request);
+      const { explanation } = await scanLine(body, block.text, request);
       const updated = blocks.map(b =>
         b.id === lineId
           ? { ...b, [request === 'simpler' ? 'simpler' : 'example']: explanation }
           : b
       );
+      setBlocks(updated);
       await updateNote(note.id, { blocks: updated });
     } catch (err) {
       setScanError(err.message);
     } finally {
       setBusyLine(null);
     }
-  }, [note, busyLine]);
+  }, [blocks, body, note, busyLine]);
 
   // ---------- Edit mode ----------
   if (mode === 'edit') {
@@ -136,14 +145,13 @@ export default function NoteEditor({ note, onOpenStudy }) {
   }
 
   // ---------- Read mode ----------
-  const lines = (note?.body || '').split('\n');
-  const blocks = note?.blocks || [];
+  const lines = body.split('\n');
   const blockByLine = {}; // line index (0-based) -> block
   blocks.forEach(b => {
     const m = /^line-(\d+)$/.exec(b.id);
     if (m) blockByLine[parseInt(m[1], 10) - 1] = b;
   });
-  const hasStudy = (note?.flashcards?.length || 0) + (note?.quiz?.length || 0) > 0;
+  const hasStudy = flashcards.length + quiz.length > 0;
 
   const lineHasExpl = i => {
     const b = blockByLine[i];
