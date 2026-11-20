@@ -27,8 +27,11 @@ export default function SlideUpPanel({
   }, [open]);
 
   const handleTouchStart = useCallback(e => {
-    const t = e.touches[0];
-    drag.current = { startY: t.clientY, startSnap: snap, moved: false };
+    // Only start a sheet drag from the handle or header — let content scroll freely
+    const t = e.target.closest?.('.panel-handle, .panel-header');
+    if (!t) return;
+    const touch = e.touches[0];
+    drag.current = { startY: touch.clientY, startSnap: snap, moved: false };
     if (panelRef.current) panelRef.current.style.transition = 'none';
   }, [snap]);
 
@@ -86,7 +89,11 @@ export default function SlideUpPanel({
         aria-modal="true"
         aria-label="Explanations"
       >
-        <div className="panel-handle" aria-hidden="true" />
+        <div
+          className="panel-handle"
+          aria-hidden="true"
+          style={{ touchAction: 'none' }}
+        />
         <div className="panel-header">
           <h2 className="panel-title">Explanations</h2>
           <button className="panel-close" onClick={onClose} aria-label="Close">

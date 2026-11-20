@@ -19,7 +19,7 @@ import SlideUpPanel from './SlideUpPanel';
 
 const VIEW_KEY = 'ai-class-notes:view';
 
-export default function NoteEditor({ note, onOpenStudy }) {
+export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
   const [mode, setMode] = useState('read'); // read | edit
   const [title, setTitle] = useState(note?.title || '');
   const [body, setBody] = useState(note?.body || '');
@@ -130,8 +130,8 @@ export default function NoteEditor({ note, onOpenStudy }) {
     return (
       <div className="screen">
         <header className="navbar safe-top">
-          <button className="navbar-btn" style={{ width: 'auto', paddingLeft: 0 }} onClick={() => setMode('read')}>
-            ‹ Back
+          <button className="navbar-btn" style={{ width: 'auto', paddingLeft: 0 }} onClick={onBackToList} aria-label="Back to notes list">
+            ‹ Notes
           </button>
           <span className="navbar-title" style={{ fontSize: 15 }}>Edit</span>
           <button
@@ -298,13 +298,18 @@ export default function NoteEditor({ note, onOpenStudy }) {
   return (
     <div className="screen">
       <header className="navbar safe-top">
-        <button className="navbar-btn" style={{ width: 'auto', paddingLeft: 0 }} onClick={() => setMode('edit')} aria-label="Edit note">
-          ‹ Edit
+        <button className="navbar-btn" style={{ width: 'auto', paddingLeft: 0 }} onClick={onBackToList} aria-label="Back to notes list">
+          ‹ Notes
         </button>
         <span className="navbar-title" style={{ fontSize: 15 }}>{title || 'New Note'}</span>
-        <div className="flex gap-8">
+        <div className="flex items-center gap-8">
+          <button className="navbar-btn" onClick={() => setMode('edit')} aria-label="Edit note">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+            </svg>
+          </button>
           {hasStudy && (
-            <button className="navbar-btn" style={{ width: 'auto' }} onClick={onOpenStudy} aria-label="Study">
+            <button className="navbar-btn" onClick={onOpenStudy} aria-label="Study">
               📚
             </button>
           )}

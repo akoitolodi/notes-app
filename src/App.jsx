@@ -73,6 +73,7 @@ export default function App() {
           key={note.id}
           note={note}
           onOpenStudy={() => setScreen('study')}
+          onBackToList={handleBackFromEditor}
         />
       )}
       {screen === 'study' && note && (
