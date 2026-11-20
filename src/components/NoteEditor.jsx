@@ -4,8 +4,9 @@
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { scanNote } from '../api/scan';
+import { updateNote, diffLines } from '../store/db';
 
-export default function NoteEditor({ note, onSave, onScanComplete }) {
+export default function NoteEditor({ note, onScanComplete }) {
   const [title, setTitle] = useState(note?.title || '');
   const [body, setBody] = useState(note?.body || '');
   const [isScanning, setIsScanning] = useState(false);
@@ -13,38 +14,40 @@ export default function NoteEditor({ note, onSave, onScanComplete }) {
 
   const textareaRef = useRef(null);
   const savedBodyRef = useRef(note?.body || '');
+  const savedTitleRef = useRef(note?.title || '');
 
-  // Keep savedBodyRef in sync when note prop changes
+  // Re-init when a different note is opened
   useEffect(() => {
+    setTitle(note?.title || '');
+    setBody(note?.body || '');
     savedBodyRef.current = note?.body || '';
-  }, [note?.body]);
+    savedTitleRef.current = note?.title || '';
+    setScanError(null);
+  }, [note?.id]);
 
   const handleSave = useCallback(async () => {
-    const updatedNote = { ...note, title, body };
-    onSave(updatedNote);
+    // Persist to IndexedDB
+    await updateNote(note.id, { title, body });
 
     // Find changed lines (compare to last saved body)
-    const oldLines = savedBodyRef.current.split('\n');
-    const newLines = body.split('\n');
-    const max = Math.max(oldLines.length, newLines.length);
-    const changedLines = [];
-    for (let i = 0; i < max; i++) {
-      if (oldLines[i] !== newLines[i]) changedLines.push(i + 1);
-    }
+    const changedLines = diffLines(savedBodyRef.current, body);
 
     setIsScanning(true);
     setScanError(null);
 
     try {
-      const result = await scanNote(body, note?.subject || 'General', changedLines);
+      const result = await scanNote(body, note.subject || 'General', changedLines);
       savedBodyRef.current = body;
+      savedTitleRef.current = title;
+      // Store blocks with the note
+      await updateNote(note.id, { blocks: result.blocks || [] });
       onScanComplete?.(result.blocks || []);
     } catch (err) {
       setScanError(err.message);
     } finally {
       setIsScanning(false);
     }
-  }, [title, body, note, onSave, onScanComplete]);
+  }, [title, body, note, onScanComplete]);
 
   // Auto-focus body on mount
   useEffect(() => {

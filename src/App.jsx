@@ -1,45 +1,53 @@
 /**
- * Root app component — single-screen editor for Phase 1.
- * Handles: editor, slide-up panel, note persistence.
+ * Root app — navigation: Folders → Notes list → Note editor → (slide-up panel).
+ * Uses Dexie (IndexedDB) for real offline persistence.
  */
 import { useState, useEffect, useCallback } from 'react';
+import FoldersScreen from './components/FoldersScreen';
+import NotesListScreen from './components/NotesListScreen';
 import NoteEditor from './components/NoteEditor';
 import SlideUpPanel from './components/SlideUpPanel';
-import { notesStore } from './store/useNotes';
+import { db, ensureSeeded } from './store/db';
+import { updateNote } from './store/db';
 
 export default function App() {
+  const [screen, setScreen] = useState('folders'); // folders | list | editor
+  const [folder, setFolder] = useState(null);
   const [note, setNote] = useState(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [selectedLineId, setSelectedLineId] = useState(null);
 
-  // Load note on mount
+  // Seed default folders on first load
   useEffect(() => {
-    const unsubscribe = notesStore.subscribe(() => {
-      const active = notesStore.getActiveNote();
-      if (active) setNote(active);
-    });
-    // Initial load
-    const active = notesStore.getActiveNote();
-    if (!active) {
-      const newNote = notesStore.newNote('General');
-      setNote(newNote);
-    } else {
-      setNote(active);
-    }
-    return unsubscribe;
+    ensureSeeded();
   }, []);
 
-  const handleSave = useCallback(updated => {
-    if (!note) return;
-    notesStore.updateNote(note.id, updated);
-    setNote({ ...note, ...updated });
-  }, [note]);
+  const handleOpenFolder = folder => {
+    setFolder(folder);
+    setScreen('list');
+  };
 
-  const handleScanComplete = useCallback(blocks => {
-    if (!note) return;
-    // Update local note with blocks
-    const updated = { ...note, blocks };
-    setNote(updated);
+  const handleOpenNote = note => {
+    setNote(note);
+    setScreen('editor');
+  };
+
+  const handleBack = () => {
+    setScreen('folders');
+    setFolder(null);
+    setNote(null);
+  };
+
+  const handleBackFromEditor = () => {
+    setScreen('list');
+    setNote(null);
+  };
+
+  const handleScanComplete = useCallback(async blocks => {
+    if (note) {
+      await updateNote(note.id, { blocks });
+      setNote({ ...note, blocks });
+    }
     setSelectedLineId(blocks[0]?.id || null);
     setPanelOpen(true);
   }, [note]);
@@ -51,7 +59,6 @@ export default function App() {
   const handleExplainSimpler = useCallback(async lineId => {
     const block = note?.blocks?.find(b => b.id === lineId);
     if (!block) return;
-    // For Phase 1, just show a placeholder — Phase 3 adds re-scan per line
     alert(`"Explain simpler" for: ${block.text.slice(0, 50)}…`);
   }, [note?.blocks]);
 
@@ -61,40 +68,28 @@ export default function App() {
     alert(`"Give example" for: ${block.text.slice(0, 50)}…`);
   }, [note?.blocks]);
 
-  if (!note) return null; // Loading
-
+  // Render current screen
   return (
     <div className="screen">
-      {/* Navbar */}
-      <header className="navbar safe-top">
-        <span className="navbar-title">Notes</span>
-        <button className="navbar-btn" aria-label="New note" onClick={() => {
-          const newNote = notesStore.newNote('General');
-          setNote(newNote);
-        }}>
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M12 5v14M5 12h14"/>
-          </svg>
-        </button>
-      </header>
+      {screen === 'folders' && (
+        <FoldersScreen onOpenFolder={handleOpenFolder} />
+      )}
+      {screen === 'list' && folder && (
+        <NotesListScreen
+          folder={folder}
+          onOpenNote={handleOpenNote}
+          onBack={handleBack}
+        />
+      )}
+      {screen === 'editor' && note && (
+        <NoteEditor note={note} onScanComplete={handleScanComplete} />
+      )}
 
-      {/* Large title area */}
-      <div className="large-title safe-top" style={{ paddingTop: '12px' }}>
-        {note.title || 'New Note'}
-      </div>
-
-      {/* Editor */}
-      <NoteEditor
-        note={note}
-        onSave={handleSave}
-        onScanComplete={handleScanComplete}
-      />
-
-      {/* Slide-up panel */}
+      {/* Slide-up panel (works on the editor screen) */}
       <SlideUpPanel
         open={panelOpen}
         onClose={() => setPanelOpen(false)}
-        blocks={note.blocks || []}
+        blocks={note?.blocks || []}
         selectedLineId={selectedLineId}
         onSelectLine={handleLineSelect}
         onExplainSimpler={handleExplainSimpler}
