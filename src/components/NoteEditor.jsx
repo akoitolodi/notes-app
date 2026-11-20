@@ -20,7 +20,12 @@ import SlideUpPanel from './SlideUpPanel';
 const VIEW_KEY = 'ai-class-notes:view';
 
 export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
-  const [mode, setMode] = useState('read'); // read | edit
+  const [mode, setMode] = useState(() => {
+    // New (empty) notes open straight into editing, like iOS Notes.
+    // Existing notes open in read mode.
+    const isNew = !(note?.title || '').trim() && !(note?.body || '').trim();
+    return isNew ? 'edit' : 'read';
+  }); // read | edit
   const [title, setTitle] = useState(note?.title || '');
   const [body, setBody] = useState(note?.body || '');
   const [blocks, setBlocks] = useState(note?.blocks || []);
