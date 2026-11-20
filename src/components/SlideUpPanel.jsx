@@ -1,8 +1,12 @@
 /**
  * Slide-up panel (iOS bottom sheet) — shows AI explanations for a tapped line.
- * Draggable: collapsed → expanded → full screen. Swipe down to close.
+ * Three snap heights: peek (25%), half (60%), full (95%). Drag up/down between
+ * them; drag down past peek to close.
  */
 import { useState, useRef, useEffect, useCallback } from 'react';
+
+const SNAP_POINTS = [0.25, 0.6, 0.95]; // fractions of viewport height
+const CLOSE_THRESHOLD = 0.15; // fraction of vh dragged down that closes the panel
 
 export default function SlideUpPanel({
   open,
@@ -13,74 +17,68 @@ export default function SlideUpPanel({
   onExplainSimpler,
   onGiveExample,
 }) {
-  // Snap points as fraction of viewport height
-  const SNAP_POINTS = [0.25, 0.6, 0.95]; // collapsed, half, full
-  const [snapIndex, setSnapIndex] = useState(0); // 0 = collapsed
+  const [snap, setSnap] = useState(SNAP_POINTS[0]); // current height fraction
   const panelRef = useRef(null);
-  const startY = useRef(0);
-  const startSnap = useRef(0);
-  const isDragging = useRef(false);
+  const drag = useRef(null); // { startY, startSnap }
 
-  // When open prop changes, reset to collapsed
+  // Reset to peek height whenever the panel opens
   useEffect(() => {
-    if (open) setSnapIndex(0);
+    if (open) setSnap(SNAP_POINTS[0]);
   }, [open]);
 
   const handleTouchStart = useCallback(e => {
-    if (!panelRef.current) return;
-    const touch = e.touches[0];
-    startY.current = touch.clientY;
-    startSnap.current = snapIndex;
-    isDragging.current = true;
-    panelRef.current.style.transition = 'none';
-  }, [snapIndex]);
+    const t = e.touches[0];
+    drag.current = { startY: t.clientY, startSnap: snap, moved: false };
+    if (panelRef.current) panelRef.current.style.transition = 'none';
+  }, [snap]);
 
   const handleTouchMove = useCallback(e => {
-    if (!isDragging.current || !panelRef.current) return;
-    const touch = e.touches[0];
-    const deltaY = startY.current - touch.clientY; // negative = drag up
+    if (!drag.current) return;
+    const t = e.touches[0];
+    const deltaUp = drag.current.startY - t.clientY; // + when dragging up
+    drag.current.moved = true;
     const vh = window.innerHeight;
-    // Each snap point is a fraction of vh
-    const deltaSnaps = deltaY / (vh * 0.35); // roughly 35% per snap
-    const target = Math.max(0, Math.min(2, startSnap.current - deltaSnaps));
-    setSnapIndex(target);
+    const next = Math.max(
+      SNAP_POINTS[0] - 0.1, // allow slight overshoot down (visual rubber band)
+      Math.min(SNAP_POINTS[2], drag.current.startSnap + deltaUp / vh)
+    );
+    setSnap(next);
   }, []);
 
   const handleTouchEnd = useCallback(() => {
-    if (!isDragging.current || !panelRef.current) return;
-    isDragging.current = false;
-    panelRef.current.style.transition = 'transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+    if (!drag.current) return;
+    const { startSnap } = drag.current;
+    drag.current = null;
+    if (panelRef.current) {
+      panelRef.current.style.transition = 'height 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+    }
+    // Dragged down past threshold → close
+    if (snap < startSnap - CLOSE_THRESHOLD && snap <= SNAP_POINTS[0]) {
+      onClose?.();
+      return;
+    }
     // Snap to nearest point
-    const nearest = Math.round(snapIndex);
-    setSnapIndex(Math.max(0, Math.min(2, nearest)));
-    // If dragged down past collapsed, close
-    if (snapIndex < 0.3) onClose?.();
-  }, [snapIndex, onClose]);
+    const nearest = SNAP_POINTS.reduce((best, p) =>
+      Math.abs(p - snap) < Math.abs(best - snap) ? p : best
+    , SNAP_POINTS[0]);
+    setSnap(nearest);
+  }, [snap, onClose]);
 
-  // Compute transform
-  const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
-  const heights = SNAP_POINTS.map(p => p * vh);
-  const currentHeight = heights[Math.round(snapIndex)] || heights[0];
-  const translateY = vh - currentHeight;
-
-  // Find block for selected line
+  // Find block for selected line (or first with content)
   const selectedBlock = blocks.find(b => b.id === selectedLineId);
-  // If no specific line selected, show first block with content
   const displayBlock = selectedBlock || blocks.find(b => b.explanation) || blocks[0];
 
   if (!open) return null;
 
+  const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
+
   return (
     <>
-      <div
-        className="panel-overlay"
-        onClick={onClose}
-        aria-hidden="true"
-      />
+      <div className="panel-overlay visible" onClick={onClose} aria-hidden="true" />
       <div
         ref={panelRef}
-        className={`panel ${snapIndex >= 2 ? 'full' : ''} ${snapIndex > 0 ? 'open' : ''}`}
-        style={{ transform: `translateY(${translateY}px)`, height: `${currentHeight}px` }}
+        className="panel open"
+        style={{ height: `${Math.max(snap, 0.05) * vh}px` }}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
@@ -147,31 +145,34 @@ export default function SlideUpPanel({
             <div className="empty-state">
               <div className="empty-icon">📝</div>
               <div className="empty-title">No explanation yet</div>
-              <div className="empty-text">Tap a line in your note, then tap Save to get an explanation.</div>
+              <div className="empty-text">Type your note, then tap Save to get explanations.</div>
             </div>
           )}
 
-          {/* List all blocks for this note */}
+          {/* All blocks in this note */}
           {blocks.length > 1 && (
             <div className="mt-16">
               <h3 style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
                 All lines in this note
               </h3>
-              {blocks.map((block, i) => (
+              {blocks.map(block => (
                 <button
                   key={block.id}
-                  className={`list-item ${block.id === selectedLineId ? 'bg-elevated' : ''}`}
                   onClick={() => onSelectLine?.(block.id)}
                   style={{
+                    display: 'block',
+                    width: '100%',
                     padding: 12,
                     borderRadius: 10,
                     marginBottom: 8,
-                    border: '1px solid var(--divider)',
+                    border: '1px solid ' + (block.id === selectedLineId ? 'var(--accent)' : 'var(--divider)'),
                     background: block.id === selectedLineId ? 'var(--bg-elevated)' : 'var(--bg)',
+                    color: 'var(--text)',
                     textAlign: 'left',
+                    fontFamily: 'inherit',
                   }}
                 >
-                  <div style={{ fontSize: 14, color: 'var(--text)', marginBottom: 4 }}>
+                  <div style={{ fontSize: 14, marginBottom: 4 }}>
                     {block.text.slice(0, 80)}{block.text.length > 80 ? '…' : ''}
                   </div>
                   {block.explanation && (
