@@ -36,7 +36,11 @@ export default function App() {
     setNote(null);
   };
 
-  const handleBackFromEditor = () => {
+  const handleBackFromEditor = async () => {
+    // Clean up abandoned empty notes (created via pencil, never typed in)
+    if (note && !(note.title || '').trim() && !(note.body || '').trim()) {
+      await db.notes.delete(note.id);
+    }
     setScreen('list');
     setNote(null);
   };
@@ -45,9 +49,15 @@ export default function App() {
   const handleBackFromStudy = async () => {
     if (note) {
       const fresh = await db.notes.get(note.id);
-      setNote(fresh);
+      if (fresh) {
+        setNote(fresh);
+        setScreen('editor');
+        return;
+      }
+      // Note was deleted while studying — fall back to the list
     }
-    setScreen('editor');
+    setScreen('list');
+    setNote(null);
   };
 
   const handleOpenExam = folder => {
@@ -72,7 +82,14 @@ export default function App() {
         <NoteEditor
           key={note.id}
           note={note}
-          onOpenStudy={() => setScreen('study')}
+          onOpenStudy={async () => {
+            // Re-fetch from DB so the Study screen sees the latest scan results
+            const fresh = await db.notes.get(note.id);
+            if (fresh) {
+              setNote(fresh);
+              setScreen('study');
+            }
+          }}
           onBackToList={handleBackFromEditor}
         />
       )}

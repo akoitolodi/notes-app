@@ -16,6 +16,8 @@ export default function SlideUpPanel({
   onSelectLine,
   onExplainSimpler,
   onGiveExample,
+  onShowOriginal,
+  busyLineId,
 }) {
   const [snap, setSnap] = useState(SNAP_POINTS[0]); // current height fraction
   const panelRef = useRef(null);
@@ -69,7 +71,14 @@ export default function SlideUpPanel({
 
   // Find block for selected line (or first with content)
   const selectedBlock = blocks.find(b => b.id === selectedLineId);
-  const displayBlock = selectedBlock || blocks.find(b => b.explanation) || blocks[0];
+  const displayBlock = selectedBlock || blocks.find(b => b.explanation || b.simpler || b.example) || blocks[0];
+
+  // Which explanation text to display for a block (persisted `show` field)
+  const activeVariant = block => {
+    if (block.show === 'simpler' && block.simpler) return block.simpler;
+    if (block.show === 'example' && block.example) return block.example;
+    return block.explanation || '';
+  };
 
   if (!open) return null;
 
@@ -105,7 +114,9 @@ export default function SlideUpPanel({
           {displayBlock ? (
             <div className="explanation-card">
               <div className="explanation-line">{displayBlock.text}</div>
-              <div className="explanation-text">{displayBlock.explanation || 'No explanation yet.'}</div>
+              <div className="explanation-text">
+                {busyLineId === displayBlock.id ? 'Thinking…' : activeVariant(displayBlock) || 'No explanation yet.'}
+              </div>
 
               {displayBlock.terms && displayBlock.terms.length > 0 && (
                 <div className="explanation-terms">
@@ -135,18 +146,27 @@ export default function SlideUpPanel({
                 <button
                   className="btn btn-secondary"
                   onClick={() => onExplainSimpler?.(displayBlock.id)}
-                  disabled={!displayBlock.id}
+                  disabled={busyLineId === displayBlock.id}
                 >
                   Explain simpler
                 </button>
                 <button
                   className="btn btn-secondary"
                   onClick={() => onGiveExample?.(displayBlock.id)}
-                  disabled={!displayBlock.id}
+                  disabled={busyLineId === displayBlock.id}
                 >
                   Give example
                 </button>
               </div>
+              {displayBlock.show && displayBlock.show !== 'main' && (
+                <button
+                  className="btn btn-ghost"
+                  style={{ width: '100%', padding: '6px 0', fontSize: 13 }}
+                  onClick={() => onShowOriginal?.(displayBlock.id)}
+                >
+                  Show original explanation
+                </button>
+              )}
             </div>
           ) : (
             <div className="empty-state">
