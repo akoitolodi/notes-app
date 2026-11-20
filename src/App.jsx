@@ -7,10 +7,11 @@ import FoldersScreen from './components/FoldersScreen';
 import NotesListScreen from './components/NotesListScreen';
 import NoteEditor from './components/NoteEditor';
 import StudyScreen from './components/StudyScreen';
+import ExamSummaryScreen from './components/ExamSummaryScreen';
 import { db, ensureSeeded } from './store/db';
 
 export default function App() {
-  const [screen, setScreen] = useState('folders'); // folders | list | editor | study
+  const [screen, setScreen] = useState('folders'); // folders | list | editor | study | exam
   const [folder, setFolder] = useState(null);
   const [note, setNote] = useState(null);
 
@@ -49,11 +50,16 @@ export default function App() {
     setScreen('editor');
   };
 
+  const handleOpenExam = folder => {
+    setFolder(folder);
+    setScreen('exam');
+  };
+
   // Render current screen
   return (
     <div className="screen">
       {screen === 'folders' && (
-        <FoldersScreen onOpenFolder={handleOpenFolder} />
+        <FoldersScreen onOpenFolder={handleOpenFolder} onOpenExam={handleOpenExam} />
       )}
       {screen === 'list' && folder && (
         <NotesListScreen
@@ -71,6 +77,9 @@ export default function App() {
       )}
       {screen === 'study' && note && (
         <StudyScreen note={note} onBack={handleBackFromStudy} />
+      )}
+      {screen === 'exam' && folder && (
+        <ExamSummaryScreen folder={folder} onBack={handleBack} />
       )}
     </div>
   );

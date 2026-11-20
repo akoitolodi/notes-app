@@ -5,7 +5,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getFoldersWithCounts, createFolder, deleteFolder, renameFolder } from '../store/db';
 
-export default function FoldersScreen({ onOpenFolder }) {
+export default function FoldersScreen({ onOpenFolder, onOpenExam }) {
   const [folders, setFolders] = useState([]);
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newName, setNewName] = useState('');
@@ -94,7 +94,17 @@ export default function FoldersScreen({ onOpenFolder }) {
                 <button className="btn btn-ghost" style={{ padding: '6px 10px', fontSize: 14, color: '#ff453a' }} onClick={e => handleDelete(e, folder.id)}>Delete</button>
               </>
             ) : (
-              <span className="list-item-chevron">›</span>
+              <div className="flex items-center gap-8">
+                <button
+                  className="btn btn-ghost"
+                  style={{ padding: '6px 10px', fontSize: 13 }}
+                  onClick={e => { e.stopPropagation(); onOpenExam?.(folder); }}
+                  title="Exam summary"
+                >
+                  📝 Exam
+                </button>
+                <span className="list-item-chevron">›</span>
+              </div>
             )}
           </div>
         ))}

@@ -33,6 +33,7 @@ export default function NoteEditor({ note, onOpenStudy }) {
   const [selectedLineId, setSelectedLineId] = useState(null);
   const [expandedInline, setExpandedInline] = useState({}); // lineId -> variant shown
   const [busyLine, setBusyLine] = useState(null); // lineId while re-scanning
+  const [dismissed, setDismissed] = useState({}); // lineId -> mistake dismissed
 
   const textareaRef = useRef(null);
   const savedRef = useRef({ title: note?.title || '', body: note?.body || '' });
@@ -105,6 +106,24 @@ export default function NoteEditor({ note, onOpenStudy }) {
       setBusyLine(null);
     }
   }, [blocks, body, note, busyLine]);
+
+  /** Accept a mistake's suggested fix: replaces that line in the body. */
+  const applyCorrection = useCallback(async (block, mistake) => {
+    if (!mistake?.correction) return;
+    const lineMatch = /^line-(\d+)$/.exec(block.id);
+    if (!lineMatch) return;
+    const lineIndex = parseInt(lineMatch[1], 10) - 1;
+    const newLines = body.split('\n');
+    if (lineIndex < 0 || lineIndex >= newLines.length) return;
+    newLines[lineIndex] = mistake.correction;
+    const newBody = newLines.join('\n');
+    setBody(newBody);
+    // Clear the mistake flag and persist
+    const updated = blocks.map(b => (b.id === block.id ? { ...b, mistake: null } : b));
+    setBlocks(updated);
+    await updateNote(note.id, { body: newBody, blocks: updated });
+    setDismissed(prev => ({ ...prev, [block.id]: true }));
+  }, [body, blocks, note]);
 
   // ---------- Edit mode ----------
   if (mode === 'edit') {
@@ -230,8 +249,14 @@ export default function NoteEditor({ note, onOpenStudy }) {
           </div>
         )}
 
-        {mistake && view !== 'inline' && (
-          <div className="inline-mistake">⚠ {mistake.reason} <em>Suggestion: {mistake.correction}</em></div>
+        {mistake && !dismissed[b.id] && view !== 'inline' && (
+          <div className="inline-mistake">
+            ⚠ {mistake.reason} <em>Suggestion: {mistake.correction}</em>
+            <div className="mistake-actions">
+              <button onClick={() => applyCorrection(b, mistake)}>Accept fix</button>
+              <button onClick={() => setDismissed(prev => ({ ...prev, [b.id]: true }))}>Ignore</button>
+            </div>
+          </div>
         )}
       </div>
     );

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { scanNote } from './lib/ai.js';
 import { scanLine } from './lib/scanLine.js';
+import { examSummary } from './lib/examSummary.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -39,6 +40,20 @@ app.post('/api/scan-line', async (req, res) => {
   } catch (err) {
     console.error('[api/scan-line] error:', err);
     return res.status(500).json({ error: err.message || 'Scan failed' });
+  }
+});
+
+app.post('/api/exam-summary', async (req, res) => {
+  try {
+    const { subject, notes } = req.body || {};
+    if (!Array.isArray(notes) || notes.length === 0) {
+      return res.status(400).json({ error: 'Missing "notes" array in request body' });
+    }
+    const result = await examSummary({ subject: subject || 'General', notes });
+    return res.json(result);
+  } catch (err) {
+    console.error('[api/exam-summary] error:', err);
+    return res.status(500).json({ error: err.message || 'Exam summary failed' });
   }
 });
 

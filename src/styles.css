@@ -136,9 +136,29 @@ a:active { opacity: 0.7; }
 .inline-mistake {
   font-size: 12px;
   color: var(--mistake);
-  padding: 4px 0 4px 12px;
+  padding: 6px 0 6px 12px;
 }
 .inline-mistake em { opacity: 0.8; }
+.mistake-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.mistake-actions button {
+  border: none;
+  border-radius: 8px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  background: var(--mistake);
+  color: #fff;
+}
+.mistake-actions button + button {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
 
 /* Swipe view — horizontal snap pages */
 .swipe-container {

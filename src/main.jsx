@@ -25,8 +25,16 @@ window.addEventListener('unhandledrejection', e => {
   showFatalError(`Unhandled promise rejection: ${e.reason?.stack || e.reason}`);
 });
 
-const root = createRoot(document.getElementById('root'));
+// Register the service worker for offline support + installability
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(err => {
+      console.warn('Service worker registration failed:', err);
+    });
+  });
+}
 
+const root = createRoot(document.getElementById('root'));
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
