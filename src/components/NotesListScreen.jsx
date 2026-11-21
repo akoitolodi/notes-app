@@ -96,8 +96,11 @@ function NoteRow({ note, onOpen, onPin, onDelete, onLongPress, onTagTap }) {
         onDoubleClick={() => onLongPress(note)}
       >
         <div className="flex-1" style={{ minWidth: 0 }}>
-          <div className="list-item-title" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          <div className="list-item-title" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 6 }}>
             {note.pinned ? '📌 ' : ''}{note.title || 'New Note'}
+            {(note.images?.length || note.drawings?.strokes?.length) && (
+              <span style={{ fontSize: 13, color: 'var(--accent)' }}>📎</span>
+            )}
           </div>
           <div className="list-item-subtitle" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             {(note.body || 'No additional text').replace(/\n/g, ' ').slice(0, 60)}

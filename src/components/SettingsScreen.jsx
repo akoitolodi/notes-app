@@ -2,19 +2,27 @@
  * Appearance settings — theme (auto/light/dark), accent color, note font size.
  * Changes apply instantly via theme.js and persist in localStorage.
  */
-import { useState } from 'react';
-import { THEME_KEY, ACCENT_KEY, SIZE_KEY, ACCENTS, getSettings, applySettings } from '../theme';
+import { useState, useEffect } from 'react';
+import { THEME_KEY, ACCENT_KEY, SIZE_KEY, HINT_KEY, ACCENTS, getSettings, applySettings } from '../theme';
 
 export default function SettingsScreen({ onBack }) {
   const initial = getSettings();
   const [theme, setTheme] = useState(initial.theme);
   const [accent, setAccent] = useState(initial.accent);
   const [size, setSize] = useState(initial.size);
+  const [showHint, setShowHint] = useState(() => {
+    try { return localStorage.getItem(HINT_KEY) === 'true'; } catch { return false; }
+  });
 
   const set = (key, value, setter) => {
     setter(value);
     localStorage.setItem(key, value);
     applySettings();
+  };
+
+  const handleHintChange = v => {
+    setShowHint(v);
+    localStorage.setItem(HINT_KEY, v.toString());
   };
 
   const Segmented = ({ options, value, onChange }) => (
@@ -70,6 +78,16 @@ export default function SettingsScreen({ onBack }) {
           value={size}
           onChange={v => set(SIZE_KEY, v, setSize)}
         />
+
+        <div className="settings-label" style={{ marginTop: 18 }}>Reading</div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 12, paddingTop: 12, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={showHint}
+            onChange={e => handleHintChange(e.target.checked)}
+          />
+          <span style={{ fontSize: 15, color: 'var(--text)' }}>Show AI hint under lines</span>
+        </label>
       </div>
 
       <div className="list-group" style={{ padding: '14px 16px' }}>

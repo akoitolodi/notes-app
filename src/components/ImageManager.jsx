@@ -69,8 +69,9 @@ export async function compressImage(dataUrl, maxDim = 1280, quality = 0.7) {
 /**
  * Inline images strip shown in the editor.
  * images: [{id, dataUrl}] — tap the ✕ to remove, tap the image to view full size.
+ * showAdd=false hides the built-in add buttons (the parent renders its own).
  */
-export default function ImageStrip({ images = [], onAdd, onRemove, readOnly = false }) {
+export default function ImageStrip({ images = [], onAdd, onRemove, readOnly = false, showAdd = true }) {
   const [viewing, setViewing] = useState(null); // dataUrl being viewed full-screen
 
   const openPicker = async source => {
@@ -102,7 +103,7 @@ export default function ImageStrip({ images = [], onAdd, onRemove, readOnly = fa
             )}
           </div>
         ))}
-        {!readOnly && (
+        {showAdd && !readOnly && (
           <div className="image-add">
             <button className="image-add-btn" aria-label="Take photo" onClick={() => openPicker('camera')}>
               📷

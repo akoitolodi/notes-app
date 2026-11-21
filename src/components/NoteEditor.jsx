@@ -3,13 +3,12 @@
  *
  * Modes:
  *   edit — title + textarea + Save (the core loop)
- *   read — rendered lines with explanations, in one of three views:
- *     panel  — tap a line → slide-up panel (default)
- *     inline — collapsed explanation under each line, tap to expand
- *     swipe  — swipe left to a second page listing every explanation
+ *   read — rendered lines with explanations, panel view (tap line → slide-up panel)
  *
  * "Explain simpler" / "Give example" re-scan a single line via /api/scan-line.
- * The chosen view is remembered (localStorage).
+ * Panel view is the only view mode (inline/swipe removed in v1.2.0).
+ * Full-note annotation overlay: pen, highlighter, eraser, arrow, line, text.
+ * 12-color palette + custom color picker, 3 stroke sizes per tool.
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
@@ -18,24 +17,21 @@ import { scanLine } from '../api/scanLine';
 import { updateNote, moveNote } from '../store/db';
 import SlideUpPanel from './SlideUpPanel';
 import FolderPickerSheet from './FolderPickerSheet';
-import DrawingCanvas from './DrawingCanvas';
+import StrokeLayer, { PALETTE, TOOLS, SIZES, SIZE_LABEL, toolWidth } from './StrokeLayer';
 import ImageStrip from './ImageManager';
 import {
   renderLineText,
-  VariantButtons,
   MistakeBox,
   NoteLine as NoteLineComponent,
 } from './InlineComponents';
 
-const VIEW_KEY = 'ai-class-notes:view';
+const HINT_KEY = 'aicn:showHint';
 
 export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList }) {
   const [mode, setMode] = useState(() => {
-    // New (empty) notes open straight into editing, like iOS Notes.
-    // Existing notes open in read mode.
     const isNew = !(note?.title || '').trim() && !(note?.body || '').trim();
     return isNew ? 'edit' : 'read';
-  }); // read | edit
+  });
   const [title, setTitle] = useState(note?.title || '');
   const [body, setBody] = useState(note?.body || '');
   const [subject, setSubject] = useState(note?.subject || 'General');
@@ -44,30 +40,27 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
   const [quiz, setQuiz] = useState(note?.quiz || []);
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState(null);
-  const [view, setView] = useState(() => {
-    try { return localStorage.getItem(VIEW_KEY) || 'panel'; }
-    catch { return 'panel'; }
-  });
   const [panelOpen, setPanelOpen] = useState(false);
   const [selectedLineId, setSelectedLineId] = useState(null);
-  const [expandedInline, setExpandedInline] = useState({}); // lineId -> variant shown
-  const [busyLine, setBusyLine] = useState(null); // lineId while re-scanning
+  const [expandedInline, setExpandedInline] = useState({});
+  const [busyLine, setBusyLine] = useState(null);
   const [dismissed, setDismissed] = useState(() => {
-    // Restore persisted 'Ignore' choices
     const map = {};
     (note?.blocks || []).forEach(b => { if (b.mistakeIgnored) map[b.id] = true; });
     return map;
   });
   const [exportOpen, setExportOpen] = useState(false);
-  const [printPayload, setPrintPayload] = useState(null); // {title, body, withExpl}
+  const [printPayload, setPrintPayload] = useState(null);
   const [toast, setToast] = useState(null);
   const [moveOpen, setMoveOpen] = useState(false);
   const [folderLabel, setFolderLabel] = useState(folderName || '');
-  const [images, setImages] = useState(note?.images || []); // v1.2.0
-  const [drawings, setDrawings] = useState(note?.drawings || []); // v1.2.0
-  const [showDrawing, setShowDrawing] = useState(false);
+  const [images, setImages] = useState(note?.images || []);
+  const [drawings, setDrawings] = useState(note?.drawings || []);
+  const [showHint, setShowHint] = useState(() => {
+    try { return localStorage.getItem(HINT_KEY) === 'true'; } catch { return false; }
+  });
 
-  // Undo/redo history for the note body (typed edits are debounced in)
+  // Undo/redo history for the note body
   const undoRef = useRef({ stack: [note?.body || ''], index: 0, timer: null });
   const restoringRef = useRef(false);
 
@@ -75,8 +68,16 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
   const savedRef = useRef({ title: note?.title || '', body: note?.body || '' });
   const initialNoteId = useRef(note?.id);
 
-  // Re-init when a *different* note is opened. Skip the very first run:
-  // it would override the initial 'edit' mode chosen for new (empty) notes.
+  // Annotation overlay state (full-note overlay)
+  const [drawMode, setDrawMode] = useState(false);
+  const [tool, setTool] = useState('pen');
+  const [color, setColor] = useState('#000000');
+  const [size, setSize] = useState('medium');
+  const [customColor, setCustomColor] = useState('#000000');
+
+  const annotationWrapRef = useRef(null);
+
+  // Re-init when a *different* note is opened
   useEffect(() => {
     if (note?.id === initialNoteId.current) return;
     setTitle(note?.title || '');
@@ -85,7 +86,7 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
     setBlocks(note?.blocks || []);
     setImages(note?.images || []);
     setDrawings(note?.drawings || []);
-    setShowDrawing(false);
+    setDrawMode(false);
     setFlashcards(note?.flashcards || []);
     setQuiz(note?.quiz || []);
     savedRef.current = { title: note?.title || '', body: note?.body || '' };
@@ -93,7 +94,7 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
     setMode('read');
   }, [note?.id]);
 
-  // Auto-grow the textarea like iOS Notes (min 300px, grows with content)
+  // Auto-grow textarea
   useEffect(() => {
     const el = textareaRef.current;
     if (el && mode === 'edit') {
@@ -102,13 +103,12 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
     }
   }, [body, mode]);
 
-  const persistView = v => {
-    setView(v);
-    localStorage.setItem(VIEW_KEY, v);
-  };
+  // Persist hint preference
+  useEffect(() => {
+    localStorage.setItem(HINT_KEY, showHint.toString());
+  }, [showHint]);
 
   const handleSave = useCallback(async ({ rescan = true } = {}) => {
-    // Never scan an empty note
     const noteIsEmpty = !body.trim() && !title.trim();
     if (noteIsEmpty) {
       await updateNote(note.id, { title, body, subject });
@@ -117,7 +117,6 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
       return;
     }
 
-    // Which lines changed since the last saved copy?
     const oldLines = savedRef.current.body.split('\n');
     const newLines = body.split('\n');
     const changedLines = [];
@@ -125,7 +124,6 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
       if (oldLines[i] !== newLines[i]) changedLines.push(i + 1);
     }
 
-    // Cost control: nothing changed and we already have explanations → skip AI
     if (rescan === false || (changedLines.length === 0 && blocks.length > 0)) {
       await updateNote(note.id, { title, body, subject });
       savedRef.current = { title, body };
@@ -133,15 +131,13 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
       return;
     }
 
-    // Also (re)scan lines that have no saved explanation yet
     const covered = new Set();
     blocks.forEach(b => {
       const m = /^line-(\d+)$/.exec(b.id);
       const n = m ? parseInt(m[1], 10) : -1;
       if (n > 0 && n <= newLines.length && b.text === newLines[n - 1]) covered.add(n);
     });
-    const linesToScan = [...new Set([...changedLines])]
-      .filter(n => !covered.has(n));
+    const linesToScan = [...new Set([...changedLines])].filter(n => !covered.has(n));
 
     setIsScanning(true);
     setScanError(null);
@@ -150,8 +146,6 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
       savedRef.current = { title, body };
       const fresh = result.blocks || [];
 
-      // Merge: keep saved blocks for untouched lines (incl. simpler/example/show),
-      // take fresh blocks for scanned lines. Match by line id AND text.
       const merged = blocks
         .filter(b => {
           const m = /^line-(\d+)$/.exec(b.id);
@@ -169,30 +163,22 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
       setFlashcards(result.flashcards?.length ? result.flashcards : flashcards);
       setQuiz(result.quiz?.length ? result.quiz : quiz);
       await updateNote(note.id, {
-        title,
-        body,
-        subject,
-        blocks: merged,
-        images,
-        drawings,
+        title, body, subject,
+        blocks: merged, images, drawings,
         flashcards: result.flashcards?.length ? result.flashcards : flashcards,
         quiz: result.quiz?.length ? result.quiz : quiz,
       });
       setMode('read');
     } catch (err) {
-      // Scan failed: show the error, but STILL persist the typed text so the
-      // note is never lost (savedRef stays stale on purpose so the next
-      // successful Save re-scans the changed lines).
       setScanError(err.message);
       try {
         await updateNote(note.id, { title, body, subject, images, drawings });
-      } catch {/* keep the error visible; text remains in the editor */}
+      } catch {/* keep error visible */}
     } finally {
       setIsScanning(false);
     }
   }, [title, body, subject, note, blocks, flashcards, quiz, images, drawings]);
 
-  /** Re-scan one line: request = 'simpler' | 'example' */
   const handleLineRequest = useCallback(async (lineId, request) => {
     const block = blocks.find(b => b.id === lineId);
     if (!block || busyLine) return;
@@ -201,9 +187,7 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
       const { explanation } = await scanLine(body, block.text, request);
       const field = request === 'simpler' ? 'simpler' : 'example';
       const updated = blocks.map(b =>
-        b.id === lineId
-          ? { ...b, [field]: explanation, show: field }
-          : b
+        b.id === lineId ? { ...b, [field]: explanation, show: field } : b
       );
       setBlocks(updated);
       setExpandedInline(prev => ({ ...prev, [lineId]: field }));
@@ -215,7 +199,6 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
     }
   }, [blocks, body, note, busyLine]);
 
-  /** Switch a block back to its original explanation. */
   const handleShowOriginal = useCallback(async lineId => {
     const updated = blocks.map(b => (b.id === lineId ? { ...b, show: 'main' } : b));
     setBlocks(updated);
@@ -223,17 +206,13 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
     await updateNote(note.id, { blocks: updated });
   }, [blocks, note]);
 
-  /** Persist a dismissed mistake so it stays hidden after reload. */
   const dismissMistake = useCallback(async lineId => {
     setDismissed(prev => ({ ...prev, [lineId]: true }));
-    const updated = blocks.map(b =>
-      b.id === lineId ? { ...b, mistakeIgnored: true } : b
-    );
+    const updated = blocks.map(b => b.id === lineId ? { ...b, mistakeIgnored: true } : b);
     setBlocks(updated);
     await updateNote(note.id, { blocks: updated });
   }, [blocks, note]);
 
-  /** Accept a mistake's suggested fix: replaces that line in the body. */
   const applyCorrection = useCallback(async (block, mistake) => {
     if (!mistake?.correction) return;
     const lineMatch = /^line-(\d+)$/.exec(block.id);
@@ -244,52 +223,34 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
     newLines[lineIndex] = mistake.correction;
     const newBody = newLines.join('\n');
     setBody(newBody);
-    // Clear the mistake flag and persist
-    const updated = blocks.map(b => (b.id === block.id ? { ...b, mistake: null } : b));
+    const updated = blocks.map(b => b.id === block.id ? { ...b, mistake: null } : b);
     setBlocks(updated);
     await updateNote(note.id, { body: newBody, blocks: updated });
     setDismissed(prev => ({ ...prev, [block.id]: true }));
   }, [body, blocks, note]);
 
-  // ---------- Share / Export ----------
   const noteText = `${title || 'New Note'}\n\n${body}`;
 
   const copyToClipboard = async text => {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch {
+    try { await navigator.clipboard.writeText(text); return true; }
+    catch {
       try {
         const ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.position = 'fixed';
-        ta.style.opacity = '0';
-        document.body.appendChild(ta);
-        ta.select();
+        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
         const ok = document.execCommand('copy');
-        document.body.removeChild(ta);
-        return ok;
-      } catch {
-        return false;
-      }
+        document.body.removeChild(ta); return ok;
+      } catch { return false; }
     }
   };
 
-  const showToast = useCallback(msg => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 2200);
-  }, []);
+  const showToast = useCallback(msg => { setToast(msg); setTimeout(() => setToast(null), 2200); }, []);
 
   const handleShareText = async () => {
     setExportOpen(false);
     if (navigator.share) {
-      try {
-        await navigator.share({ title: title || 'New Note', text: noteText });
-        return;
-      } catch (e) {
-        if (e?.name === 'AbortError') return; // user closed the share sheet
-        // fall through to clipboard
-      }
+      try { await navigator.share({ title: title || 'New Note', text: noteText }); return; }
+      catch (e) { if (e?.name === 'AbortError') return; }
     }
     const ok = await copyToClipboard(noteText);
     showToast(ok ? 'Copied to clipboard' : 'Sharing not available here');
@@ -306,7 +267,6 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
     setPrintPayload({ title: title || 'New Note', body, withExpl });
   };
 
-  // ---------- Move to folder ----------
   const handleMove = async f => {
     setMoveOpen(false);
     await moveNote(note.id, f.id);
@@ -314,7 +274,6 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
     showToast(`Moved to ${f.name}`);
   };
 
-  // ---------- Undo / redo (edit mode) ----------
   const pushHistory = value => {
     const h = undoRef.current;
     if (h.timer) clearTimeout(h.timer);
@@ -328,20 +287,12 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
 
   const undo = () => {
     const h = undoRef.current;
-    if (h.index > 0) {
-      h.index -= 1;
-      restoringRef.current = true;
-      setBody(h.stack[h.index]);
-    }
+    if (h.index > 0) { h.index -= 1; restoringRef.current = true; setBody(h.stack[h.index]); }
   };
 
   const redo = () => {
     const h = undoRef.current;
-    if (h.index < h.stack.length - 1) {
-      h.index += 1;
-      restoringRef.current = true;
-      setBody(h.stack[h.index]);
-    }
+    if (h.index < h.stack.length - 1) { h.index += 1; restoringRef.current = true; setBody(h.stack[h.index]); }
   };
 
   const handleBodyChange = e => {
@@ -351,7 +302,6 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
     else pushHistory(v);
   };
 
-  // ---------- Checklists & hashtags (read mode) ----------
   const CHECK_RE = /^(\s*-\s\[)( |x|X)(\]\s*)(.*)$/;
 
   const toggleChecklist = useCallback(async lineIdx => {
@@ -361,12 +311,10 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
     ls[lineIdx] = `${m[1]}${m[2] === ' ' ? 'x' : ' '}${m[3]}${m[4]}`;
     const newBody = ls.join('\n');
     setBody(newBody);
-    // Checklist ticks shouldn't trigger an AI re-scan on next Save
     savedRef.current = { ...savedRef.current, body: newBody };
     await updateNote(note.id, { body: newBody });
   }, [body, note]);
 
-  // ---------- Images (v1.2.0) ----------
   const addImage = useCallback(async dataUrl => {
     const img = { id: `img-${Date.now()}`, dataUrl };
     const next = [...images, img];
@@ -380,28 +328,23 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
     await updateNote(note.id, { images: next });
   }, [images, note]);
 
-  // ---------- Drawings (v1.2.0) ----------
   const updateDrawings = useCallback(async nextStrokes => {
     setDrawings(nextStrokes);
     await updateNote(note.id, { drawings: nextStrokes });
   }, [note]);
 
-  // Fire the print dialog (system dialog → "Save as PDF") once the print
-  // view is mounted, then clean it up.
+  // Print dialog
   useEffect(() => {
     if (!printPayload) return;
     const t = setTimeout(() => {
-      try {
-        window.print();
-      } catch {
-        showToast('Printing not supported here');
-      }
+      try { window.print(); } catch { showToast('Printing not supported here'); }
       setPrintPayload(null);
     }, 150);
     return () => clearTimeout(t);
   }, [printPayload, showToast]);
 
   const explBlocks = blocks.filter(b => b.explanation || b.simpler || b.example);
+
   const printPortal = (printPayload && typeof document !== 'undefined' && document.body)
     ? createPortal(
         <div className="print-root">
@@ -410,7 +353,7 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
             {new Date().toLocaleDateString([], { year: 'numeric', month: 'long', day: 'numeric' })}
           </div>
 
-          {/* Images in PDF (v1.2.0) */}
+          {/* Images in PDF */}
           {images.length > 0 && (
             <div className="print-images">
               {images.map(img => (
@@ -419,10 +362,13 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
             </div>
           )}
 
-          {/* Drawing in PDF (v1.2.0) */}
+          {/* Drawings in PDF (StrokeLayer read-only) */}
           {drawings.length > 0 && (
             <div className="print-drawing" style={{ marginBottom: 16 }}>
-              <DrawingCanvas strokes={drawings} readOnly height={250} bgColor="#ffffff" />
+              <StrokeLayer
+                drawing={{ refWidth: drawings.refWidth || 0, strokes: drawings.strokes || [] }}
+                editable={false}
+              />
             </div>
           )}
 
@@ -438,11 +384,9 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
                 <div key={b.id} className="print-block">
                   <p className="print-line-text">{b.text}</p>
                   <p className="print-expl">
-                    {b.show === 'simpler' && b.simpler
-                      ? b.simpler
-                      : b.show === 'example' && b.example
-                        ? b.example
-                        : b.explanation}
+                    {b.show === 'simpler' && b.simpler ? b.simpler
+                    : b.show === 'example' && b.example ? b.example
+                    : b.explanation}
                   </p>
                 </div>
               ))}
@@ -458,83 +402,84 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
     return (
       <div className="screen">
         <header className="navbar safe-top">
-          <button
-            className="navbar-btn"
-            style={{ width: 'auto', paddingLeft: 0 }}
+          <button className="navbar-btn" style={{ width: 'auto', paddingLeft: 0 }}
             onClick={() => {
-              // Don't silently drop unsaved edits: persist text (without a scan)
               const dirty = title !== savedRef.current.title || body !== savedRef.current.body;
-              if (dirty) {
-                updateNote(note.id, { title, body, subject });
-                savedRef.current = { title, body };
-              }
+              if (dirty) { updateNote(note.id, { title, body, subject }); savedRef.current = { title, body }; }
               setMode('read');
-            }}
-            aria-label="Back to notes list"
-          >
+            }} aria-label="Back to notes list">
             ‹ Notes
           </button>
           <span className="navbar-title" style={{ fontSize: 15 }}>Edit</span>
           <div className="flex items-center">
             <button className="navbar-btn" onClick={undo} aria-label="Undo" style={{ fontSize: 20 }}>↺</button>
             <button className="navbar-btn" onClick={redo} aria-label="Redo" style={{ fontSize: 20 }}>↻</button>
-            <button
-              className="btn btn-primary"
-              onClick={handleSave}
-              disabled={isScanning}
-              style={{ padding: '6px 14px', fontSize: 15 }}
-            >
+            <button className="btn btn-primary" onClick={handleSave} disabled={isScanning} style={{ padding: '6px 14px', fontSize: 15 }}>
               {isScanning ? (<><span className="spinner" style={{ width: 14, height: 14 }} /> Scanning…</>) : 'Save'}
             </button>
           </div>
         </header>
 
         <div className="editor safe-bottom">
-          {scanError && (
-            <div className="scan-indicator" style={{ color: 'var(--mistake)' }}>{scanError}</div>
-          )}
-          <input
-            type="text" className="editor-title" placeholder="Title"
-            value={title} onChange={e => setTitle(e.target.value)} aria-label="Note title"
-          />
-          <input
-            type="text" className="editor-subject" placeholder="Subject (e.g. Biology)"
-            value={subject} onChange={e => setSubject(e.target.value)} aria-label="Subject"
-          />
+          {scanError && <div className="scan-indicator" style={{ color: 'var(--mistake)' }}>{scanError}</div>}
+          <input type="text" className="editor-title" placeholder="Title" value={title} onChange={e => setTitle(e.target.value)} aria-label="Note title" />
+          <input type="text" className="editor-subject" placeholder="Subject (e.g. Biology)" value={subject} onChange={e => setSubject(e.target.value)} aria-label="Subject" />
 
-          {/* Images (v1.2.0) */}
-          <ImageStrip
-            images={images}
-            onAdd={addImage}
-            onRemove={removeImage}
-          />
-
-          {/* Drawing toggle (v1.2.0) */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-            <button
-              className={`btn ${showDrawing ? 'btn-primary' : 'btn-secondary'}`}
-              style={{ padding: '6px 14px', fontSize: 14 }}
-              onClick={() => setShowDrawing(s => !s)}
-            >
-              ✏️ {showDrawing ? 'Hide drawing' : 'Draw'}
-            </button>
+          {/* Compact attachment row */}
+          <div className="attachment-row">
+            <button className="attach-btn" aria-label="Take photo" onClick={() => pickImage('camera')}>📷</button>
+            <button className="attach-btn" aria-label="Choose from library" onClick={() => pickImage('library')}>🖼</button>
+            <button className="attach-btn" aria-label="Draw on note" onClick={() => setDrawMode(true)}>✏️</button>
           </div>
 
-          {showDrawing && (
-            <DrawingCanvas
-              strokes={drawings}
+          {/* Image strip (only shows existing) */}
+          <ImageStrip images={images} onAdd={addImage} onRemove={removeImage} showAdd={false} />
+
+          {/* Full-note annotation overlay */}
+          <div ref={annotationWrapRef} className="annotation-wrap">
+            <StrokeLayer
+              drawing={{ refWidth: drawings?.refWidth || 0, strokes: drawings?.strokes || [] }}
+              editable={drawMode}
+              tool={tool}
+              color={tool === 'text' ? customColor : color}
+              size={size}
               onChange={updateDrawings}
-              height={300}
-              bgColor="transparent"
             />
+          </div>
+
+          {/* Drawing toolbar (only when drawMode) */}
+          {drawMode && (
+            <div className="annotation-toolbar">
+              <div className="tool-group">
+                {TOOLS.map(([t, icon, label]) => (
+                  <button key={t} className={`tool-btn${tool === t ? ' active' : ''}`} onClick={() => setTool(t)} aria-label={label}>
+                    {icon}
+                  </button>
+                ))}
+              </div>
+
+              <div className="tool-group">
+                <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginRight: 6 }}>Size:</span>
+                {SIZES.map(s => (
+                  <button key={s} className={`size-btn${size === s ? ' active' : ''}`} onClick={() => setSize(s)}>{SIZE_LABEL[s]}</button>
+                ))}
+              </div>
+
+              <div className="tool-group">
+                {PALETTE.map(c => (
+                  <button key={c} className={`color-swatch${color === c ? ' active' : ''}`} style={{ background: c }} onClick={() => { setColor(c); setTool('pen'); }} aria-label={`Color ${c}`} />
+                ))}
+              </div>
+
+              <div className="tool-group">
+                <input type="color" value={customColor} onChange={e => { setCustomColor(e.target.value); setColor(e.target.value); }} title="Custom color" style={{ width: 28, height: 28, border: 'none', borderRadius: 8, cursor: 'pointer' }} />
+              </div>
+
+              <button className="draw-close" onClick={() => setDrawMode(false)} aria-label="Close drawing">✕</button>
+            </div>
           )}
 
-          <textarea
-            ref={textareaRef}
-            className="editor-body" placeholder="Start typing your notes…  (- [ ] makes a checklist, #tag marks topics)"
-            value={body} onChange={handleBodyChange} aria-label="Note body"
-            autoFocus
-          />
+          <textarea ref={textareaRef} className="editor-body" placeholder="Start typing your notes…  (- [ ] makes a checklist, #tag marks topics)" value={body} onChange={handleBodyChange} aria-label="Note body" autoFocus />
         </div>
       </div>
     );
@@ -542,7 +487,7 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
 
   // ---------- Read mode ----------
   const lines = body.split('\n');
-  const blockByLine = {}; // line index (0-based) -> block, only when text still matches
+  const blockByLine = {};
   blocks.forEach(b => {
     const m = /^line-(\d+)$/.exec(b.id);
     if (!m) return;
@@ -551,20 +496,8 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
   });
   const hasStudy = flashcards.length + quiz.length > 0;
 
-  const lineHasExpl = i => {
-    const b = blockByLine[i];
-    return b && (b.explanation || b.simpler || b.example);
-  };
+  const lineHasExpl = i => { const b = blockByLine[i]; return b && (b.explanation || b.simpler || b.example); };
   const lineMistake = i => blockByLine[i]?.mistake || null;
-
-  const activeVariant = block => {
-    // Which explanation text to show for a block right now.
-    // block.show is persisted ('simpler' | 'example' | 'main') so panel and
-    // swipe views display variants without inline-view state.
-    if (block.show === 'simpler' && block.simpler) return block.simpler;
-    if (block.show === 'example' && block.example) return block.example;
-    return block.explanation || '';
-  };
 
   const notePage = (
     <div className="editor safe-bottom">
@@ -573,31 +506,22 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
         📁 {folderLabel || 'Folder'} <span className="folder-chip-chevron">›</span>
       </button>
 
-      {/* Images (v1.2.0) */}
-      {images.length > 0 && (
-        <ImageStrip images={images} readOnly />
-      )}
+      {/* Images */}
+      {images.length > 0 && <ImageStrip images={images} readOnly />}
 
-      {/* Drawings (v1.2.0) */}
-      {drawings.length > 0 && (
-        <div style={{ marginBottom: 12 }}>
-          <DrawingCanvas strokes={drawings} readOnly height={250} />
+      {/* Drawings (StrokeLayer read-only) */}
+      {drawings?.strokes?.length > 0 && (
+        <div className="annotation-wrap" style={{ marginBottom: 12 }}>
+          <StrokeLayer drawing={{ refWidth: drawings.refWidth || 0, strokes: drawings.strokes || [] }} editable={false} />
         </div>
       )}
 
       <div className="note-lines">
         {lines.map((_, i) => (
           <NoteLineComponent
-            key={i}
-            i={i}
-            lines={lines}
-            blockByLine={blockByLine}
-            lineHasExpl={lineHasExpl}
-            lineMistake={lineMistake}
-            expandedInline={expandedInline}
-            view={view}
-            onOpenPanel={id => { setSelectedLineId(id); setPanelOpen(true); }}
-            onExpandInline={id => setExpandedInline(prev => ({ ...prev, [id]: prev[id] ? null : 'main' }))}
+            key={i} i={i} lines={lines} blockByLine={blockByLine}
+            lineHasExpl={lineHasExpl} lineMistake={lineMistake}
+            onLineTap={b => { setSelectedLineId(b.id); setPanelOpen(true); }}
             onToggleChecklist={toggleChecklist}
             onLineRequest={handleLineRequest}
             showOriginal={handleShowOriginal}
@@ -605,47 +529,9 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
             dismissMistake={dismissMistake}
             busyLine={busyLine}
             dismissed={dismissed}
+            showHint={showHint}
           />
         ))}
-      </div>
-    </div>
-  );
-
-  /** Swipe view: horizontal snap between note page and explanations page. */
-  const swipeContainer = (
-    <div className="swipe-container">
-      <div className="swipe-page">{notePage}</div>
-      <div className="swipe-page">
-        <div className="editor safe-bottom">
-          <div className="read-title" style={{ fontSize: 22 }}>Explanations</div>
-          {explBlocks.map(b => (
-            <div key={b.id} className="explanation-card">
-              <div className="explanation-line">{b.text}</div>
-              <div className="explanation-text">
-                {busyLine === b.id ? 'Thinking…' : activeVariant(b) || 'No explanation yet.'}
-              </div>
-              <VariantButtons
-                block={b}
-                busyLine={busyLine}
-                expandedInline={expandedInline}
-                onExplainSimpler={id => handleLineRequest(id, 'simpler')}
-                onGiveExample={id => handleLineRequest(id, 'example')}
-                onShowOriginal={handleShowOriginal}
-              />
-              {b.mistake && !dismissed[b.id] && (
-                <MistakeBox
-                  mistake={b.mistake}
-                  block={b}
-                  onApplyCorrection={applyCorrection}
-                  onDismissMistake={dismissMistake}
-                />
-              )}
-            </div>
-          ))}
-          {blocks.length === 0 && (
-            <div className="empty-state"><div className="empty-icon">💡</div><div className="empty-title">No explanations yet</div><div className="empty-text">Tap Edit, write, then Save.</div></div>
-          )}
-        </div>
       </div>
     </div>
   );
@@ -653,55 +539,28 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
   return (
     <div className="screen">
       <header className="navbar safe-top">
-        <button className="navbar-btn" style={{ width: 'auto', paddingLeft: 0 }} onClick={onBackToList} aria-label="Back to notes list">
-          ‹ Notes
-        </button>
+        <button className="navbar-btn" style={{ width: 'auto', paddingLeft: 0 }} onClick={onBackToList} aria-label="Back to notes list">‹ Notes</button>
         <span className="navbar-title" style={{ fontSize: 15, opacity: 0 }}>{'\u00A0'}</span>
         <div className="flex items-center gap-8">
           <button className="navbar-btn" onClick={() => setExportOpen(true)} aria-label="Share or export">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 3v12" />
-              <path d="m8 7 4-4 4 4" />
-              <path d="M5 12v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8" />
+              <path d="M12 3v12" /><path d="m8 7 4-4 4 4" /><path d="M5 12v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8" />
             </svg>
           </button>
           <button className="navbar-btn" onClick={() => setMode('edit')} aria-label="Edit note">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-            </svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
           </button>
-          {hasStudy && (
-            <button className="navbar-btn" onClick={onOpenStudy} aria-label="Study">
-              📚
-            </button>
-          )}
+          {hasStudy && <button className="navbar-btn" onClick={onOpenStudy} aria-label="Study">📚</button>}
         </div>
       </header>
 
-      {/* View switcher — segmented control */}
-      <div className="view-switcher">
-        {[['panel', 'Panel'], ['inline', 'Inline'], ['swipe', 'Swipe']].map(([v, label]) => (
-          <button
-            key={v}
-            className={`view-switch-btn${view === v ? ' active' : ''}`}
-            onClick={() => persistView(v)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      {scanError && <div className="scan-indicator" style={{ color: 'var(--mistake)' }}>{scanError}</div>}
 
-      {scanError && (
-        <div className="scan-indicator" style={{ color: 'var(--mistake)' }}>{scanError}</div>
-      )}
-
-      {view === 'swipe' ? swipeContainer : notePage}
+      {notePage}
 
       <SlideUpPanel
-        open={panelOpen && view === 'panel'}
-        onClose={() => setPanelOpen(false)}
-        blocks={blocks}
-        selectedLineId={selectedLineId}
+        open={panelOpen} onClose={() => setPanelOpen(false)}
+        blocks={blocks} selectedLineId={selectedLineId}
         onSelectLine={setSelectedLineId}
         onExplainSimpler={id => handleLineRequest(id, 'simpler')}
         onGiveExample={id => handleLineRequest(id, 'example')}
@@ -716,24 +575,45 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
             <button className="export-btn" onClick={handleShareText}>📤 Share note as text</button>
             <button className="export-btn" onClick={handleCopyText}>📋 Copy note text</button>
             <button className="export-btn" onClick={() => handlePrintPdf(false)}>📄 Save as PDF</button>
-            {explBlocks.length > 0 && (
-              <button className="export-btn" onClick={() => handlePrintPdf(true)}>📄 PDF with explanations</button>
-            )}
+            {explBlocks.length > 0 && <button className="export-btn" onClick={() => handlePrintPdf(true)}>📄 PDF with explanations</button>}
             <button className="export-btn cancel" onClick={() => setExportOpen(false)}>Cancel</button>
           </div>
         </div>
       )}
 
-      {moveOpen && (
-        <FolderPickerSheet
-          currentId={note.folderId}
-          onPick={handleMove}
-          onClose={() => setMoveOpen(false)}
-        />
-      )}
+      {moveOpen && <FolderPickerSheet currentId={note.folderId} onPick={handleMove} onClose={() => setMoveOpen(false)} />}
 
       {toast && <div className="toast">{toast}</div>}
       {printPortal}
     </div>
   );
+}
+
+// --- Helpers from ImageManager (inline to avoid import cycle) ---
+async function pickImage(source) {
+  const { Camera, CameraResultType, CameraSource } = await import('@capacitor/camera');
+  const { Capacitor } = await import('@capacitor/core');
+  try {
+    if (Capacitor.isNativePlatform?.()) {
+      const photo = await Camera.getPhoto({
+        resultType: CameraResultType.DataUrl,
+        source: source === 'camera' ? CameraSource.Camera : CameraSource.Photos,
+        quality: 70, width: 1280, height: 1280, correctOrientation: true,
+      });
+      return photo.dataUrl || null;
+    }
+    return new Promise(resolve => {
+      const input = document.createElement('input');
+      input.type = 'file'; input.accept = 'image/*';
+      if (source === 'camera') input.setAttribute('capture', 'environment');
+      input.onchange = () => {
+        const file = input.files?.[0]; if (!file) return resolve(null);
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(file);
+      };
+      input.click();
+    });
+  } catch { return null; }
 }

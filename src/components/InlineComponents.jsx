@@ -2,8 +2,11 @@
  * Inline components for NoteEditor — extracted to avoid React minified
  * "hooks in wrong place" errors (#310) when the inline arrow-function
  * components confuse the production optimizer.
+ *
+ * NoteLine is panel-only (v1.2.0): tapping a line with an explanation opens
+ * the slide-up panel. An optional one-line "hint" can be shown under lines
+ * (Settings → Reading).
  */
-import { useCallback } from 'react';
 
 /** Show hashtag pills inline. */
 export function renderLineText(text) {
@@ -17,37 +20,11 @@ export function renderLineText(text) {
   );
 }
 
-/** "Explain simpler" / "Give example" / "Show original" buttons for a block. */
-export function VariantButtons({ block, busyLine, expandedInline, onExplainSimpler, onGiveExample, onShowOriginal }) {
-  return (
-    <>
-      <div className="explanation-actions">
-        <button
-          className="btn btn-secondary"
-          disabled={busyLine === block.id}
-          onClick={() => onExplainSimpler?.(block.id)}
-        >
-          {busyLine === block.id && expandedInline[block.id] === 'simpler' ? '…' : 'Explain simpler'}
-        </button>
-        <button
-          className="btn btn-secondary"
-          disabled={busyLine === block.id}
-          onClick={() => onGiveExample?.(block.id)}
-        >
-          {busyLine === block.id && expandedInline[block.id] === 'example' ? '…' : 'Give example'}
-        </button>
-      </div>
-      {block.show && block.show !== 'main' && (
-        <button
-          className="btn btn-ghost"
-          style={{ width: '100%', padding: '6px 0', fontSize: 13 }}
-          onClick={() => onShowOriginal?.(block.id)}
-        >
-          Show original explanation
-        </button>
-      )}
-    </>
-  );
+/** Which explanation variant text to show for a block. */
+export function activeVariant(block) {
+  if (block.show === 'simpler' && block.simpler) return block.simpler;
+  if (block.show === 'example' && block.example) return block.example;
+  return block.explanation || '';
 }
 
 /** Mistake reason + Accept fix / Ignore buttons. */
@@ -63,31 +40,27 @@ export function MistakeBox({ mistake, block, onApplyCorrection, onDismissMistake
   );
 }
 
-/** One rendered note line (used in all three views). */
+/** One rendered note line (used in read mode). */
 export function NoteLine({
   i,
   lines,
   blockByLine,
   lineHasExpl,
   lineMistake,
-  expandedInline,
-  view,
-  onOpenPanel,
-  onExpandInline,
+  onLineTap,
   onToggleChecklist,
-  onLineRequest,
-  showOriginal,
   applyCorrection,
   dismissMistake,
-  busyLine,
   dismissed,
+  showHint = false,
 }) {
   const b = blockByLine[i];
   const mistake = lineMistake(i);
   const hasExpl = lineHasExpl(i);
-  const open = b ? expandedInline[b.id] : null;
   const checkMatch = /^(\s*-\s\[)( |x|X)(\]\s*)(.*)$/.exec(lines[i] || '');
   const checked = checkMatch && checkMatch[2] !== ' ';
+
+  const hint = showHint && b && hasExpl ? activeVariant(b) : null;
 
   if (checkMatch) {
     return (
@@ -102,7 +75,8 @@ export function NoteLine({
             {checkMatch[4] || '\u00A0'}
           </span>
         </div>
-        {mistake && !dismissed[b?.id] && view !== 'inline' && (
+        {hint && <div className="line-hint">{hint.slice(0, 90)}{hint.length > 90 ? '…' : ''}</div>}
+        {mistake && !dismissed[b?.id] && (
           <MistakeBox
             mistake={mistake}
             block={b}
@@ -118,63 +92,16 @@ export function NoteLine({
     <div className="note-line-wrap">
       <div
         className={`note-line${mistake ? ' has-mistake' : ''}`}
-        onClick={() => {
-          if (!b) return;
-          if (view === 'panel') onOpenPanel?.(b.id);
-          else onExpandInline?.(b.id);
-        }}
+        onClick={() => { if (b) onLineTap?.(b); }}
         style={{ cursor: b ? 'pointer' : 'default', position: 'relative' }}
       >
         {hasExpl && <span className="line-dot" aria-hidden="true" />}
         {renderLineText(lines[i])}
       </div>
 
-      {view === 'inline' && b && (b.explanation || b.simpler || b.example) && (
-        <div className="inline-explanation" onClick={e => e.stopPropagation()}>
-          <div
-            className="inline-collapsed"
-            onClick={() => onExpandInline(b.id)}
-          >
-            {b.show && b.show !== 'main' ? `(${b.show}) ` : ''}
-            {(b.show === 'simpler' && b.simpler)
-              ? b.simpler
-              : (b.show === 'example' && b.example)
-                ? b.example
-                : b.explanation || ''}
-              .slice(0, 90){(b.show === 'simpler' && b.simpler ? b.simpler.length : b.show === 'example' && b.example ? b.example.length : b.explanation?.length || 0) > 90 ? '…' : ''}
-          </div>
-          {open && (
-            <div className="inline-expanded">
-              <div className="explanation-text">
-                {(b.show === 'simpler' && b.simpler)
-                  ? b.simpler
-                  : (b.show === 'example' && b.example)
-                    ? b.example
-                    : b.explanation || ''}
-              </div>
-              {busyLine === b.id && <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Thinking…</div>}
-              <VariantButtons
-                block={b}
-                busyLine={busyLine}
-                expandedInline={expandedInline}
-                onExplainSimpler={id => onLineRequest?.(id, 'simpler')}
-                onGiveExample={id => onLineRequest?.(id, 'example')}
-                onShowOriginal={id => showOriginal?.(id)}
-              />
-              {mistake && !dismissed[b.id] && (
-                <MistakeBox
-                  mistake={mistake}
-                  block={b}
-                  onApplyCorrection={applyCorrection}
-                  onDismissMistake={dismissMistake}
-                />
-              )}
-            </div>
-          )}
-        </div>
-      )}
+      {hint && <div className="line-hint">{hint.slice(0, 90)}{hint.length > 90 ? '…' : ''}</div>}
 
-      {mistake && !dismissed[b?.id] && view !== 'inline' && (
+      {mistake && !dismissed[b?.id] && (
         <MistakeBox
           mistake={mistake}
           block={b}

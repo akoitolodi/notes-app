@@ -6,6 +6,7 @@
 export const THEME_KEY = 'aicn:theme';   // 'auto' | 'light' | 'dark'
 export const ACCENT_KEY = 'aicn:accent'; // key into ACCENTS
 export const SIZE_KEY = 'aicn:size';     // 'small' | 'medium' | 'large'
+export const HINT_KEY = 'aicn:showHint'; // boolean string
 
 export const ACCENTS = {
   yellow: { c: '#ffcc00', p: '#e6b800', label: 'Yellow' },
