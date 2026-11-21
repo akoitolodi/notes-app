@@ -1225,4 +1225,7 @@ a { color: var(--accent-ink); }
 /* ---------- search ---------- */
 .search-bar { padding: 8px var(--gutter); }
 .search-input::placeholder { color: var(--text-secondary); }
-.search-icon { left: calc(var(--gutter) + 14px); color: var(--text-secondary); }
+.search-icon { left: calc(var(--gutter) + 14px); color: var(--text-secondary); }/* navbar layout fix — force horizontal, fix height matching */
+.navbar { height: auto !important; min-height: calc(44px + env(safe-area-inset-top, 0px)); padding: env(safe-area-inset-top, 0px) 16px 0; }
+.navbar > * { flex-shrink: 0; }
+.screen { padding-top: calc(44px + env(safe-area-inset-top, 0px)); }
