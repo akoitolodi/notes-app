@@ -1044,3 +1044,185 @@ a:active { opacity: 0.7; }
 /* ============================================================
    Utility
    ============================================================ */
+
+/* ==========================================================================
+   POLISH LAYER v1
+   Paste this whole block at the VERY BOTTOM of src/styles.css (after .text-center).
+   It only overrides; no class names change, so no component needs editing.
+   What it fixes:
+   - yellow text was 1.5:1 on white (unreadable) -> amber "ink" for text, yellow kept for fills
+   - white cards on a white page -> iOS grouped look (grey page, white cards)
+   - dark mode cards invisible (black on black) -> #1c1c1e cards
+   - duplicate titles (navbar + big title) -> navbar title hidden when a big title exists
+   - no divider lines between notes (swipe wrapper made every row "last-child")
+   - segmented control squashed against the navbar / lopsided (inline paddingTop)
+   - invisible "Explain simpler / Give example" buttons in Inline view
+   - low-contrast grey/orange text, tiny tap targets, no press feedback
+   - tablet: content stretched edge to edge -> centered reading column
+   - notch / safe-area padding that was overridden by .navbar { padding }
+   ========================================================================== */
+
+:root {
+  --bg-grouped: #f2f2f7;      /* page behind white cards */
+  --card-bg: #ffffff;
+  --panel-card: #ffffff;      /* cards inside the bottom sheet */
+  --fill: #ffffff;            /* button sitting on a grey tint */
+  --press: #e5e5ea;           /* row pressed */
+  --seg-active: #ffffff;
+  --text-secondary: #6c6c70;  /* was #8e8e93 (3.3:1) -> 5.2:1 */
+  --text-tertiary: #aeaeb2;
+  --divider: rgba(60, 60, 67, 0.2);
+  --accent-ink: #8f6300;      /* amber for TEXT/ICONS (5.3:1 on white); #ffcc00 stays for fills */
+  --mistake-ink: #9c5200;     /* orange for TEXT (5.3:1 on the peach box) */
+  --focus: #8f6300;
+  --content-max: 680px;
+  --gutter: max(16px, calc((100% - var(--content-max)) / 2));
+  --font-ui: system-ui, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-grouped: #000000;
+    --card-bg: #1c1c1e;
+    --panel-card: #2c2c2e;
+    --fill: #2c2c2e;
+    --press: #2c2c2e;
+    --seg-active: #636366;
+    --text-secondary: #98989d;
+    --text-tertiary: #636366;
+    --divider: rgba(84, 84, 88, 0.65);
+    --accent-ink: #ffd60a;
+    --mistake-ink: #ffb340;
+    --focus: #ffd60a;
+  }
+}
+
+/* ---------- base ---------- */
+html, body, #root { font-family: var(--font-ui); }
+button, input, textarea, select { font-family: inherit; }
+html:has(.list-group), body:has(.list-group), .screen:has(.list-group) { background: var(--bg-grouped); }
+.screen { min-height: 100vh; min-height: 100dvh; }
+::selection { background: rgba(255, 204, 0, 0.4); }
+a { color: var(--accent-ink); }
+
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 6px; }
+.editor-title:focus-visible, .editor-body:focus-visible, .search-input:focus-visible { outline: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+}
+
+/* ---------- navigation bar ---------- */
+.navbar {
+  /* the old .navbar padding overrode .safe-top, so the bar sat under the notch */
+  height: calc(44px + env(safe-area-inset-top, 0px));
+  padding: env(safe-area-inset-top, 0px) var(--gutter) 0;
+  border-bottom: 0.5px solid var(--divider);
+}
+.screen:has(.list-group) .navbar { background: var(--bg-grouped); }
+.navbar-btn, .toolbar-btn { color: var(--accent-ink); }
+.navbar-btn:focus-visible { outline-offset: -2px; }
+/* the big title already says it: hide the duplicate (keeps the bar balanced) */
+.screen:has(.list-group) .navbar:has(~ .large-title) .navbar-title,
+.screen:has(.read-title) .navbar-title { visibility: hidden; }
+
+.large-title {
+  padding: 8px var(--gutter) 4px;
+  line-height: 1.15;
+  letter-spacing: -0.4px;
+}
+.large-title.safe-top { padding-top: 12px; }   /* old .safe-top added a 2nd notch gap here */
+
+/* ---------- segmented control (Panel / Inline / Swipe) ---------- */
+.view-switcher {
+  margin: 10px var(--gutter) 4px;
+  padding: 3px !important;                       /* beats the inline paddingTop: 8 that made it lopsided */
+}
+.view-switch-btn { padding: 7px 0; min-height: 32px; transition: background 0.15s, color 0.15s; }
+.view-switch-btn.active { background: var(--seg-active); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.14); }
+
+/* ---------- note reading ---------- */
+.editor { padding: 12px var(--gutter) calc(24px + env(safe-area-inset-bottom, 0px)); }
+.read-title { padding: 8px 0 8px; }
+.note-line { cursor: pointer; border-radius: 6px; transition: background 0.12s; }
+.note-line:active { background: rgba(255, 204, 0, 0.2); }
+.line-dot { width: 7px; height: 7px; top: 13px; }
+
+.inline-collapsed { font-size: 14px; line-height: 1.4; padding: 6px 10px; border-left-width: 3px; }
+.inline-expanded { border-radius: 12px; padding: 14px; }
+.inline-expanded .btn-secondary { background: var(--fill); box-shadow: 0 0 0 1px var(--divider); }
+
+.inline-mistake { font-size: 14px; line-height: 1.45; color: var(--mistake-ink); padding: 8px 0 8px 12px; }
+.inline-mistake em { opacity: 1; font-style: normal; font-weight: 600; display: block; margin-top: 2px; }
+.mistake-actions button { min-height: 36px; padding: 6px 14px; font-size: 14px; color: #1a1000; }
+.mistake-actions button + button { color: var(--text-secondary); }
+
+/* ---------- lists ---------- */
+.list-group {
+  margin: 8px var(--gutter) 24px;
+  border-radius: 14px;
+  background: var(--card-bg);
+  box-shadow: none;
+}
+.list-item {
+  position: relative;
+  min-height: 56px;
+  padding: 12px 16px;
+  background: var(--card-bg);
+  border-bottom: 0;
+  transition: background 0.12s;
+}
+.list-item:active { background: var(--press); }
+.list-item-title { font-weight: 500; }
+.list-item-subtitle { font-size: 15px; line-height: 1.3; }
+.list-item-chevron { font-size: 22px; line-height: 1; font-weight: 300; color: var(--text-tertiary); }
+/* divider inset from the left, like iOS. Works for plain rows AND swipe rows (which sit in a wrapper div) */
+.list-group > .list-item:not(:last-child)::after,
+.list-group > :not(:last-child) > .list-item::after {
+  content: '';
+  position: absolute;
+  left: 16px; right: 0; bottom: 0;
+  height: 1px;
+  background: var(--divider);
+}
+.list-item .btn-ghost {
+  min-height: 36px;
+  padding: 6px 12px;
+  font-size: 14px;
+  border-radius: 999px;
+  background: rgba(255, 204, 0, 0.22);
+}
+
+/* ---------- buttons ---------- */
+.btn { font-family: inherit; line-height: 1.2; transition: transform 0.1s, background 0.15s; }
+.btn:active { transform: scale(0.98); }
+.btn-ghost { color: var(--accent-ink); }
+.btn-secondary:active { background: var(--press); }
+.explanation-actions .btn { min-height: 44px; }
+
+/* ---------- editor (typing) ---------- */
+.editor-title, .editor-body { caret-color: var(--accent-ink); }
+.editor-body { line-height: 1.55; }
+
+/* ---------- bottom sheet ---------- */
+.panel-overlay { background: rgba(0, 0, 0, 0.3); }
+.panel {
+  max-width: 640px;
+  margin-inline: auto;                            /* centered on tablets instead of full-width */
+  max-height: 92vh; max-height: 92dvh;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.panel-header { border-bottom-width: 0.5px; }
+.explanation-card { background: var(--panel-card); border: 0; border-radius: 14px; }
+.explanation-line { font-weight: 600; }
+.explanation-text { font-size: 16px; line-height: 1.55; }
+.term-pill { color: var(--text-secondary); }
+.term-pill strong { color: var(--text); font-weight: 600; }
+.explanation-mistake { border: 0; border-left: 4px solid var(--mistake); }
+.mistake-icon { color: var(--mistake-ink); }
+.mistake-correction { color: var(--mistake-ink); font-weight: 600; }
+
+/* ---------- search ---------- */
+.search-bar { padding: 8px var(--gutter); }
+.search-input::placeholder { color: var(--text-secondary); }
+.search-icon { left: calc(var(--gutter) + 14px); color: var(--text-secondary); }
