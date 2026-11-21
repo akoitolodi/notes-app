@@ -64,7 +64,10 @@ app.use(express.static(join(__dirname, 'dist')));
 
 const port = process.env.PORT || 8080;
 const host = process.env.HOST || '0.0.0.0';
-app.listen(port, host, () => {
+const server = app.listen(port, host, () => {
   console.log(`[server] listening on http://${host}:${port}`);
   console.log(`[server] AI proxy -> ${process.env.FREELLMAPI_BASE_URL || 'http://127.0.0.1:3001/v1'}`);
 });
+// Allow long-running AI requests (up to ~8 min for big notes)
+server.requestTimeout = 540000;   // 9 min
+server.headersTimeout = 550000;   // slightly higher
