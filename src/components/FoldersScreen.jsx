@@ -2,7 +2,7 @@
  * Folders screen — iOS Notes style. One folder per subject with note counts.
  * New folder via + button; long-press (or edit mode) to rename/delete.
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { getFoldersWithCounts, createFolder, deleteFolder, renameFolder } from '../store/db';
 
 export default function FoldersScreen({ onOpenFolder, onOpenExam }) {
@@ -10,6 +10,18 @@ export default function FoldersScreen({ onOpenFolder, onOpenExam }) {
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [newName, setNewName] = useState('');
   const [editingId, setEditingId] = useState(null);
+  const pressTimer = useRef(null);
+
+  // Long-press (500ms) opens the rename/delete actions — double-click
+  // doesn't exist on touch screens.
+  const startLongPress = id => {
+    cancelLongPress();
+    pressTimer.current = setTimeout(() => setEditingId(id), 500);
+  };
+  const cancelLongPress = () => {
+    if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; }
+  };
+  useEffect(() => () => cancelLongPress(), []);
 
   const refresh = useCallback(async () => {
     setFolders(await getFoldersWithCounts());
@@ -83,6 +95,10 @@ export default function FoldersScreen({ onOpenFolder, onOpenExam }) {
             className="list-item"
             style={{ cursor: 'pointer' }}
             onClick={() => onOpenFolder(folder)}
+            onTouchStart={() => startLongPress(folder.id)}
+            onTouchEnd={cancelLongPress}
+            onTouchMove={cancelLongPress}
+            onDoubleClick={() => setEditingId(folder.id)}
           >
             <span style={{ marginRight: 12, fontSize: 22 }}>📁</span>
             <div className="flex-1" onDoubleClick={() => setEditingId(folder.id)}>

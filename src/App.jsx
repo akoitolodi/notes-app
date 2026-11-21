@@ -38,9 +38,15 @@ export default function App() {
   };
 
   const handleBackFromEditor = async () => {
-    // Clean up abandoned empty notes (created via pencil, never typed in)
-    if (note && !(note.title || '').trim() && !(note.body || '').trim()) {
-      await db.notes.delete(note.id);
+    // Clean up abandoned empty notes (created via pencil, never typed in).
+    // IMPORTANT: re-read from the DB — the `note` object here is the stale
+    // snapshot taken when the note was opened. A brand-new note starts empty,
+    // so checking it directly would DELETE a note the user just typed + saved.
+    if (note) {
+      const fresh = await db.notes.get(note.id);
+      if (fresh && !(fresh.title || '').trim() && !(fresh.body || '').trim()) {
+        await db.notes.delete(note.id);
+      }
     }
     setScreen('list');
     setNote(null);
@@ -69,14 +75,14 @@ export default function App() {
   // Render current screen
   if (!ready) {
     return (
-      <div className="screen" style={{ alignItems: 'center', justifyContent: 'center' }}>
+      <div className="app-root" style={{ alignItems: 'center', justifyContent: 'center' }}>
         <div className="scan-indicator"><span className="spinner" /> Loading…</div>
       </div>
     );
   }
 
   return (
-    <div className="screen">
+    <div className="app-root">
       {screen === 'folders' && (
         <FoldersScreen onOpenFolder={handleOpenFolder} onOpenExam={handleOpenExam} />
       )}

@@ -50,9 +50,12 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
 
   const textareaRef = useRef(null);
   const savedRef = useRef({ title: note?.title || '', body: note?.body || '' });
+  const initialNoteId = useRef(note?.id);
 
-  // Re-init when a different note is opened
+  // Re-init when a *different* note is opened. Skip the very first run:
+  // it would override the initial 'edit' mode chosen for new (empty) notes.
   useEffect(() => {
+    if (note?.id === initialNoteId.current) return;
     setTitle(note?.title || '');
     setBody(note?.body || '');
     setBlocks(note?.blocks || []);
@@ -62,6 +65,15 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
     setScanError(null);
     setMode('read');
   }, [note?.id]);
+
+  // Auto-grow the textarea like iOS Notes (min 300px, grows with content)
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (el && mode === 'edit') {
+      el.style.height = 'auto';
+      el.style.height = `${Math.max(300, el.scrollHeight)}px`;
+    }
+  }, [body, mode]);
 
   const persistView = v => {
     setView(v);
@@ -137,8 +149,13 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
       });
       setMode('read');
     } catch (err) {
-      // Scan failed: keep the saved text (don't lose edits) and show the error
+      // Scan failed: show the error, but STILL persist the typed text so the
+      // note is never lost (savedRef stays stale on purpose so the next
+      // successful Save re-scans the changed lines).
       setScanError(err.message);
+      try {
+        await updateNote(note.id, { title, body });
+      } catch {/* keep the error visible; text remains in the editor */}
     } finally {
       setIsScanning(false);
     }
