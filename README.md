@@ -1,5 +1,17 @@
 # AI Class Notes
 
+## Quick start (Termux backend)
+
+Start the AI backend with one command:
+
+```bash
+notes
+```
+
+(`notes` is installed in `$PREFIX/bin` — it wake-locks the device, `cd`s to the repo and runs `node server.js` on port 8080.)
+
+
+
 A phone notes app styled like the iOS Notes app. When you tap **Save**, the AI
 reads the whole note and explains it beside what you wrote, so you learn while
 you take notes.
