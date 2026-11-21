@@ -131,7 +131,7 @@ export default function NotesListScreen({ folder, onOpenNote, onBack }) {
           </svg>
         </button>
       </header>
-      <div className="large-title" style={{ paddingTop: 12 }}>{folder.name}</div>
+      <div className="large-title">{folder.name}</div>
 
       {searching && (
         <div className="search-bar">

@@ -76,9 +76,9 @@ a:active { opacity: 0.7; }
   background: var(--bg);
 }
 
-/* Safe area for notched phones */
-.safe-top { padding-top: env(safe-area-inset-top); }
-.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+/* Safe area for notched phones — used on navbar and bottom sheet */
+.safe-top { padding-top: max(env(safe-area-inset-top, 0px), 8px); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
 
 /* ============================================================
    Read mode — rendered note lines with explanation layer
@@ -179,7 +179,7 @@ a:active { opacity: 0.7; }
 /* View switcher (segmented control) */
 .view-switcher {
   display: flex;
-  margin: 0 16px 8px;
+  margin: 8px 16px 4px;
   background: var(--bg-elevated);
   border-radius: 10px;
   padding: 3px;
@@ -211,8 +211,10 @@ a:active { opacity: 0.7; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 44px;
-  padding: 0 16px;
+  min-height: calc(44px + env(safe-area-inset-top, 0px));
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-right: 16px;
+  padding-left: 16px;
   background: var(--bg);
   border-bottom: 1px solid var(--divider);
   backdrop-filter: saturate(180%) blur(20px);
@@ -240,7 +242,8 @@ a:active { opacity: 0.7; }
 
 /* Large title (iOS Notes style) */
 .large-title {
-  padding: 16px;
+  margin-top: 8px;
+  padding: 4px 16px 0;
   font-size: 34px;
   font-weight: 700;
   color: var(--text);

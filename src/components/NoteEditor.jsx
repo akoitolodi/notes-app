@@ -429,7 +429,7 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
       </header>
 
       {/* View switcher — segmented control */}
-      <div className="view-switcher" style={{ paddingTop: 8 }}>
+      <div className="view-switcher">
         {[['panel', 'Panel'], ['inline', 'Inline'], ['swipe', 'Swipe']].map(([v, label]) => (
           <button
             key={v}

@@ -43,7 +43,7 @@ export default function FoldersScreen({ onOpenFolder, onOpenExam }) {
   };
 
   return (
-    <div className="screen">
+    <div className="screen" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
       <header className="navbar safe-top">
         <span style={{ width: 44 }} />
         <span className="navbar-title">Folders</span>
@@ -53,7 +53,7 @@ export default function FoldersScreen({ onOpenFolder, onOpenExam }) {
           </svg>
         </button>
       </header>
-      <div className="large-title" style={{ paddingTop: 12 }}>Folders</div>
+      <div className="large-title">Folders</div>
 
       {showNewFolder && (
         <div className="list-group" style={{ padding: 12 }}>

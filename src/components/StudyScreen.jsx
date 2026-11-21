@@ -81,7 +81,7 @@ export default function StudyScreen({ note, onBack }) {
         <span className="navbar-title" style={{ fontSize: 15 }}>Study</span>
         <span style={{ width: 44 }} />
       </header>
-      <div className="large-title" style={{ paddingTop: 12 }}>{note?.title || 'New Note'}</div>
+      <div className="large-title">{note?.title || 'New Note'}</div>
 
       {/* Tabs */}
       <div style={{ display: 'flex', margin: '0 16px', background: 'var(--bg-elevated)', borderRadius: 10, padding: 3 }}>
