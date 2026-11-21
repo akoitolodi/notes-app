@@ -932,56 +932,63 @@ a:active { opacity: 0.7; }
 }
 
 /* ============================================================
+   Full-note annotation overlay (v1.2.0)
+   ============================================================ */
+/* Wrapper around ALL note content — overlay canvas sits on top of it */
+.note-page-wrap {
+  position: relative;
+}
+
+/* Fixed bottom toolbar while annotating */
+.annotate-bar {
+  position: fixed;
+  left: 0; right: 0;
+  bottom: 0;
+  z-index: 1050;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+  background: var(--panel-bg);
+  border-top: 1px solid var(--divider);
+  box-shadow: 0 -4px 20px var(--shadow-strong);
+}
+.color-input {
+  width: 28px; height: 28px;
+  border: none; border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+
+/* ============================================================
    Attachment row (v1.2.0)
    ============================================================ */
 .attachment-row {
   display: flex;
   gap: 8px;
   margin-bottom: 8px;
+  align-items: center;
 }
 .attach-btn {
-  width: 44px;
-  height: 44px;
-  border: none;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--divider);
   border-radius: 10px;
   background: var(--bg-elevated);
-  font-size: 20px;
+  font-size: 17px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 .attach-btn:active { background: var(--divider); }
+.attach-label { font-size: 12px; color: var(--text-secondary); }
 
 /* ============================================================
    Annotation overlay (full-note drawing) (v1.2.0)
    ============================================================ */
-.annotation-wrap {
-  position: relative;
-  width: 100%;
-  min-height: 300px;
-  border-radius: 10px;
-  border: 1px solid var(--divider);
-  background: var(--bg);
-  overflow: hidden;
-  margin-bottom: 8px;
-}
-
-/* Drawing toolbar (shown when drawMode) */
-.annotation-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  background: var(--bg);
-  border-bottom: 1px solid var(--divider);
-  border-radius: 10px 10px 0 0;
-  position: sticky;
-  bottom: 0;
-  z-index: 10;
-  box-shadow: 0 -2px 8px var(--shadow);
-}
 .tool-group { display: flex; align-items: center; gap: 6px; }
 .tool-btn {
   width: 38px; height: 38px;
@@ -1012,13 +1019,17 @@ a:active { opacity: 0.7; }
 }
 .color-swatch.active { border-color: var(--text); box-shadow: 0 0 0 2px var(--bg) inset; }
 .draw-close {
-  width: 38px; height: 38px;
+  min-width: 56px; height: 34px;
   border: none; border-radius: 10px;
-  background: var(--mistake);
-  color: #fff; font-size: 16px;
+  background: var(--accent);
+  color: var(--accent-text); font-size: 14px; font-weight: 600;
   cursor: pointer; margin-left: auto;
+  font-family: inherit;
 }
-
+.navbar-btn-active {
+  background: var(--bg-elevated);
+  box-shadow: 0 0 0 1px var(--accent);
+}
 /* ============================================================
    Line hint (optional inline preview)
    ============================================================ */

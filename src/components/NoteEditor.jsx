@@ -17,8 +17,8 @@ import { scanLine } from '../api/scanLine';
 import { updateNote, moveNote } from '../store/db';
 import SlideUpPanel from './SlideUpPanel';
 import FolderPickerSheet from './FolderPickerSheet';
-import StrokeLayer, { PALETTE, TOOLS, SIZES, SIZE_LABEL, toolWidth } from './StrokeLayer';
-import ImageStrip from './ImageManager';
+import StrokeLayer, { PALETTE, TOOLS, SIZES, SIZE_LABEL } from './StrokeLayer';
+import ImageStrip, { pickImage, compressImage } from './ImageManager';
 import {
   renderLineText,
   MistakeBox,
@@ -55,7 +55,14 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
   const [moveOpen, setMoveOpen] = useState(false);
   const [folderLabel, setFolderLabel] = useState(folderName || '');
   const [images, setImages] = useState(note?.images || []);
-  const [drawings, setDrawings] = useState(note?.drawings || []);
+  // Drawings doc: { refWidth, strokes }. Legacy beta.1 format was a plain
+  // array of strokes — migrate it here so old notes keep working.
+  const [drawings, setDrawings] = useState(() => {
+    const d = note?.drawings;
+    if (Array.isArray(d)) return { refWidth: 0, strokes: d };
+    if (d && Array.isArray(d.strokes)) return d;
+    return { refWidth: 0, strokes: [] };
+  });
   const [showHint, setShowHint] = useState(() => {
     try { return localStorage.getItem(HINT_KEY) === 'true'; } catch { return false; }
   });
@@ -68,14 +75,11 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
   const savedRef = useRef({ title: note?.title || '', body: note?.body || '' });
   const initialNoteId = useRef(note?.id);
 
-  // Annotation overlay state (full-note overlay)
+  // Annotation state — used in READ mode only (full-page overlay)
   const [drawMode, setDrawMode] = useState(false);
   const [tool, setTool] = useState('pen');
   const [color, setColor] = useState('#000000');
   const [size, setSize] = useState('medium');
-  const [customColor, setCustomColor] = useState('#000000');
-
-  const annotationWrapRef = useRef(null);
 
   // Re-init when a *different* note is opened
   useEffect(() => {
@@ -85,7 +89,9 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
     setSubject(note?.subject || 'General');
     setBlocks(note?.blocks || []);
     setImages(note?.images || []);
-    setDrawings(note?.drawings || []);
+    const d = note?.drawings;
+    setDrawings(Array.isArray(d) ? { refWidth: 0, strokes: d }
+      : (d && Array.isArray(d.strokes)) ? d : { refWidth: 0, strokes: [] });
     setDrawMode(false);
     setFlashcards(note?.flashcards || []);
     setQuiz(note?.quiz || []);
@@ -328,9 +334,10 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
     await updateNote(note.id, { images: next });
   }, [images, note]);
 
-  const updateDrawings = useCallback(async nextStrokes => {
-    setDrawings(nextStrokes);
-    await updateNote(note.id, { drawings: nextStrokes });
+  const updateDrawings = useCallback(async doc => {
+    setDrawings(doc);
+    try { await updateNote(note.id, { drawings: doc }); }
+    catch { /* keep local state; strokes persist on next save */ }
   }, [note]);
 
   // Print dialog
@@ -363,12 +370,9 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
           )}
 
           {/* Drawings in PDF (StrokeLayer read-only) */}
-          {drawings.length > 0 && (
+          {drawings?.strokes?.length > 0 && (
             <div className="print-drawing" style={{ marginBottom: 16 }}>
-              <StrokeLayer
-                drawing={{ refWidth: drawings.refWidth || 0, strokes: drawings.strokes || [] }}
-                editable={false}
-              />
+              <StrokeLayer drawing={drawings} editable={false} />
             </div>
           )}
 
@@ -425,59 +429,15 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
           <input type="text" className="editor-title" placeholder="Title" value={title} onChange={e => setTitle(e.target.value)} aria-label="Note title" />
           <input type="text" className="editor-subject" placeholder="Subject (e.g. Biology)" value={subject} onChange={e => setSubject(e.target.value)} aria-label="Subject" />
 
-          {/* Compact attachment row */}
+          {/* Compact attachment row — photos only; drawing happens in read mode */}
           <div className="attachment-row">
-            <button className="attach-btn" aria-label="Take photo" onClick={() => pickImage('camera')}>📷</button>
-            <button className="attach-btn" aria-label="Choose from library" onClick={() => pickImage('library')}>🖼</button>
-            <button className="attach-btn" aria-label="Draw on note" onClick={() => setDrawMode(true)}>✏️</button>
+            <button className="attach-btn" aria-label="Take photo" onClick={async () => { const raw = await pickImage('camera'); if (raw) addImage(await compressImage(raw)); }}>📷</button>
+            <button className="attach-btn" aria-label="Choose from library" onClick={async () => { const raw = await pickImage('library'); if (raw) addImage(await compressImage(raw)); }}>🖼</button>
+            <span className="attach-label">Add photos — annotate after saving</span>
           </div>
 
           {/* Image strip (only shows existing) */}
           <ImageStrip images={images} onAdd={addImage} onRemove={removeImage} showAdd={false} />
-
-          {/* Full-note annotation overlay */}
-          <div ref={annotationWrapRef} className="annotation-wrap">
-            <StrokeLayer
-              drawing={{ refWidth: drawings?.refWidth || 0, strokes: drawings?.strokes || [] }}
-              editable={drawMode}
-              tool={tool}
-              color={tool === 'text' ? customColor : color}
-              size={size}
-              onChange={updateDrawings}
-            />
-          </div>
-
-          {/* Drawing toolbar (only when drawMode) */}
-          {drawMode && (
-            <div className="annotation-toolbar">
-              <div className="tool-group">
-                {TOOLS.map(([t, icon, label]) => (
-                  <button key={t} className={`tool-btn${tool === t ? ' active' : ''}`} onClick={() => setTool(t)} aria-label={label}>
-                    {icon}
-                  </button>
-                ))}
-              </div>
-
-              <div className="tool-group">
-                <span style={{ fontSize: 12, color: 'var(--text-secondary)', marginRight: 6 }}>Size:</span>
-                {SIZES.map(s => (
-                  <button key={s} className={`size-btn${size === s ? ' active' : ''}`} onClick={() => setSize(s)}>{SIZE_LABEL[s]}</button>
-                ))}
-              </div>
-
-              <div className="tool-group">
-                {PALETTE.map(c => (
-                  <button key={c} className={`color-swatch${color === c ? ' active' : ''}`} style={{ background: c }} onClick={() => { setColor(c); setTool('pen'); }} aria-label={`Color ${c}`} />
-                ))}
-              </div>
-
-              <div className="tool-group">
-                <input type="color" value={customColor} onChange={e => { setCustomColor(e.target.value); setColor(e.target.value); }} title="Custom color" style={{ width: 28, height: 28, border: 'none', borderRadius: 8, cursor: 'pointer' }} />
-              </div>
-
-              <button className="draw-close" onClick={() => setDrawMode(false)} aria-label="Close drawing">✕</button>
-            </div>
-          )}
 
           <textarea ref={textareaRef} className="editor-body" placeholder="Start typing your notes…  (- [ ] makes a checklist, #tag marks topics)" value={body} onChange={handleBodyChange} aria-label="Note body" autoFocus />
         </div>
@@ -501,37 +461,46 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
 
   const notePage = (
     <div className="editor safe-bottom">
-      <div className="read-title">{title || 'New Note'}</div>
-      <button className="folder-chip" onClick={() => setMoveOpen(true)} aria-label="Move to folder">
-        📁 {folderLabel || 'Folder'} <span className="folder-chip-chevron">›</span>
-      </button>
+      {/* Full-note wrapper: relative so the annotation overlay covers EVERYTHING */}
+      <div className="note-page-wrap">
+        <div className="read-title">{title || 'New Note'}</div>
+        <button className="folder-chip" onClick={() => setMoveOpen(true)} aria-label="Move to folder">
+          📁 {folderLabel || 'Folder'} <span className="folder-chip-chevron">›</span>
+        </button>
 
-      {/* Images */}
-      {images.length > 0 && <ImageStrip images={images} readOnly />}
+        {/* Images */}
+        {images.length > 0 && <ImageStrip images={images} readOnly />}
 
-      {/* Drawings (StrokeLayer read-only) */}
-      {drawings?.strokes?.length > 0 && (
-        <div className="annotation-wrap" style={{ marginBottom: 12 }}>
-          <StrokeLayer drawing={{ refWidth: drawings.refWidth || 0, strokes: drawings.strokes || [] }} editable={false} />
+        <div className="note-lines">
+          {lines.map((_, i) => (
+            <NoteLineComponent
+              key={i} i={i} lines={lines} blockByLine={blockByLine}
+              lineHasExpl={lineHasExpl} lineMistake={lineMistake}
+              onLineTap={b => { setSelectedLineId(b.id); setPanelOpen(true); }}
+              onToggleChecklist={toggleChecklist}
+              onLineRequest={handleLineRequest}
+              showOriginal={handleShowOriginal}
+              applyCorrection={applyCorrection}
+              dismissMistake={dismissMistake}
+              busyLine={busyLine}
+              dismissed={dismissed}
+              showHint={showHint}
+            />
+          ))}
         </div>
-      )}
 
-      <div className="note-lines">
-        {lines.map((_, i) => (
-          <NoteLineComponent
-            key={i} i={i} lines={lines} blockByLine={blockByLine}
-            lineHasExpl={lineHasExpl} lineMistake={lineMistake}
-            onLineTap={b => { setSelectedLineId(b.id); setPanelOpen(true); }}
-            onToggleChecklist={toggleChecklist}
-            onLineRequest={handleLineRequest}
-            showOriginal={handleShowOriginal}
-            applyCorrection={applyCorrection}
-            dismissMistake={dismissMistake}
-            busyLine={busyLine}
-            dismissed={dismissed}
-            showHint={showHint}
+        {/* Full-page annotation overlay — covers the ENTIRE note content.
+            Editable only in draw mode; otherwise display-only and tappable-through. */}
+        {(drawMode || drawings.strokes.length > 0) && (
+          <StrokeLayer
+            drawing={drawings}
+            editable={drawMode}
+            tool={tool}
+            color={color}
+            size={size}
+            onChange={updateDrawings}
           />
-        ))}
+        )}
       </div>
     </div>
   );
@@ -542,6 +511,11 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
         <button className="navbar-btn" style={{ width: 'auto', paddingLeft: 0 }} onClick={onBackToList} aria-label="Back to notes list">‹ Notes</button>
         <span className="navbar-title" style={{ fontSize: 15, opacity: 0 }}>{'\u00A0'}</span>
         <div className="flex items-center gap-8">
+          <button className={`navbar-btn${drawMode ? ' navbar-btn-active' : ''}`} onClick={() => { setDrawMode(m => { if (!m) setPanelOpen(false); return !m; }); }} aria-label="Annotate note">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 19l7-7 3 3-7 7-3-3z" /><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" /><path d="M2 2l7.586 7.586" /><circle cx="11" cy="11" r="2" />
+            </svg>
+          </button>
           <button className="navbar-btn" onClick={() => setExportOpen(true)} aria-label="Share or export">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 3v12" /><path d="m8 7 4-4 4 4" /><path d="M5 12v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8" />
@@ -557,6 +531,31 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
       {scanError && <div className="scan-indicator" style={{ color: 'var(--mistake)' }}>{scanError}</div>}
 
       {notePage}
+
+      {/* Annotation toolbar — fixed at bottom, only in draw mode */}
+      {drawMode && (
+        <div className="annotate-bar">
+          <div className="tool-group">
+            {TOOLS.map(([t, icon, label]) => (
+              <button key={t} className={`tool-btn${tool === t ? ' active' : ''}`} onClick={() => setTool(t)} aria-label={label}>
+                {icon}
+              </button>
+            ))}
+          </div>
+          <div className="tool-group">
+            {SIZES.map(s => (
+              <button key={s} className={`size-btn${size === s ? ' active' : ''}`} onClick={() => setSize(s)} aria-label={`Size ${SIZE_LABEL[s]}`}>{SIZE_LABEL[s]}</button>
+            ))}
+          </div>
+          <div className="tool-group">
+            {PALETTE.map(c => (
+              <button key={c} className={`color-swatch${color === c ? ' active' : ''}`} style={{ background: c }} onClick={() => setColor(c)} aria-label={`Color ${c}`} />
+            ))}
+            <input type="color" value={color} onChange={e => setColor(e.target.value)} title="Custom color" className="color-input" />
+          </div>
+          <button className="draw-close" onClick={() => setDrawMode(false)} aria-label="Done">Done</button>
+        </div>
+      )}
 
       <SlideUpPanel
         open={panelOpen} onClose={() => setPanelOpen(false)}
@@ -587,33 +586,4 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
       {printPortal}
     </div>
   );
-}
-
-// --- Helpers from ImageManager (inline to avoid import cycle) ---
-async function pickImage(source) {
-  const { Camera, CameraResultType, CameraSource } = await import('@capacitor/camera');
-  const { Capacitor } = await import('@capacitor/core');
-  try {
-    if (Capacitor.isNativePlatform?.()) {
-      const photo = await Camera.getPhoto({
-        resultType: CameraResultType.DataUrl,
-        source: source === 'camera' ? CameraSource.Camera : CameraSource.Photos,
-        quality: 70, width: 1280, height: 1280, correctOrientation: true,
-      });
-      return photo.dataUrl || null;
-    }
-    return new Promise(resolve => {
-      const input = document.createElement('input');
-      input.type = 'file'; input.accept = 'image/*';
-      if (source === 'camera') input.setAttribute('capture', 'environment');
-      input.onchange = () => {
-        const file = input.files?.[0]; if (!file) return resolve(null);
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = () => resolve(null);
-        reader.readAsDataURL(file);
-      };
-      input.click();
-    });
-  } catch { return null; }
 }
