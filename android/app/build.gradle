@@ -1,5 +1,7 @@
 apply plugin: 'com.android.application'
 
+def keystoreFile = file("notes-app-release.keystore")
+
 android {
     namespace = "com.philipjohn.aiclassnotes"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -7,8 +9,8 @@ android {
         applicationId "com.philipjohn.aiclassnotes"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode 3
+        versionName "1.0.2"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -16,10 +18,28 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        release {
+            if (keystoreFile.exists() && System.getenv("ANDROID_KEYSTORE_PASSWORD") != null) {
+                storeFile keystoreFile
+                storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+            }
+        }
+    }
     buildTypes {
         release {
+            if (keystoreFile.exists() && System.getenv("ANDROID_KEYSTORE_PASSWORD") != null) {
+                signingConfig signingConfigs.release
+            } else {
+                signingConfig signingConfigs.debug
+            }
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            signingConfig signingConfigs.debug
         }
     }
 }
