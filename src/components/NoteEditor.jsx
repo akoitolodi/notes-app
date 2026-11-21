@@ -33,12 +33,20 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
   const [quiz, setQuiz] = useState(note?.quiz || []);
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState(null);
-  const [view, setView] = useState(() => localStorage.getItem(VIEW_KEY) || 'panel');
+  const [view, setView] = useState(() => {
+    try { return localStorage.getItem(VIEW_KEY) || 'panel'; }
+    catch { return 'panel'; }
+  });
   const [panelOpen, setPanelOpen] = useState(false);
   const [selectedLineId, setSelectedLineId] = useState(null);
   const [expandedInline, setExpandedInline] = useState({}); // lineId -> variant shown
   const [busyLine, setBusyLine] = useState(null); // lineId while re-scanning
-  const [dismissed, setDismissed] = useState({}); // lineId -> mistake dismissed
+  const [dismissed, setDismissed] = useState(() => {
+    // Restore persisted 'Ignore' choices
+    const map = {};
+    (note?.blocks || []).forEach(b => { if (b.mistakeIgnored) map[b.id] = true; });
+    return map;
+  });
 
   const textareaRef = useRef(null);
   const savedRef = useRef({ title: note?.title || '', body: note?.body || '' });
@@ -60,36 +68,81 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
     localStorage.setItem(VIEW_KEY, v);
   };
 
-  const handleSave = useCallback(async () => {
-    await updateNote(note.id, { title, body });
-    const changedLines = [];
+  const handleSave = useCallback(async ({ rescan = true } = {}) => {
+    // Never scan an empty note
+    const noteIsEmpty = !body.trim() && !title.trim();
+    if (noteIsEmpty) {
+      await updateNote(note.id, { title, body });
+      savedRef.current = { title, body };
+      setMode('read');
+      return;
+    }
+
+    // Which lines changed since the last saved copy?
     const oldLines = savedRef.current.body.split('\n');
     const newLines = body.split('\n');
+    const changedLines = [];
     for (let i = 0; i < Math.max(oldLines.length, newLines.length); i++) {
       if (oldLines[i] !== newLines[i]) changedLines.push(i + 1);
     }
 
+    // Cost control: nothing changed and we already have explanations → skip AI
+    if (rescan === false || (changedLines.length === 0 && blocks.length > 0)) {
+      await updateNote(note.id, { title, body });
+      savedRef.current = { title, body };
+      setMode('read');
+      return;
+    }
+
+    // Also (re)scan lines that have no saved explanation yet
+    const covered = new Set();
+    blocks.forEach(b => {
+      const m = /^line-(\d+)$/.exec(b.id);
+      if (m && b.text === newLines[parseInt(m[1], 10) - 1]) covered.add(parseInt(m[1], 10));
+    });
+    const linesToScan = [...new Set([...changedLines])]
+      .filter(n => !covered.has(n));
+
     setIsScanning(true);
     setScanError(null);
     try {
-      const result = await scanNote(body, note.subject || 'General', changedLines);
+      const result = await scanNote(body, note.subject || 'General', linesToScan);
       savedRef.current = { title, body };
-      const newBlocks = result.blocks || [];
-      setBlocks(newBlocks);
-      setFlashcards(result.flashcards || []);
-      setQuiz(result.quiz || []);
+      const fresh = result.blocks || [];
+
+      // Merge: keep saved blocks for untouched lines (incl. simpler/example/show),
+      // take fresh blocks for scanned lines. Match by line id AND text.
+      const merged = blocks
+        .filter(b => {
+          const m = /^line-(\d+)$/.exec(b.id);
+          const n = m ? parseInt(m[1], 10) : -1;
+          return !linesToScan.includes(n) && b.text === newLines[n - 1];
+        })
+        .concat(fresh)
+        .sort((a, b) => {
+          const na = parseInt((/^line-(\d+)$/.exec(a.id) || [])[1] || 9999, 10);
+          const nb = parseInt((/^line-(\d+)$/.exec(b.id) || [])[1] || 9999, 10);
+          return na - nb;
+        });
+
+      setBlocks(merged);
+      setFlashcards(result.flashcards?.length ? result.flashcards : flashcards);
+      setQuiz(result.quiz?.length ? result.quiz : quiz);
       await updateNote(note.id, {
-        blocks: newBlocks,
-        flashcards: result.flashcards || [],
-        quiz: result.quiz || [],
+        title,
+        body,
+        blocks: merged,
+        flashcards: result.flashcards?.length ? result.flashcards : flashcards,
+        quiz: result.quiz?.length ? result.quiz : quiz,
       });
       setMode('read');
     } catch (err) {
+      // Scan failed: keep the saved text (don't lose edits) and show the error
       setScanError(err.message);
     } finally {
       setIsScanning(false);
     }
-  }, [title, body, note]);
+  }, [title, body, note, blocks, flashcards, quiz]);
 
   /** Re-scan one line: request = 'simpler' | 'example' */
   const handleLineRequest = useCallback(async (lineId, request) => {
@@ -122,6 +175,16 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
     await updateNote(note.id, { blocks: updated });
   }, [blocks, note]);
 
+  /** Persist a dismissed mistake so it stays hidden after reload. */
+  const dismissMistake = useCallback(async lineId => {
+    setDismissed(prev => ({ ...prev, [lineId]: true }));
+    const updated = blocks.map(b =>
+      b.id === lineId ? { ...b, mistakeIgnored: true } : b
+    );
+    setBlocks(updated);
+    await updateNote(note.id, { blocks: updated });
+  }, [blocks, note]);
+
   /** Accept a mistake's suggested fix: replaces that line in the body. */
   const applyCorrection = useCallback(async (block, mistake) => {
     if (!mistake?.correction) return;
@@ -145,7 +208,20 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
     return (
       <div className="screen">
         <header className="navbar safe-top">
-          <button className="navbar-btn" style={{ width: 'auto', paddingLeft: 0 }} onClick={onBackToList} aria-label="Back to notes list">
+          <button
+            className="navbar-btn"
+            style={{ width: 'auto', paddingLeft: 0 }}
+            onClick={() => {
+              // Don't silently drop unsaved edits: persist text (without a scan)
+              const dirty = title !== savedRef.current.title || body !== savedRef.current.body;
+              if (dirty) {
+                updateNote(note.id, { title, body });
+                savedRef.current = { title, body };
+              }
+              setMode('read');
+            }}
+            aria-label="Back to notes list"
+          >
             ‹ Notes
           </button>
           <span className="navbar-title" style={{ fontSize: 15 }}>Edit</span>
@@ -180,10 +256,12 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
 
   // ---------- Read mode ----------
   const lines = body.split('\n');
-  const blockByLine = {}; // line index (0-based) -> block
+  const blockByLine = {}; // line index (0-based) -> block, only when text still matches
   blocks.forEach(b => {
     const m = /^line-(\d+)$/.exec(b.id);
-    if (m) blockByLine[parseInt(m[1], 10) - 1] = b;
+    if (!m) return;
+    const n = parseInt(m[1], 10) - 1;
+    if (n >= 0 && n < lines.length && b.text === lines[n]) blockByLine[n] = b;
   });
   const hasStudy = flashcards.length + quiz.length > 0;
 
@@ -232,6 +310,17 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
     </>
   );
 
+  /** Mistake reason + Accept fix / Ignore buttons (shared across views). */
+  const MistakeBox = ({ mistake, block }) => (
+    <div className="inline-mistake">
+      ⚠ {mistake.reason} <em>Suggestion: {mistake.correction}</em>
+      <div className="mistake-actions">
+        <button onClick={() => applyCorrection(block, mistake)}>Accept fix</button>
+        <button onClick={() => dismissMistake(block.id)}>Ignore</button>
+      </div>
+    </div>
+  );
+
   /** One rendered note line (used in all three views). */
   const NoteLine = ({ i }) => {
     const b = blockByLine[i];
@@ -271,19 +360,14 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
                 <div className="explanation-text">{activeVariant(b)}</div>
                 {busyLine === b.id && <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Thinking…</div>}
                 <VariantButtons block={b} />
+                {mistake && !dismissed[b.id] && <MistakeBox mistake={mistake} block={b} />}
               </div>
             )}
           </div>
         )}
 
         {mistake && !dismissed[b.id] && view !== 'inline' && (
-          <div className="inline-mistake">
-            ⚠ {mistake.reason} <em>Suggestion: {mistake.correction}</em>
-            <div className="mistake-actions">
-              <button onClick={() => applyCorrection(b, mistake)}>Accept fix</button>
-              <button onClick={() => setDismissed(prev => ({ ...prev, [b.id]: true }))}>Ignore</button>
-            </div>
-          </div>
+          <MistakeBox mistake={mistake} block={b} />
         )}
       </div>
     );
@@ -312,6 +396,7 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
                 {busyLine === b.id ? 'Thinking…' : activeVariant(b) || 'No explanation yet.'}
               </div>
               <VariantButtons block={b} />
+              {b.mistake && !dismissed[b.id] && <MistakeBox mistake={b.mistake} block={b} />}
             </div>
           ))}
           {blocks.length === 0 && (

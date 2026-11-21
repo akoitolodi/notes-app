@@ -2,7 +2,7 @@
  * Serverless function: /api/scan-line — per-line re-scan (simpler/example).
  * Separate file so file-based routing (Vercel) maps it correctly.
  */
-import { scanLine } from '../../lib/scanLine.js';
+import { scanLine } from '../lib/scanLine.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {

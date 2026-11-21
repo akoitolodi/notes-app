@@ -27,6 +27,7 @@ export default function FoldersScreen({ onOpenFolder, onOpenExam }) {
 
   const handleDelete = async (e, id) => {
     e.stopPropagation();
+    if (!confirm('Delete this folder and all its notes?')) return;
     await deleteFolder(id);
     refresh();
   };

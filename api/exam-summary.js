@@ -2,7 +2,7 @@
  * Serverless function: /api/exam-summary — generate a study pack from a folder.
  * Deploy as a single function; the frontend calls it, never the AI directly.
  */
-import { examSummary } from '../../lib/examSummary.js';
+import { examSummary } from '../lib/examSummary.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {

@@ -6,7 +6,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 
 const SNAP_POINTS = [0.25, 0.6, 0.95]; // fractions of viewport height
-const CLOSE_THRESHOLD = 0.15; // fraction of vh dragged down that closes the panel
+const CLOSE_THRESHOLD = 0.06; // fraction of vh dragged down from peek that closes the panel
 
 export default function SlideUpPanel({
   open,
@@ -44,7 +44,7 @@ export default function SlideUpPanel({
     drag.current.moved = true;
     const vh = window.innerHeight;
     const next = Math.max(
-      SNAP_POINTS[0] - 0.1, // allow slight overshoot down (visual rubber band)
+      SNAP_POINTS[0] - 0.25, // allow dragging well below peek so it can close
       Math.min(SNAP_POINTS[2], drag.current.startSnap + deltaUp / vh)
     );
     setSnap(next);
