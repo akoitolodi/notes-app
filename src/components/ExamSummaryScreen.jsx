@@ -3,20 +3,32 @@
  * quiz generated from all notes in a folder.
  */
 import { useState, useEffect, useCallback } from 'react';
-import { getNotesInFolder } from '../store/db';
+import { getNotesInFolder, db } from '../store/db';
 import { examSummary } from '../api/examSummary';
 
 export default function ExamSummaryScreen({ folder, onBack }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  const [fromCache, setFromCache] = useState(false);
   const [tab, setTab] = useState('summary'); // summary | cards | quiz
 
-  const generate = useCallback(async () => {
+  const generate = useCallback(async (force = false) => {
     setLoading(true);
     setError(null);
     setResult(null);
+    setFromCache(false);
     try {
+      // Serve the cached pack instantly unless the user explicitly regenerates
+      if (!force) {
+        const cached = await db.examCache.get(folder.id);
+        if (cached?.result) {
+          setResult(cached.result);
+          setFromCache(true);
+          setLoading(false);
+          return;
+        }
+      }
       const notes = await getNotesInFolder(folder.id);
       const usable = notes.filter(n => (n.body || '').trim().length > 0);
       if (usable.length === 0) {
@@ -29,6 +41,7 @@ export default function ExamSummaryScreen({ folder, onBack }) {
       }));
       const data = await examSummary(folder.name, capped);
       setResult(data);
+      await db.examCache.put({ folderId: folder.id, result: data, at: Date.now() });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -48,11 +61,17 @@ export default function ExamSummaryScreen({ folder, onBack }) {
           ‹ Back
         </button>
         <span className="navbar-title" style={{ fontSize: 15 }}>Exam Summary</span>
-        <button className="navbar-btn" style={{ width: 'auto' }} onClick={generate} disabled={loading} aria-label="Regenerate">
+        <button className="navbar-btn" style={{ width: 'auto' }} onClick={() => generate(true)} disabled={loading} aria-label="Regenerate">
           ↻
         </button>
       </header>
       <div className="large-title">{folder.name}</div>
+
+      {fromCache && !loading && (
+        <div className="scan-indicator" style={{ paddingTop: 0 }}>
+          Saved study pack — tap ↻ to rebuild with the latest notes.
+        </div>
+      )}
 
       {loading && (
         <div className="scan-indicator">

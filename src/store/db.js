@@ -11,6 +11,13 @@ db.version(1).stores({
   notes: '++id, folderId, title, updatedAt, pinned, createdAt',
 });
 
+// v2: cache AI exam summaries per folder (avoids re-calling the AI every open)
+db.version(2).stores({
+  folders: '++id, name, createdAt',
+  notes: '++id, folderId, title, updatedAt, pinned, createdAt',
+  examCache: 'folderId',
+});
+
 /** Create default folders on first run. */
 export async function ensureSeeded() {
   const count = await db.folders.count();

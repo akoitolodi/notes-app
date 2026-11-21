@@ -20,8 +20,17 @@ export default function SlideUpPanel({
   busyLineId,
 }) {
   const [snap, setSnap] = useState(SNAP_POINTS[0]); // current height fraction
+  const [vh, setVh] = useState(() => (typeof window !== 'undefined' ? window.innerHeight : 800));
   const panelRef = useRef(null);
   const drag = useRef(null); // { startY, startSnap }
+
+  // Track viewport height so the panel resizes when the keyboard opens/closes
+  // or the device rotates.
+  useEffect(() => {
+    const onResize = () => setVh(window.innerHeight);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   // Reset to peek height whenever the panel opens
   useEffect(() => {
@@ -81,8 +90,6 @@ export default function SlideUpPanel({
   };
 
   if (!open) return null;
-
-  const vh = typeof window !== 'undefined' ? window.innerHeight : 800;
 
   return (
     <>

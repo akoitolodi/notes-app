@@ -12,6 +12,7 @@
  * The chosen view is remembered (localStorage).
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { scanNote } from '../api/scan';
 import { scanLine } from '../api/scanLine';
 import { updateNote } from '../store/db';
@@ -28,6 +29,7 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
   }); // read | edit
   const [title, setTitle] = useState(note?.title || '');
   const [body, setBody] = useState(note?.body || '');
+  const [subject, setSubject] = useState(note?.subject || 'General');
   const [blocks, setBlocks] = useState(note?.blocks || []);
   const [flashcards, setFlashcards] = useState(note?.flashcards || []);
   const [quiz, setQuiz] = useState(note?.quiz || []);
@@ -47,6 +49,9 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
     (note?.blocks || []).forEach(b => { if (b.mistakeIgnored) map[b.id] = true; });
     return map;
   });
+  const [exportOpen, setExportOpen] = useState(false);
+  const [printPayload, setPrintPayload] = useState(null); // {title, body, withExpl}
+  const [toast, setToast] = useState(null);
 
   const textareaRef = useRef(null);
   const savedRef = useRef({ title: note?.title || '', body: note?.body || '' });
@@ -58,6 +63,7 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
     if (note?.id === initialNoteId.current) return;
     setTitle(note?.title || '');
     setBody(note?.body || '');
+    setSubject(note?.subject || 'General');
     setBlocks(note?.blocks || []);
     setFlashcards(note?.flashcards || []);
     setQuiz(note?.quiz || []);
@@ -84,7 +90,7 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
     // Never scan an empty note
     const noteIsEmpty = !body.trim() && !title.trim();
     if (noteIsEmpty) {
-      await updateNote(note.id, { title, body });
+      await updateNote(note.id, { title, body, subject });
       savedRef.current = { title, body };
       setMode('read');
       return;
@@ -100,7 +106,7 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
 
     // Cost control: nothing changed and we already have explanations → skip AI
     if (rescan === false || (changedLines.length === 0 && blocks.length > 0)) {
-      await updateNote(note.id, { title, body });
+      await updateNote(note.id, { title, body, subject });
       savedRef.current = { title, body };
       setMode('read');
       return;
@@ -118,7 +124,7 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
     setIsScanning(true);
     setScanError(null);
     try {
-      const result = await scanNote(body, note.subject || 'General', linesToScan);
+      const result = await scanNote(body, subject, linesToScan);
       savedRef.current = { title, body };
       const fresh = result.blocks || [];
 
@@ -143,6 +149,7 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
       await updateNote(note.id, {
         title,
         body,
+        subject,
         blocks: merged,
         flashcards: result.flashcards?.length ? result.flashcards : flashcards,
         quiz: result.quiz?.length ? result.quiz : quiz,
@@ -154,12 +161,12 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
       // successful Save re-scans the changed lines).
       setScanError(err.message);
       try {
-        await updateNote(note.id, { title, body });
+        await updateNote(note.id, { title, body, subject });
       } catch {/* keep the error visible; text remains in the editor */}
     } finally {
       setIsScanning(false);
     }
-  }, [title, body, note, blocks, flashcards, quiz]);
+  }, [title, body, subject, note, blocks, flashcards, quiz]);
 
   /** Re-scan one line: request = 'simpler' | 'example' */
   const handleLineRequest = useCallback(async (lineId, request) => {
@@ -220,6 +227,111 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
     setDismissed(prev => ({ ...prev, [block.id]: true }));
   }, [body, blocks, note]);
 
+  // ---------- Share / Export ----------
+  const noteText = `${title || 'New Note'}\n\n${body}`;
+
+  const copyToClipboard = async text => {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return ok;
+      } catch {
+        return false;
+      }
+    }
+  };
+
+  const showToast = useCallback(msg => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 2200);
+  }, []);
+
+  const handleShareText = async () => {
+    setExportOpen(false);
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: title || 'New Note', text: noteText });
+        return;
+      } catch (e) {
+        if (e?.name === 'AbortError') return; // user closed the share sheet
+        // fall through to clipboard
+      }
+    }
+    const ok = await copyToClipboard(noteText);
+    showToast(ok ? 'Copied to clipboard' : 'Sharing not available here');
+  };
+
+  const handleCopyText = async () => {
+    setExportOpen(false);
+    const ok = await copyToClipboard(noteText);
+    showToast(ok ? 'Copied to clipboard' : 'Copy failed');
+  };
+
+  const handlePrintPdf = withExpl => {
+    setExportOpen(false);
+    setPrintPayload({ title: title || 'New Note', body, withExpl });
+  };
+
+  // Fire the print dialog (system dialog → "Save as PDF") once the print
+  // view is mounted, then clean it up.
+  useEffect(() => {
+    if (!printPayload) return;
+    const t = setTimeout(() => {
+      try {
+        window.print();
+      } catch {
+        showToast('Printing not supported here');
+      }
+      setPrintPayload(null);
+    }, 150);
+    return () => clearTimeout(t);
+  }, [printPayload, showToast]);
+
+  const explBlocks = blocks.filter(b => b.explanation || b.simpler || b.example);
+  const printPortal = printPayload
+    ? createPortal(
+        <div className="print-root">
+          <h1 className="print-title">{printPayload.title}</h1>
+          <div className="print-meta">
+            {new Date().toLocaleDateString([], { year: 'numeric', month: 'long', day: 'numeric' })}
+          </div>
+          <div className="print-body">
+            {printPayload.body.split('\n').map((l, i) => (
+              <p key={i} className="print-line">{l || '\u00A0'}</p>
+            ))}
+          </div>
+          {printPayload.withExpl && explBlocks.length > 0 && (
+            <>
+              <h2 className="print-h2">Explanations</h2>
+              {explBlocks.map(b => (
+                <div key={b.id} className="print-block">
+                  <p className="print-line-text">{b.text}</p>
+                  <p className="print-expl">
+                    {b.show === 'simpler' && b.simpler
+                      ? b.simpler
+                      : b.show === 'example' && b.example
+                        ? b.example
+                        : b.explanation}
+                  </p>
+                </div>
+              ))}
+            </>
+          )}
+        </div>,
+        document.body
+      )
+    : null;
+
   // ---------- Edit mode ----------
   if (mode === 'edit') {
     return (
@@ -232,7 +344,7 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
               // Don't silently drop unsaved edits: persist text (without a scan)
               const dirty = title !== savedRef.current.title || body !== savedRef.current.body;
               if (dirty) {
-                updateNote(note.id, { title, body });
+                updateNote(note.id, { title, body, subject });
                 savedRef.current = { title, body };
               }
               setMode('read');
@@ -259,6 +371,10 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
           <input
             type="text" className="editor-title" placeholder="Title"
             value={title} onChange={e => setTitle(e.target.value)} aria-label="Note title"
+          />
+          <input
+            type="text" className="editor-subject" placeholder="Subject (e.g. Biology)"
+            value={subject} onChange={e => setSubject(e.target.value)} aria-label="Subject"
           />
           <textarea
             ref={textareaRef}
@@ -432,6 +548,13 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
         </button>
         <span className="navbar-title" style={{ fontSize: 15, opacity: 0 }}>{'\u00A0'}</span>
         <div className="flex items-center gap-8">
+          <button className="navbar-btn" onClick={() => setExportOpen(true)} aria-label="Share or export">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 3v12" />
+              <path d="m8 7 4-4 4 4" />
+              <path d="M5 12v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8" />
+            </svg>
+          </button>
           <button className="navbar-btn" onClick={() => setMode('edit')} aria-label="Edit note">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
@@ -475,6 +598,24 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
         onShowOriginal={handleShowOriginal}
         busyLineId={busyLine}
       />
+
+      {exportOpen && (
+        <div className="export-overlay" onClick={() => setExportOpen(false)}>
+          <div className="export-sheet" onClick={e => e.stopPropagation()}>
+            <div className="export-title">Share &amp; Export</div>
+            <button className="export-btn" onClick={handleShareText}>📤 Share note as text</button>
+            <button className="export-btn" onClick={handleCopyText}>📋 Copy note text</button>
+            <button className="export-btn" onClick={() => handlePrintPdf(false)}>📄 Save as PDF</button>
+            {explBlocks.length > 0 && (
+              <button className="export-btn" onClick={() => handlePrintPdf(true)}>📄 PDF with explanations</button>
+            )}
+            <button className="export-btn cancel" onClick={() => setExportOpen(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {toast && <div className="toast">{toast}</div>}
+      {printPortal}
     </div>
   );
 }
