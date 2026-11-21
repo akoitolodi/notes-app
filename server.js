@@ -4,6 +4,7 @@
  * Run: node server.js   (port 3002; Vite proxies /api to it)
  */
 import express from 'express';
+import cors from 'cors';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { scanNote } from './lib/ai.js';
@@ -13,7 +14,8 @@ import { examSummary } from './lib/examSummary.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 
-app.use(express.json({ limit: '1mb' }));
+app.use(cors()); // Allow all cross-origin requests
+app.use(express.json({ limit: '10mb' }));
 
 app.post('/api/scan', async (req, res) => {
   try {
@@ -60,8 +62,9 @@ app.post('/api/exam-summary', async (req, res) => {
 // Serve built frontend
 app.use(express.static(join(__dirname, 'dist')));
 
-const port = process.env.PORT || 3002;
-app.listen(port, () => {
-  console.log(`[server] listening on http://localhost:${port}`);
+const port = process.env.PORT || 8080;
+const host = process.env.HOST || '0.0.0.0';
+app.listen(port, host, () => {
+  console.log(`[server] listening on http://${host}:${port}`);
   console.log(`[server] AI proxy -> ${process.env.FREELLMAPI_BASE_URL || 'http://127.0.0.1:3001/v1'}`);
 });
