@@ -15,12 +15,13 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { scanNote } from '../api/scan';
 import { scanLine } from '../api/scanLine';
-import { updateNote } from '../store/db';
+import { updateNote, moveNote } from '../store/db';
 import SlideUpPanel from './SlideUpPanel';
+import FolderPickerSheet from './FolderPickerSheet';
 
 const VIEW_KEY = 'ai-class-notes:view';
 
-export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
+export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList }) {
   const [mode, setMode] = useState(() => {
     // New (empty) notes open straight into editing, like iOS Notes.
     // Existing notes open in read mode.
@@ -52,6 +53,12 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
   const [exportOpen, setExportOpen] = useState(false);
   const [printPayload, setPrintPayload] = useState(null); // {title, body, withExpl}
   const [toast, setToast] = useState(null);
+  const [moveOpen, setMoveOpen] = useState(false);
+  const [folderLabel, setFolderLabel] = useState(folderName || '');
+
+  // Undo/redo history for the note body (typed edits are debounced in)
+  const undoRef = useRef({ stack: [note?.body || ''], index: 0, timer: null });
+  const restoringRef = useRef(false);
 
   const textareaRef = useRef(null);
   const savedRef = useRef({ title: note?.title || '', body: note?.body || '' });
@@ -282,6 +289,65 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
     setPrintPayload({ title: title || 'New Note', body, withExpl });
   };
 
+  // ---------- Move to folder ----------
+  const handleMove = async f => {
+    setMoveOpen(false);
+    await moveNote(note.id, f.id);
+    setFolderLabel(f.name);
+    showToast(`Moved to ${f.name}`);
+  };
+
+  // ---------- Undo / redo (edit mode) ----------
+  const pushHistory = value => {
+    const h = undoRef.current;
+    if (h.timer) clearTimeout(h.timer);
+    h.timer = setTimeout(() => {
+      if (h.stack[h.index] === value) return;
+      h.stack = h.stack.slice(0, h.index + 1).concat(value);
+      if (h.stack.length > 100) h.stack.shift();
+      h.index = h.stack.length - 1;
+    }, 400);
+  };
+
+  const undo = () => {
+    const h = undoRef.current;
+    if (h.index > 0) {
+      h.index -= 1;
+      restoringRef.current = true;
+      setBody(h.stack[h.index]);
+    }
+  };
+
+  const redo = () => {
+    const h = undoRef.current;
+    if (h.index < h.stack.length - 1) {
+      h.index += 1;
+      restoringRef.current = true;
+      setBody(h.stack[h.index]);
+    }
+  };
+
+  const handleBodyChange = e => {
+    const v = e.target.value;
+    setBody(v);
+    if (restoringRef.current) restoringRef.current = false;
+    else pushHistory(v);
+  };
+
+  // ---------- Checklists & hashtags (read mode) ----------
+  const CHECK_RE = /^(\s*-\s\[)( |x|X)(\]\s*)(.*)$/;
+
+  const renderLineText = text => {
+    if (!text) return '\u00A0';
+    const parts = text.split(/(#[A-Za-z0-9_-]+)/);
+    if (parts.length === 1) return text;
+    return parts.map((p, i) =>
+      p.length > 1 && p[0] === '#'
+        ? <span key={i} className="hashtag">{p}</span>
+        : p
+    );
+  };
+
   // Fire the print dialog (system dialog → "Save as PDF") once the print
   // view is mounted, then clean it up.
   useEffect(() => {
@@ -354,14 +420,18 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
             ‹ Notes
           </button>
           <span className="navbar-title" style={{ fontSize: 15 }}>Edit</span>
-          <button
-            className="btn btn-primary"
-            onClick={handleSave}
-            disabled={isScanning}
-            style={{ padding: '6px 14px', fontSize: 15 }}
-          >
-            {isScanning ? (<><span className="spinner" style={{ width: 14, height: 14 }} /> Scanning…</>) : 'Save'}
-          </button>
+          <div className="flex items-center">
+            <button className="navbar-btn" onClick={undo} aria-label="Undo" style={{ fontSize: 20 }}>↺</button>
+            <button className="navbar-btn" onClick={redo} aria-label="Redo" style={{ fontSize: 20 }}>↻</button>
+            <button
+              className="btn btn-primary"
+              onClick={handleSave}
+              disabled={isScanning}
+              style={{ padding: '6px 14px', fontSize: 15 }}
+            >
+              {isScanning ? (<><span className="spinner" style={{ width: 14, height: 14 }} /> Scanning…</>) : 'Save'}
+            </button>
+          </div>
         </header>
 
         <div className="editor safe-bottom">
@@ -378,8 +448,8 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
           />
           <textarea
             ref={textareaRef}
-            className="editor-body" placeholder="Start typing your notes…"
-            value={body} onChange={e => setBody(e.target.value)} aria-label="Note body"
+            className="editor-body" placeholder="Start typing your notes…  (- [ ] makes a checklist, #tag marks topics)"
+            value={body} onChange={handleBodyChange} aria-label="Note body"
             autoFocus
           />
         </div>
@@ -454,30 +524,58 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
     </div>
   );
 
+  /** Tick/untick a checklist line ("- [ ] item" → "- [x] item"). */
+  const toggleChecklist = useCallback(async lineIdx => {
+    const ls = body.split('\n');
+    const m = CHECK_RE.exec(ls[lineIdx]);
+    if (!m) return;
+    ls[lineIdx] = `${m[1]}${m[2] === ' ' ? 'x' : ' '}${m[3]}${m[4]}`;
+    const newBody = ls.join('\n');
+    setBody(newBody);
+    // Checklist ticks shouldn't trigger an AI re-scan on next Save
+    savedRef.current = { ...savedRef.current, body: newBody };
+    await updateNote(note.id, { body: newBody });
+  }, [body, note]);
+
   /** One rendered note line (used in all three views). */
   const NoteLine = ({ i }) => {
     const b = blockByLine[i];
     const mistake = lineMistake(i);
     const hasExpl = lineHasExpl(i);
     const open = b ? expandedInline[b.id] : null;
+    const checkMatch = CHECK_RE.exec(lines[i] || '');
+    const checked = checkMatch && checkMatch[2] !== ' ';
     return (
       <div className="note-line-wrap">
-        <div
-          className={`note-line${mistake ? ' has-mistake' : ''}`}
-          onClick={() => {
-            if (!b) return;
-            if (view === 'panel') {
-              setSelectedLineId(b.id);
-              setPanelOpen(true);
-            } else {
-              setExpandedInline(prev => ({ ...prev, [b.id]: prev[b.id] ? null : 'main' }));
-            }
-          }}
-          style={{ cursor: b ? 'pointer' : 'default', position: 'relative' }}
-        >
-          {hasExpl && <span className="line-dot" aria-hidden="true" />}
-          {lines[i] || '\u00A0'}
-        </div>
+        {checkMatch ? (
+          <div
+            className="note-line check"
+            onClick={() => toggleChecklist(i)}
+            style={{ cursor: 'pointer', position: 'relative' }}
+          >
+            <span className={`check-box${checked ? ' checked' : ''}`} aria-hidden="true">✓</span>
+            <span style={checked ? { textDecoration: 'line-through', opacity: 0.5 } : null}>
+              {checkMatch[4] || '\u00A0'}
+            </span>
+          </div>
+        ) : (
+          <div
+            className={`note-line${mistake ? ' has-mistake' : ''}`}
+            onClick={() => {
+              if (!b) return;
+              if (view === 'panel') {
+                setSelectedLineId(b.id);
+                setPanelOpen(true);
+              } else {
+                setExpandedInline(prev => ({ ...prev, [b.id]: prev[b.id] ? null : 'main' }));
+              }
+            }}
+            style={{ cursor: b ? 'pointer' : 'default', position: 'relative' }}
+          >
+            {hasExpl && <span className="line-dot" aria-hidden="true" />}
+            {renderLineText(lines[i])}
+          </div>
+        )}
 
         {/* Inline view: collapsed explanation under the line */}
         {view === 'inline' && b && (b.explanation || b.simpler || b.example) && (
@@ -509,6 +607,9 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
   const notePage = (
     <div className="editor safe-bottom">
       <div className="read-title">{title || 'New Note'}</div>
+      <button className="folder-chip" onClick={() => setMoveOpen(true)} aria-label="Move to folder">
+        📁 {folderLabel || 'Folder'} <span className="folder-chip-chevron">›</span>
+      </button>
       <div className="note-lines">
         {lines.map((_, i) => <NoteLine key={i} i={i} />)}
       </div>
@@ -615,6 +716,15 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
       )}
 
       {toast && <div className="toast">{toast}</div>}
+
+      {moveOpen && (
+        <FolderPickerSheet
+          currentId={note.folderId}
+          onPick={handleMove}
+          onClose={() => setMoveOpen(false)}
+        />
+      )}
+
       {printPortal}
     </div>
   );

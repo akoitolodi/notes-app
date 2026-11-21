@@ -4,7 +4,11 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import { applySettings } from './theme';
 import './styles.css';
+
+// Apply saved theme/accent/font-size before first paint to avoid a flash
+applySettings();
 
 // Show any fatal error directly on screen (debug aid — remove later)
 function showFatalError(message) {

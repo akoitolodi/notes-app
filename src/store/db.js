@@ -29,11 +29,12 @@ export async function ensureSeeded() {
   }
 }
 
-/** All folders with note counts. */
+/** All folders with note counts (trashed notes don't count). */
 export async function getFoldersWithCounts() {
   const folders = await db.folders.toArray();
   const counts = {};
   await db.notes.each(note => {
+    if (note.trashed) return;
     counts[note.folderId] = (counts[note.folderId] || 0) + 1;
   });
   return folders
@@ -58,16 +59,19 @@ export async function deleteFolder(id) {
   });
 }
 
-/** Notes inside a folder, pinned first then newest edited first. */
-export async function getNotesInFolder(folderId) {
-  const notes = await db.notes.where('folderId').equals(folderId).toArray();
+/** Notes inside a folder, trashed notes excluded. sort: 'edited' | 'created' | 'title'. */
+export async function getNotesInFolder(folderId, sort = 'edited') {
+  const notes = (await db.notes.where('folderId').equals(folderId).toArray())
+    .filter(n => !n.trashed);
   return notes.sort((a, b) => {
     if (!!b.pinned !== !!a.pinned) return (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
+    if (sort === 'created') return b.createdAt - a.createdAt;
+    if (sort === 'title') return (a.title || '').localeCompare(b.title || '');
     return b.updatedAt - a.updatedAt;
   });
 }
 
-/** Search notes by title or body text (case-insensitive), across all folders or one. */
+/** Search notes by title or body text (case-insensitive), trashed excluded. */
 export async function searchNotes(query, folderId = null) {
   const q = query.trim().toLowerCase();
   if (!q) return [];
@@ -79,8 +83,9 @@ export async function searchNotes(query, folderId = null) {
   }
   return pool.filter(
     n =>
-      (n.title || '').toLowerCase().includes(q) ||
-      (n.body || '').toLowerCase().includes(q)
+      !n.trashed &&
+      ((n.title || '').toLowerCase().includes(q) ||
+        (n.body || '').toLowerCase().includes(q))
   );
 }
 
@@ -116,8 +121,59 @@ export async function togglePin(id) {
   await db.notes.update(id, { pinned: !note.pinned });
 }
 
+/** Move a note to another folder. */
+export async function moveNote(id, folderId) {
+  await db.notes.update(id, { folderId, updatedAt: Date.now() });
+}
+
+/** Duplicate a note (text + AI blocks). Returns the new note. */
+export async function duplicateNote(id) {
+  const src = await db.notes.get(id);
+  if (!src) return null;
+  const now = Date.now();
+  const { id: _omit, ...rest } = src;
+  const newId = await db.notes.add({
+    ...rest,
+    title: src.title ? `${src.title} (copy)` : '',
+    pinned: false,
+    createdAt: now,
+    updatedAt: now,
+  });
+  return db.notes.get(newId);
+}
+
+// ---------- Trash (Recently Deleted) ----------
+// Deleting moves a note to the trash; it is purged for real after 30 days.
+
 export async function deleteNote(id) {
+  await db.notes.update(id, { trashed: true, trashedAt: Date.now() });
+}
+
+export async function restoreNote(id) {
+  await db.notes.update(id, { trashed: false, trashedAt: null });
+}
+
+export async function purgeNote(id) {
   await db.notes.delete(id);
+}
+
+export async function getTrash() {
+  const items = await db.notes.filter(n => n.trashed).toArray();
+  return items.sort((a, b) => (b.trashedAt || 0) - (a.trashedAt || 0));
+}
+
+export async function getTrashCount() {
+  return db.notes.filter(n => n.trashed).count();
+}
+
+export async function emptyTrash() {
+  await db.notes.filter(n => n.trashed).delete();
+}
+
+/** Hard-delete trashed notes older than `days` (default 30). */
+export async function purgeOldTrash(days = 30) {
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  await db.notes.filter(n => n.trashed && (n.trashedAt || 0) < cutoff).delete();
 }
 
 /** Compare two bodies line-by-line; return 1-indexed changed lines. */

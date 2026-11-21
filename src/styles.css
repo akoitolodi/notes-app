@@ -12,7 +12,7 @@
   --text-secondary: #8e8e93;
   --text-tertiary: #c7c7cc;
   --divider: #c6c6c8;
-  --accent: #ffcc00;        /* iOS yellow */
+  --accent: #ffcc00;        /* iOS yellow (overridable in Settings) */
   --accent-pressed: #e6b800;
   --accent-text: #000000;
   --shadow: rgba(0, 0, 0, 0.1);
@@ -21,10 +21,16 @@
   --mistake-bg: #fff3e0;
   --panel-bg: #f2f2f7;
   --panel-handle: #c7c7cc;
+  /* Font sizes (adjustable in Settings) */
+  --fs-note: 17px;
+  --fs-title: 28px;
+  --fs-list: 17px;
+  --fs-sub: 15px;
 }
 
+/* Dark theme — followed automatically, or forced via html[data-theme] */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #000000;
     --bg-elevated: #1c1c1e;
     --text: #ffffff;
@@ -41,6 +47,39 @@
     --panel-bg: #1c1c1e;
     --panel-handle: #48484a;
   }
+}
+
+/* Forced dark (Settings → Dark) */
+:root[data-theme="dark"] {
+  --bg: #000000;
+  --bg-elevated: #1c1c1e;
+  --text: #ffffff;
+  --text-secondary: #8e8e93;
+  --text-tertiary: #48484a;
+  --divider: #38383a;
+  --accent: #ffcc00;
+  --accent-pressed: #d4a800;
+  --accent-text: #000000;
+  --shadow: rgba(0, 0, 0, 0.4);
+  --shadow-strong: rgba(0, 0, 0, 0.6);
+  --mistake: #ff9f0a;
+  --mistake-bg: #3d2a00;
+  --panel-bg: #1c1c1e;
+  --panel-handle: #48484a;
+}
+
+/* Font size presets (Settings → Note text size) */
+html.fs-small {
+  --fs-note: 15px;
+  --fs-title: 24px;
+  --fs-list: 15px;
+  --fs-sub: 13px;
+}
+html.fs-large {
+  --fs-note: 19px;
+  --fs-title: 32px;
+  --fs-list: 19px;
+  --fs-sub: 17px;
 }
 
 * {
@@ -93,19 +132,82 @@ a:active { opacity: 0.7; }
    Read mode — rendered note lines with explanation layer
    ============================================================ */
 .read-title {
-  font-size: 28px;
+  font-size: var(--fs-title, 28px);
   font-weight: 700;
   color: var(--text);
   line-height: 1.2;
   padding: 8px 0 12px;
 }
+/* Move-to-folder chip (read mode, under the title) */
+.folder-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  padding: 5px 10px;
+  border-radius: 20px;
+  margin-bottom: 12px;
+  cursor: pointer;
+}
+.folder-chip:active { background: var(--divider); }
+.folder-chip-chevron { opacity: 0.6; }
+/* Tag pills in the notes list */
+.tag-pill {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border-radius: 8px;
+  padding: 2px 7px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tag-pill:active { background: var(--divider); }
 .note-line-wrap { margin-bottom: 4px; }
 .note-line {
-  font-size: 17px;
+  font-size: var(--fs-note, 17px);
   line-height: 1.5;
   color: var(--text);
   padding: 4px 0;
   word-break: break-word;
+}
+.note-line.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.check-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid var(--divider);
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1;
+  color: transparent;
+  transition: background 0.15s, border-color 0.15s;
+}
+.check-box.checked {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+.hashtag {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-radius: 6px;
+  padding: 1px 5px;
+  font-size: 0.88em;
+  font-weight: 600;
+  white-space: nowrap;
 }
 .note-line.has-mistake {
   text-decoration: underline;
@@ -310,8 +412,8 @@ a:active { opacity: 0.7; }
   background: var(--bg);
 }
 .list-item:last-child { border-bottom: none; }
-.list-item-title { font-size: 17px; font-weight: 400; color: var(--text); }
-.list-item-subtitle { font-size: 15px; color: var(--text-secondary); margin-top: 2px; }
+.list-item-title { font-size: var(--fs-list, 17px); font-weight: 400; color: var(--text); }
+.list-item-subtitle { font-size: var(--fs-sub, 15px); color: var(--text-secondary); margin-top: 2px; }
 .list-item-chevron { margin-left: auto; color: var(--text-tertiary); }
 
 /* ============================================================
@@ -362,7 +464,7 @@ a:active { opacity: 0.7; }
   border: none;
   outline: none;
   background: transparent;
-  font-size: 28px;
+  font-size: var(--fs-title, 28px);
   font-weight: 700;
   color: var(--text);
   line-height: 1.2;
@@ -377,7 +479,7 @@ a:active { opacity: 0.7; }
   border: none;
   outline: none;
   background: transparent;
-  font-size: 17px;
+  font-size: var(--fs-note, 17px);
   font-weight: 400;
   color: var(--text);
   line-height: 1.5;
@@ -670,6 +772,40 @@ a:active { opacity: 0.7; }
   }
   .print-line-text { font-size: 13px; font-weight: 700; margin: 12px 0 2px; word-break: break-word; }
   .print-expl { font-size: 13px; color: #333; margin: 0; line-height: 1.5; }
+}
+
+/* ============================================================
+   Settings screen
+   ============================================================ */
+.settings-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.accent-row {
+  display: flex;
+  gap: 14px;
+  margin-top: 12px;
+}
+.accent-swatch {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 3px solid transparent;
+  cursor: pointer;
+  padding: 0;
+}
+.accent-swatch.active {
+  border-color: var(--text);
+  box-shadow: 0 0 0 2px var(--bg) inset;
+}
+.settings-tip {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+  margin-top: 6px;
 }
 
 /* ============================================================

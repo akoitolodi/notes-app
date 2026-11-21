@@ -8,17 +8,22 @@ import NotesListScreen from './components/NotesListScreen';
 import NoteEditor from './components/NoteEditor';
 import StudyScreen from './components/StudyScreen';
 import ExamSummaryScreen from './components/ExamSummaryScreen';
-import { db, ensureSeeded } from './store/db';
+import TrashScreen from './components/TrashScreen';
+import SettingsScreen from './components/SettingsScreen';
+import { db, ensureSeeded, purgeOldTrash } from './store/db';
+import { applySettings } from './theme';
 
 export default function App() {
   const [ready, setReady] = useState(false);
-  const [screen, setScreen] = useState('folders'); // folders | list | editor | study | exam
+  const [screen, setScreen] = useState('folders'); // folders | list | editor | study | exam | trash | settings
   const [folder, setFolder] = useState(null);
   const [note, setNote] = useState(null);
 
   // Seed default folders on first load — await before rendering screens
   useEffect(() => {
+    applySettings(); // theme / accent / font size before first paint of screens
     ensureSeeded().finally(() => setReady(true));
+    purgeOldTrash(); // hard-delete notes trashed more than 30 days ago
   }, []);
 
   const handleOpenFolder = folder => {
@@ -26,7 +31,10 @@ export default function App() {
     setScreen('list');
   };
 
-  const handleOpenNote = note => {
+  // folderArg is passed when opening from global search so Back goes to the
+  // right folder list.
+  const handleOpenNote = (note, folderArg = null) => {
+    if (folderArg) setFolder(folderArg);
     setNote(note);
     setScreen('editor');
   };
@@ -72,6 +80,11 @@ export default function App() {
     setScreen('exam');
   };
 
+  const handleBackToFolders = () => {
+    setScreen('folders');
+    setFolder(null);
+  };
+
   // Render current screen
   if (!ready) {
     return (
@@ -84,7 +97,13 @@ export default function App() {
   return (
     <div className="app-root">
       {screen === 'folders' && (
-        <FoldersScreen onOpenFolder={handleOpenFolder} onOpenExam={handleOpenExam} />
+        <FoldersScreen
+          onOpenFolder={handleOpenFolder}
+          onOpenExam={handleOpenExam}
+          onOpenNote={handleOpenNote}
+          onOpenTrash={() => setScreen('trash')}
+          onOpenSettings={() => setScreen('settings')}
+        />
       )}
       {screen === 'list' && folder && (
         <NotesListScreen
@@ -97,6 +116,7 @@ export default function App() {
         <NoteEditor
           key={note.id}
           note={note}
+          folderName={folder?.name || ''}
           onOpenStudy={async () => {
             // Re-fetch from DB so the Study screen sees the latest scan results
             const fresh = await db.notes.get(note.id);
@@ -113,6 +133,12 @@ export default function App() {
       )}
       {screen === 'exam' && folder && (
         <ExamSummaryScreen folder={folder} onBack={handleBack} />
+      )}
+      {screen === 'trash' && (
+        <TrashScreen onBack={handleBackToFolders} />
+      )}
+      {screen === 'settings' && (
+        <SettingsScreen onBack={handleBackToFolders} />
       )}
     </div>
   );
