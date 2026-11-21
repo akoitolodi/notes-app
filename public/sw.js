@@ -2,7 +2,7 @@
  * Service worker — cache-first for app shell, network-first for API.
  * Makes the app installable and offline-capable.
  */
-const CACHE = 'ai-class-notes:v3';
+const CACHE = 'ai-class-notes:v4';
 const SHELL = [
   './',
   './index.html',
@@ -32,7 +32,24 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // App shell: cache-first, then network
+  // Navigations (index.html): network-first so deploys reach the phone,
+  // cache fallback when offline.
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request)
+        .then(response => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE).then(cache => cache.put(event.request, clone));
+          }
+          return response;
+        })
+        .catch(() => caches.match('./index.html'))
+    );
+    return;
+  }
+
+  // Other assets: cache-first, then network
   event.respondWith(
     caches.match(event.request).then(cached => {
       if (cached) return cached;
@@ -43,10 +60,6 @@ self.addEventListener('fetch', event => {
         }
         return response;
       }).catch(() => {
-        // Offline fallback: return the shell page for navigation requests
-        if (event.request.mode === 'navigate') {
-          return caches.match('./index.html');
-        }
         throw new Error('offline');
       });
     })

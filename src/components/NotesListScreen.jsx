@@ -113,6 +113,7 @@ export default function NotesListScreen({ folder, onOpenNote, onBack }) {
 
   const handleDelete = async (e, note) => {
     e.stopPropagation();
+    if (!confirm(`Delete "${note.title || 'New Note'}"?`)) return;
     await deleteNote(note.id);
     setNotes(await getNotesInFolder(folder.id));
   };

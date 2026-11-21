@@ -1,7 +1,7 @@
 /**
  * Serverless function: /api/scan — full-note AI scan.
  */
-import { scanNote } from '../../lib/ai.js';
+import { scanNote } from '../lib/ai.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {

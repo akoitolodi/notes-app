@@ -11,13 +11,14 @@ import ExamSummaryScreen from './components/ExamSummaryScreen';
 import { db, ensureSeeded } from './store/db';
 
 export default function App() {
+  const [ready, setReady] = useState(false);
   const [screen, setScreen] = useState('folders'); // folders | list | editor | study | exam
   const [folder, setFolder] = useState(null);
   const [note, setNote] = useState(null);
 
-  // Seed default folders on first load
+  // Seed default folders on first load — await before rendering screens
   useEffect(() => {
-    ensureSeeded();
+    ensureSeeded().finally(() => setReady(true));
   }, []);
 
   const handleOpenFolder = folder => {
@@ -66,6 +67,14 @@ export default function App() {
   };
 
   // Render current screen
+  if (!ready) {
+    return (
+      <div className="screen" style={{ alignItems: 'center', justifyContent: 'center' }}>
+        <div className="scan-indicator"><span className="spinner" /> Loading…</div>
+      </div>
+    );
+  }
+
   return (
     <div className="screen">
       {screen === 'folders' && (
