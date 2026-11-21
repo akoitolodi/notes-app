@@ -160,6 +160,17 @@ export default function StrokeLayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dims]);
 
+  // Initialize refWidth on first edit — capture the wrapper width so strokes scale correctly
+  useEffect(() => {
+    if (!editable || refWidth !== 0) return;
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const r = wrap.getBoundingClientRect();
+    if (r.width > 0) {
+      onChange?.({ refWidth: Math.round(r.width), strokes });
+    }
+  }, [editable, refWidth, strokes]);
+
   const getRefPoint = e => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
