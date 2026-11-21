@@ -18,6 +18,12 @@ import { scanLine } from '../api/scanLine';
 import { updateNote, moveNote } from '../store/db';
 import SlideUpPanel from './SlideUpPanel';
 import FolderPickerSheet from './FolderPickerSheet';
+import {
+  renderLineText,
+  VariantButtons,
+  MistakeBox,
+  NoteLine as NoteLineComponent,
+} from './InlineComponents';
 
 const VIEW_KEY = 'ai-class-notes:view';
 
@@ -123,7 +129,8 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
     const covered = new Set();
     blocks.forEach(b => {
       const m = /^line-(\d+)$/.exec(b.id);
-      if (m && b.text === newLines[parseInt(m[1], 10) - 1]) covered.add(parseInt(m[1], 10));
+      const n = m ? parseInt(m[1], 10) : -1;
+      if (n > 0 && n <= newLines.length && b.text === newLines[n - 1]) covered.add(n);
     });
     const linesToScan = [...new Set([...changedLines])]
       .filter(n => !covered.has(n));
@@ -337,16 +344,17 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
   // ---------- Checklists & hashtags (read mode) ----------
   const CHECK_RE = /^(\s*-\s\[)( |x|X)(\]\s*)(.*)$/;
 
-  const renderLineText = text => {
-    if (!text) return '\u00A0';
-    const parts = text.split(/(#[A-Za-z0-9_-]+)/);
-    if (parts.length === 1) return text;
-    return parts.map((p, i) =>
-      p.length > 1 && p[0] === '#'
-        ? <span key={i} className="hashtag">{p}</span>
-        : p
-    );
-  };
+  const toggleChecklist = useCallback(async lineIdx => {
+    const ls = body.split('\n');
+    const m = CHECK_RE.exec(ls[lineIdx]);
+    if (!m) return;
+    ls[lineIdx] = `${m[1]}${m[2] === ' ' ? 'x' : ' '}${m[3]}${m[4]}`;
+    const newBody = ls.join('\n');
+    setBody(newBody);
+    // Checklist ticks shouldn't trigger an AI re-scan on next Save
+    savedRef.current = { ...savedRef.current, body: newBody };
+    await updateNote(note.id, { body: newBody });
+  }, [body, note]);
 
   // Fire the print dialog (system dialog → "Save as PDF") once the print
   // view is mounted, then clean it up.
@@ -364,7 +372,7 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
   }, [printPayload, showToast]);
 
   const explBlocks = blocks.filter(b => b.explanation || b.simpler || b.example);
-  const printPortal = printPayload
+  const printPortal = (printPayload && typeof document !== 'undefined' && document.body)
     ? createPortal(
         <div className="print-root">
           <h1 className="print-title">{printPayload.title}</h1>
@@ -483,127 +491,6 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
     return block.explanation || '';
   };
 
-  const VariantButtons = ({ block }) => (
-    <>
-      <div className="explanation-actions">
-        <button
-          className="btn btn-secondary"
-          disabled={busyLine === block.id}
-          onClick={() => handleLineRequest(block.id, 'simpler')}
-        >
-          {busyLine === block.id && expandedInline[block.id] === 'simpler' ? '…' : 'Explain simpler'}
-        </button>
-        <button
-          className="btn btn-secondary"
-          disabled={busyLine === block.id}
-          onClick={() => handleLineRequest(block.id, 'example')}
-        >
-          {busyLine === block.id && expandedInline[block.id] === 'example' ? '…' : 'Give example'}
-        </button>
-      </div>
-      {block.show && block.show !== 'main' && (
-        <button
-          className="btn btn-ghost"
-          style={{ width: '100%', padding: '6px 0', fontSize: 13 }}
-          onClick={() => handleShowOriginal(block.id)}
-        >
-          Show original explanation
-        </button>
-      )}
-    </>
-  );
-
-  /** Mistake reason + Accept fix / Ignore buttons (shared across views). */
-  const MistakeBox = ({ mistake, block }) => (
-    <div className="inline-mistake">
-      ⚠ {mistake.reason} <em>Suggestion: {mistake.correction}</em>
-      <div className="mistake-actions">
-        <button onClick={() => applyCorrection(block, mistake)}>Accept fix</button>
-        <button onClick={() => dismissMistake(block.id)}>Ignore</button>
-      </div>
-    </div>
-  );
-
-  /** Tick/untick a checklist line ("- [ ] item" → "- [x] item"). */
-  const toggleChecklist = useCallback(async lineIdx => {
-    const ls = body.split('\n');
-    const m = CHECK_RE.exec(ls[lineIdx]);
-    if (!m) return;
-    ls[lineIdx] = `${m[1]}${m[2] === ' ' ? 'x' : ' '}${m[3]}${m[4]}`;
-    const newBody = ls.join('\n');
-    setBody(newBody);
-    // Checklist ticks shouldn't trigger an AI re-scan on next Save
-    savedRef.current = { ...savedRef.current, body: newBody };
-    await updateNote(note.id, { body: newBody });
-  }, [body, note]);
-
-  /** One rendered note line (used in all three views). */
-  const NoteLine = ({ i }) => {
-    const b = blockByLine[i];
-    const mistake = lineMistake(i);
-    const hasExpl = lineHasExpl(i);
-    const open = b ? expandedInline[b.id] : null;
-    const checkMatch = CHECK_RE.exec(lines[i] || '');
-    const checked = checkMatch && checkMatch[2] !== ' ';
-    return (
-      <div className="note-line-wrap">
-        {checkMatch ? (
-          <div
-            className="note-line check"
-            onClick={() => toggleChecklist(i)}
-            style={{ cursor: 'pointer', position: 'relative' }}
-          >
-            <span className={`check-box${checked ? ' checked' : ''}`} aria-hidden="true">✓</span>
-            <span style={checked ? { textDecoration: 'line-through', opacity: 0.5 } : null}>
-              {checkMatch[4] || '\u00A0'}
-            </span>
-          </div>
-        ) : (
-          <div
-            className={`note-line${mistake ? ' has-mistake' : ''}`}
-            onClick={() => {
-              if (!b) return;
-              if (view === 'panel') {
-                setSelectedLineId(b.id);
-                setPanelOpen(true);
-              } else {
-                setExpandedInline(prev => ({ ...prev, [b.id]: prev[b.id] ? null : 'main' }));
-              }
-            }}
-            style={{ cursor: b ? 'pointer' : 'default', position: 'relative' }}
-          >
-            {hasExpl && <span className="line-dot" aria-hidden="true" />}
-            {renderLineText(lines[i])}
-          </div>
-        )}
-
-        {/* Inline view: collapsed explanation under the line */}
-        {view === 'inline' && b && (b.explanation || b.simpler || b.example) && (
-          <div className="inline-explanation" onClick={e => e.stopPropagation()}>
-            <div
-              className="inline-collapsed"
-              onClick={() => setExpandedInline(prev => ({ ...prev, [b.id]: prev[b.id] ? null : 'main' }))}
-            >
-              {b.show && b.show !== 'main' ? `(${b.show}) ` : ''}{activeVariant(b).slice(0, 90)}{activeVariant(b).length > 90 ? '…' : ''}
-            </div>
-            {open && (
-              <div className="inline-expanded">
-                <div className="explanation-text">{activeVariant(b)}</div>
-                {busyLine === b.id && <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Thinking…</div>}
-                <VariantButtons block={b} />
-                {mistake && !dismissed[b.id] && <MistakeBox mistake={mistake} block={b} />}
-              </div>
-            )}
-          </div>
-        )}
-
-        {mistake && !dismissed[b.id] && view !== 'inline' && (
-          <MistakeBox mistake={mistake} block={b} />
-        )}
-      </div>
-    );
-  };
-
   const notePage = (
     <div className="editor safe-bottom">
       <div className="read-title">{title || 'New Note'}</div>
@@ -611,7 +498,27 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
         📁 {folderLabel || 'Folder'} <span className="folder-chip-chevron">›</span>
       </button>
       <div className="note-lines">
-        {lines.map((_, i) => <NoteLine key={i} i={i} />)}
+        {lines.map((_, i) => (
+          <NoteLineComponent
+            key={i}
+            i={i}
+            lines={lines}
+            blockByLine={blockByLine}
+            lineHasExpl={lineHasExpl}
+            lineMistake={lineMistake}
+            expandedInline={expandedInline}
+            view={view}
+            onOpenPanel={id => { setSelectedLineId(id); setPanelOpen(true); }}
+            onExpandInline={id => setExpandedInline(prev => ({ ...prev, [id]: prev[id] ? null : 'main' }))}
+            onToggleChecklist={toggleChecklist}
+            onLineRequest={handleLineRequest}
+            showOriginal={handleShowOriginal}
+            applyCorrection={applyCorrection}
+            dismissMistake={dismissMistake}
+            busyLine={busyLine}
+            dismissed={dismissed}
+          />
+        ))}
       </div>
     </div>
   );
@@ -623,14 +530,28 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
       <div className="swipe-page">
         <div className="editor safe-bottom">
           <div className="read-title" style={{ fontSize: 22 }}>Explanations</div>
-          {blocks.filter(b => b.explanation || b.simpler || b.example).map(b => (
+          {explBlocks.map(b => (
             <div key={b.id} className="explanation-card">
               <div className="explanation-line">{b.text}</div>
               <div className="explanation-text">
                 {busyLine === b.id ? 'Thinking…' : activeVariant(b) || 'No explanation yet.'}
               </div>
-              <VariantButtons block={b} />
-              {b.mistake && !dismissed[b.id] && <MistakeBox mistake={b.mistake} block={b} />}
+              <VariantButtons
+                block={b}
+                busyLine={busyLine}
+                expandedInline={expandedInline}
+                onExplainSimpler={id => handleLineRequest(id, 'simpler')}
+                onGiveExample={id => handleLineRequest(id, 'example')}
+                onShowOriginal={handleShowOriginal}
+              />
+              {b.mistake && !dismissed[b.id] && (
+                <MistakeBox
+                  mistake={b.mistake}
+                  block={b}
+                  onApplyCorrection={applyCorrection}
+                  onDismissMistake={dismissMistake}
+                />
+              )}
             </div>
           ))}
           {blocks.length === 0 && (
@@ -703,7 +624,7 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
       {exportOpen && (
         <div className="export-overlay" onClick={() => setExportOpen(false)}>
           <div className="export-sheet" onClick={e => e.stopPropagation()}>
-            <div className="export-title">Share &amp; Export</div>
+            <div className="export-title">Share & Export</div>
             <button className="export-btn" onClick={handleShareText}>📤 Share note as text</button>
             <button className="export-btn" onClick={handleCopyText}>📋 Copy note text</button>
             <button className="export-btn" onClick={() => handlePrintPdf(false)}>📄 Save as PDF</button>
@@ -715,8 +636,6 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
         </div>
       )}
 
-      {toast && <div className="toast">{toast}</div>}
-
       {moveOpen && (
         <FolderPickerSheet
           currentId={note.folderId}
@@ -725,6 +644,7 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
         />
       )}
 
+      {toast && <div className="toast">{toast}</div>}
       {printPortal}
     </div>
   );
