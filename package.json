@@ -10,6 +10,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@capacitor/camera": "^8.2.6",
+    "@capacitor/filesystem": "^8.1.5",
     "cors": "^2.8.6",
     "dexie": "^4.4.7",
     "react": "^18.3.1",

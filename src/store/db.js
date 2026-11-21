@@ -1,6 +1,7 @@
 /**
  * Dexie (IndexedDB) database — real offline persistence (Phase 2).
  * Schema: folders (one per subject) → notes → AI blocks stored as JSON on the note.
+ * v3: images[] and drawings[] on notes for v1.2.0 (images + drawing)
  */
 import Dexie from 'dexie';
 
@@ -13,6 +14,13 @@ db.version(1).stores({
 
 // v2: cache AI exam summaries per folder (avoids re-calling the AI every open)
 db.version(2).stores({
+  folders: '++id, name, createdAt',
+  notes: '++id, folderId, title, updatedAt, pinned, createdAt',
+  examCache: 'folderId',
+});
+
+// v3: images and drawings for v1.2.0
+db.version(3).stores({
   folders: '++id, name, createdAt',
   notes: '++id, folderId, title, updatedAt, pinned, createdAt',
   examCache: 'folderId',
@@ -98,6 +106,8 @@ export async function createNote(folderId, title = '', body = '') {
     blocks: [],
     flashcards: [],
     quiz: [],
+    images: [], // [{ id, path, dataUrl }] — v1.2.0
+    drawings: [], // [{ id, strokes: [{ tool, color, width, points }] }] — v1.2.0
     pinned: false,
     createdAt: now,
     updatedAt: now,

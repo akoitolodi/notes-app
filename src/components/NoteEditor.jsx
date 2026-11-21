@@ -18,6 +18,8 @@ import { scanLine } from '../api/scanLine';
 import { updateNote, moveNote } from '../store/db';
 import SlideUpPanel from './SlideUpPanel';
 import FolderPickerSheet from './FolderPickerSheet';
+import DrawingCanvas from './DrawingCanvas';
+import ImageStrip from './ImageManager';
 import {
   renderLineText,
   VariantButtons,
@@ -61,6 +63,9 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
   const [toast, setToast] = useState(null);
   const [moveOpen, setMoveOpen] = useState(false);
   const [folderLabel, setFolderLabel] = useState(folderName || '');
+  const [images, setImages] = useState(note?.images || []); // v1.2.0
+  const [drawings, setDrawings] = useState(note?.drawings || []); // v1.2.0
+  const [showDrawing, setShowDrawing] = useState(false);
 
   // Undo/redo history for the note body (typed edits are debounced in)
   const undoRef = useRef({ stack: [note?.body || ''], index: 0, timer: null });
@@ -78,6 +83,9 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
     setBody(note?.body || '');
     setSubject(note?.subject || 'General');
     setBlocks(note?.blocks || []);
+    setImages(note?.images || []);
+    setDrawings(note?.drawings || []);
+    setShowDrawing(false);
     setFlashcards(note?.flashcards || []);
     setQuiz(note?.quiz || []);
     savedRef.current = { title: note?.title || '', body: note?.body || '' };
@@ -165,6 +173,8 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
         body,
         subject,
         blocks: merged,
+        images,
+        drawings,
         flashcards: result.flashcards?.length ? result.flashcards : flashcards,
         quiz: result.quiz?.length ? result.quiz : quiz,
       });
@@ -175,12 +185,12 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
       // successful Save re-scans the changed lines).
       setScanError(err.message);
       try {
-        await updateNote(note.id, { title, body, subject });
+        await updateNote(note.id, { title, body, subject, images, drawings });
       } catch {/* keep the error visible; text remains in the editor */}
     } finally {
       setIsScanning(false);
     }
-  }, [title, body, subject, note, blocks, flashcards, quiz]);
+  }, [title, body, subject, note, blocks, flashcards, quiz, images, drawings]);
 
   /** Re-scan one line: request = 'simpler' | 'example' */
   const handleLineRequest = useCallback(async (lineId, request) => {
@@ -356,6 +366,26 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
     await updateNote(note.id, { body: newBody });
   }, [body, note]);
 
+  // ---------- Images (v1.2.0) ----------
+  const addImage = useCallback(async dataUrl => {
+    const img = { id: `img-${Date.now()}`, dataUrl };
+    const next = [...images, img];
+    setImages(next);
+    await updateNote(note.id, { images: next });
+  }, [images, note]);
+
+  const removeImage = useCallback(async imgId => {
+    const next = images.filter(i => i.id !== imgId);
+    setImages(next);
+    await updateNote(note.id, { images: next });
+  }, [images, note]);
+
+  // ---------- Drawings (v1.2.0) ----------
+  const updateDrawings = useCallback(async nextStrokes => {
+    setDrawings(nextStrokes);
+    await updateNote(note.id, { drawings: nextStrokes });
+  }, [note]);
+
   // Fire the print dialog (system dialog → "Save as PDF") once the print
   // view is mounted, then clean it up.
   useEffect(() => {
@@ -379,6 +409,23 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
           <div className="print-meta">
             {new Date().toLocaleDateString([], { year: 'numeric', month: 'long', day: 'numeric' })}
           </div>
+
+          {/* Images in PDF (v1.2.0) */}
+          {images.length > 0 && (
+            <div className="print-images">
+              {images.map(img => (
+                <img key={img.id} src={img.dataUrl} alt="note image" style={{ maxWidth: '45%', margin: 4, borderRadius: 4 }} />
+              ))}
+            </div>
+          )}
+
+          {/* Drawing in PDF (v1.2.0) */}
+          {drawings.length > 0 && (
+            <div className="print-drawing" style={{ marginBottom: 16 }}>
+              <DrawingCanvas strokes={drawings} readOnly height={250} bgColor="#ffffff" />
+            </div>
+          )}
+
           <div className="print-body">
             {printPayload.body.split('\n').map((l, i) => (
               <p key={i} className="print-line">{l || '\u00A0'}</p>
@@ -454,6 +501,34 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
             type="text" className="editor-subject" placeholder="Subject (e.g. Biology)"
             value={subject} onChange={e => setSubject(e.target.value)} aria-label="Subject"
           />
+
+          {/* Images (v1.2.0) */}
+          <ImageStrip
+            images={images}
+            onAdd={addImage}
+            onRemove={removeImage}
+          />
+
+          {/* Drawing toggle (v1.2.0) */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+            <button
+              className={`btn ${showDrawing ? 'btn-primary' : 'btn-secondary'}`}
+              style={{ padding: '6px 14px', fontSize: 14 }}
+              onClick={() => setShowDrawing(s => !s)}
+            >
+              ✏️ {showDrawing ? 'Hide drawing' : 'Draw'}
+            </button>
+          </div>
+
+          {showDrawing && (
+            <DrawingCanvas
+              strokes={drawings}
+              onChange={updateDrawings}
+              height={300}
+              bgColor="transparent"
+            />
+          )}
+
           <textarea
             ref={textareaRef}
             className="editor-body" placeholder="Start typing your notes…  (- [ ] makes a checklist, #tag marks topics)"
@@ -497,6 +572,19 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
       <button className="folder-chip" onClick={() => setMoveOpen(true)} aria-label="Move to folder">
         📁 {folderLabel || 'Folder'} <span className="folder-chip-chevron">›</span>
       </button>
+
+      {/* Images (v1.2.0) */}
+      {images.length > 0 && (
+        <ImageStrip images={images} readOnly />
+      )}
+
+      {/* Drawings (v1.2.0) */}
+      {drawings.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <DrawingCanvas strokes={drawings} readOnly height={250} />
+        </div>
+      )}
+
       <div className="note-lines">
         {lines.map((_, i) => (
           <NoteLineComponent
