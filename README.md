@@ -77,3 +77,4 @@ backend at `http://127.0.0.1:8080` (see `src/config.js`).
 | `npx vite` | Dev server with hot reload |
 | `node qa-review.js <model>` | Ask an AI to review the codebase for bugs |
 # CI trigger Sat Nov 21 23:07:11 CST 2026
+# Debug Sat Nov 21 23:15:45 CST 2026
