@@ -53,7 +53,7 @@ export default function FoldersScreen({ onOpenFolder, onOpenExam }) {
           </svg>
         </button>
       </header>
-      <div className="large-title safe-top" style={{ paddingTop: 12 }}>Folders</div>
+      <div className="large-title" style={{ paddingTop: 12 }}>Folders</div>
 
       {showNewFolder && (
         <div className="list-group" style={{ padding: 12 }}>
