@@ -413,7 +413,7 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
         <button className="navbar-btn" style={{ width: 'auto', paddingLeft: 0 }} onClick={onBackToList} aria-label="Back to notes list">
           ‹ Notes
         </button>
-        <span className="navbar-title" style={{ fontSize: 15 }}>{title || 'New Note'}</span>
+        <span className="navbar-title" style={{ fontSize: 15, opacity: 0 }}>{'\u00A0'}</span>
         <div className="flex items-center gap-8">
           <button className="navbar-btn" onClick={() => setMode('edit')} aria-label="Edit note">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -429,7 +429,7 @@ export default function NoteEditor({ note, onOpenStudy, onBackToList }) {
       </header>
 
       {/* View switcher — segmented control */}
-      <div className="view-switcher safe-top" style={{ paddingTop: 8 }}>
+      <div className="view-switcher" style={{ paddingTop: 8 }}>
         {[['panel', 'Panel'], ['inline', 'Inline'], ['swipe', 'Swipe']].map(([v, label]) => (
           <button
             key={v}

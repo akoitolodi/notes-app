@@ -3,6 +3,7 @@
   "appName": "AI Class Notes",
   "webDir": "dist",
   "server": {
-    "cleartext": true
+    "cleartext": true,
+    "androidScheme": "http"
   }
 }

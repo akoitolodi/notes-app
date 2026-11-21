@@ -4,11 +4,19 @@
 import { API_BASE } from '../config';
 
 export async function scanLine(note, line, request = 'simpler') {
-  const res = await fetch(`${API_BASE}/api/scan-line`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ note, line, request }),
-  });
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/api/scan-line`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note, line, request }),
+    });
+  } catch {
+    throw new Error(
+      `Can't reach the AI backend${API_BASE ? ` at ${API_BASE}` : ''}. ` +
+      'If you are using the phone app, start the Termux server: node server.js'
+    );
+  }
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Scan failed' }));

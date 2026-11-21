@@ -52,7 +52,7 @@ export default function ExamSummaryScreen({ folder, onBack }) {
           ↻
         </button>
       </header>
-      <div className="large-title safe-top" style={{ paddingTop: 12 }}>{folder.name}</div>
+      <div className="large-title" style={{ paddingTop: 12 }}>{folder.name}</div>
 
       {loading && (
         <div className="scan-indicator">
