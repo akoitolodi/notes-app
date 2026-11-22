@@ -93,6 +93,22 @@ export const PROVIDERS = {
     ],
     keyUrl: 'https://build.nvidia.com',
   },
+  kilo: {
+    name: 'Kilo',
+    badge: 'Free models',
+    free: true,
+    baseUrl: 'https://api.kilo.ai/api/gateway',
+    defaultModel: 'nvidia/nemotron-3.5-super-vl:free',
+    models: [
+      'nvidia/nemotron-3.5-super-vl:free',
+      'inclusionai/ling-3.2-flash:free',
+      'baidu/ernie-5.5-flash-preview:free',
+      'anthropic/claude-sonnet-4.6',
+      'openai/gpt-5.4',
+      'google/gemini-3-pro-preview',
+    ],
+    keyUrl: 'https://kilo.ai',
+  },
   custom: {
     name: 'Custom',
     badge: 'Your endpoint',
