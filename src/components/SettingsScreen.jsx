@@ -268,6 +268,41 @@ export default function SettingsScreen({ onBack }) {
             >
               {showAdvanced ? 'Hide advanced' : 'Advanced (base URL, model)'}
             </button>
+
+            {showAdvanced && (
+              <>
+                <div className="settings-label" style={{ marginTop: 12 }}>Base URL</div>
+                <input
+                  type="url"
+                  className="ai-input"
+                  value={baseUrl}
+                  onChange={handleBaseUrlChange}
+                  placeholder="OpenAI-compatible endpoint"
+                  spellCheck="false"
+                />
+                <div className="settings-label" style={{ marginTop: 12 }}>Model</div>
+                <input
+                  type="text"
+                  className="ai-input"
+                  value={model}
+                  onChange={handleModelChange}
+                  placeholder="Model ID"
+                  spellCheck="false"
+                />
+                <div className="settings-label" style={{ marginTop: 12 }}>🧠 Reasoning model (Deep Think)</div>
+                <input
+                  type="text"
+                  className="ai-input"
+                  value={reasonModel}
+                  onChange={handleReasonModelChange}
+                  placeholder="e.g. deepseek-r1-distill-llama-70b"
+                  spellCheck="false"
+                />
+                <div className="settings-tip" style={{ marginTop: 6 }}>
+                  Defaults: {PROVIDERS[provider]?.name} → <strong>{PROVIDERS[provider]?.defaultModel || '—'}</strong> · reasoning → <strong>{PROVIDERS[provider]?.reasonModel || '—'}</strong>
+                </div>
+              </>
+            )}
           </>
         )}
 
