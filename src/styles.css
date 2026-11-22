@@ -122,6 +122,8 @@ a:active { opacity: 0.7; }
   height: 100%;
   padding-top: calc(56px + env(safe-area-inset-top, 0px));
   background: var(--bg);
+  overflow-y: auto;                  /* screens scroll within themselves — Settings lists etc. */
+  -webkit-overflow-scrolling: touch; /* smooth momentum scrolling on mobile */
 }
 
 /* Safe area for notched phones — used on navbar and bottom sheet */
@@ -1091,18 +1093,6 @@ a:active { opacity: 0.7; }
   margin-top: 6px;
 }
 .ai-input:focus { border-color: var(--accent); }
-.key-row { display: flex; gap: 8px; align-items: stretch; margin-top: 6px; }
-.key-row .ai-input { flex: 1; margin-top: 0; }
-.key-toggle {
-  border: 1px solid var(--divider);
-  border-radius: 10px;
-  background: var(--bg-elevated);
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-family: inherit;
-  padding: 0 12px;
-  cursor: pointer;
-}
 
 /* ============================================================
    Utility

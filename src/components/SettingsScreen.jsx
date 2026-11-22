@@ -70,7 +70,6 @@ export default function SettingsScreen({ onBack }) {
     localStorage.setItem(MODEL_KEY, e.target.value);
   };
 
-  const [showKey, setShowKey] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const testConnection = async () => {
@@ -212,20 +211,20 @@ export default function SettingsScreen({ onBack }) {
             </div>
 
             <div className="settings-label" style={{ marginTop: 16 }}>API key</div>
-            <div className="key-row">
-              <input
-                type={showKey ? 'text' : 'password'}
-                className="ai-input"
-                value={key}
-                onChange={handleKeyChange}
-                placeholder="Paste your API key"
-                autoComplete="off"
-                spellCheck="false"
-              />
-              <button className="key-toggle" onClick={() => setShowKey(s => !s)} aria-label="Show or hide key">
-                {showKey ? 'Hide' : 'Show'}
-              </button>
-            </div>
+            <input
+              type="password"
+              className="ai-input"
+              value={key}
+              onChange={handleKeyChange}
+              placeholder="Paste your API key"
+              autoComplete="off"
+              spellCheck="false"
+            />
+            {key && (
+              <div className="settings-tip" style={{ marginTop: 6 }}>
+                Key saved for {PROVIDERS[provider]?.name} — stored only on this device.
+              </div>
+            )}
             {PROVIDERS[provider]?.keyUrl && (
               <div className="settings-tip" style={{ marginTop: 6 }}>
                 Free key: <a href={PROVIDERS[provider].keyUrl} target="_blank" rel="noopener" style={{ color: 'var(--accent)' }}>{PROVIDERS[provider].keyUrl.replace('https://', '')}</a>
