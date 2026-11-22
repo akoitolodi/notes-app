@@ -1,15 +1,15 @@
 /**
- * StrokeLayer — full-page annotation overlay.
- * A transparent canvas that covers its (position:relative) parent and renders
- * strokes scaled to the stored reference width, so drawings survive font-size
- * changes and rotation.
+ * StrokeLayer — annotation canvas for notes.
+ *
+ * Architecture (v1.2.0-beta.5): the canvas is VIEWPORT-SIZED (position:fixed)
+ * and re-renders on every scroll, translated by the note page's live position.
+ * Strokes are stored in CONTENT space (relative to the note page), so they
+ * stick to the text when scrolling, and drawing works at ANY scroll position
+ * — the "can only annotate the top part" problem is structurally impossible.
  *
  * Strokes: [{ tool, color, width, fontSize?, text?, points: [{x,y}] }]
- * Coordinates are stored in "reference space" (refWidth). The layer converts
- * pointer input from live CSS pixels into reference space, so everything
- * scales proportionally.
- *
  * Tools: pen, highlighter, eraser (removes whole strokes), arrow, line, text.
+ * One finger = draw · Two fingers = scroll the note.
  */
 import { useState, useRef, useEffect, useCallback } from 'react';
 
@@ -43,8 +43,8 @@ export function toolWidth(tool, size) {
   return (w[tool] || w.pen)[size] || 5;
 }
 
-/** Draw one stroke into ctx. scale converts reference space → canvas space. */
-function drawStroke(ctx, s, scale) {
+/** Draw one stroke. ctx is pre-translated to content space and pre-scaled. */
+function drawStroke(ctx, s) {
   const pts = s.points || [];
   if (!pts.length) return;
 
@@ -52,9 +52,9 @@ function drawStroke(ctx, s, scale) {
     const p = pts[0];
     ctx.globalAlpha = 1;
     ctx.fillStyle = s.color || '#000';
-    ctx.font = `${(s.fontSize || 20) * scale}px -apple-system, 'Helvetica Neue', Arial, sans-serif`;
+    ctx.font = `${s.fontSize || 20}px -apple-system, 'Helvetica Neue', Arial, sans-serif`;
     ctx.textBaseline = 'top';
-    ctx.fillText(s.text || '', p.x * scale, p.y * scale);
+    ctx.fillText(s.text || '', p.x, p.y);
     return;
   }
 
@@ -63,20 +63,20 @@ function drawStroke(ctx, s, scale) {
     const a = pts[0], b = pts[1];
     ctx.globalAlpha = 1;
     ctx.strokeStyle = s.color || '#000';
-    ctx.lineWidth = (s.width || 4) * scale;
+    ctx.lineWidth = s.width || 4;
     ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.moveTo(a.x * scale, a.y * scale);
-    ctx.lineTo(b.x * scale, b.y * scale);
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
     ctx.stroke();
     if (s.tool === 'arrow') {
-      const ang = Math.atan2((b.y - a.y), (b.x - a.x));
-      const head = 10 * scale + (s.width || 4) * scale * 1.6;
+      const ang = Math.atan2(b.y - a.y, b.x - a.x);
+      const head = 10 + (s.width || 4) * 1.6;
       ctx.beginPath();
-      ctx.moveTo(b.x * scale, b.y * scale);
-      ctx.lineTo(b.x * scale - head * Math.cos(ang - Math.PI / 7), b.y * scale - head * Math.sin(ang - Math.PI / 7));
-      ctx.moveTo(b.x * scale, b.y * scale);
-      ctx.lineTo(b.x * scale - head * Math.cos(ang + Math.PI / 7), b.y * scale - head * Math.sin(ang + Math.PI / 7));
+      ctx.moveTo(b.x, b.y);
+      ctx.lineTo(b.x - head * Math.cos(ang - Math.PI / 7), b.y - head * Math.sin(ang - Math.PI / 7));
+      ctx.moveTo(b.x, b.y);
+      ctx.lineTo(b.x - head * Math.cos(ang + Math.PI / 7), b.y - head * Math.sin(ang + Math.PI / 7));
       ctx.stroke();
     }
     return;
@@ -86,19 +86,19 @@ function drawStroke(ctx, s, scale) {
   const isHl = s.tool === 'highlighter';
   ctx.globalAlpha = isHl ? 0.4 : 1;
   ctx.strokeStyle = s.color || '#000';
-  ctx.lineWidth = (s.width || 5) * scale;
+  ctx.lineWidth = s.width || 5;
   ctx.lineCap = isHl ? 'butt' : 'round';
   ctx.lineJoin = 'round';
   if (pts.length === 1) {
     ctx.beginPath();
-    ctx.arc(pts[0].x * scale, pts[0].y * scale, (s.width || 5) * scale / 2, 0, Math.PI * 2);
+    ctx.arc(pts[0].x, pts[0].y, (s.width || 5) / 2, 0, Math.PI * 2);
     ctx.fillStyle = s.color || '#000';
     ctx.fill();
     return;
   }
   ctx.beginPath();
-  ctx.moveTo(pts[0].x * scale, pts[0].y * scale);
-  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x * scale, pts[i].y * scale);
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
   ctx.stroke();
 }
 
@@ -112,11 +112,40 @@ export default function StrokeLayer({
 }) {
   const wrapRef = useRef(null);
   const canvasRef = useRef(null);
-  const currentRef = useRef(null); // in-progress stroke
+  const pageRef = useRef(null);     // the note-page-wrap element (content anchor)
+  const scrollElRef = useRef(null); // the .editor scroll container
+  const currentRef = useRef(null);  // in-progress stroke
+  const scrollMode = useRef(null);  // two-finger scroll state
   const [dims, setDims] = useState({ w: 0, h: 0 });
 
   const strokes = drawing?.strokes || [];
   const refWidth = drawing?.refWidth || 0;
+
+  // Find the content anchor (parent = .note-page-wrap) and scroll container
+  useEffect(() => {
+    const page = wrapRef.current?.parentElement;
+    pageRef.current = page;
+    let el = page;
+    while (el && el !== document.body) {
+      if (el.classList?.contains('editor')) { scrollElRef.current = el; break; }
+      el = el.parentElement;
+    }
+  }, []);
+
+  const pageRect = useCallback(() => {
+    const el = pageRef.current;
+    return el ? el.getBoundingClientRect() : { left: 0, top: 0, width: 0 };
+  }, []);
+
+  /** client (viewport) point → content space */
+  const toContent = useCallback((clientX, clientY) => {
+    const r = pageRect();
+    const scale = refWidth ? r.width / refWidth : 1;
+    return {
+      x: (clientX - r.left) / (scale || 1),
+      y: (clientY - r.top) / (scale || 1),
+    };
+  }, [refWidth, pageRect]);
 
   const redraw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -125,14 +154,23 @@ export default function StrokeLayer({
     const dpr = window.devicePixelRatio || 1;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, dims.w, dims.h);
-    const scale = refWidth ? dims.w / refWidth : 1;
-    strokes.forEach(st => drawStroke(ctx, st, scale));
-    if (currentRef.current) drawStroke(ctx, currentRef.current, scale);
-  }, [strokes, refWidth, dims]);
+    const r = pageRect();
+    const scale = refWidth ? r.width / refWidth : 1;
+    ctx.save();
+    ctx.translate(r.left, r.top);
+    ctx.scale(scale, scale);
+    strokes.forEach(st => drawStroke(ctx, st));
+    if (currentRef.current) drawStroke(ctx, currentRef.current);
+    ctx.restore();
+  }, [strokes, refWidth, dims, pageRect]);
+
+  // Keep the latest redraw reachable from non-reactive listeners (scroll)
+  const redrawRef = useRef(redraw);
+  useEffect(() => { redrawRef.current = redraw; }, [redraw]);
 
   useEffect(() => { redraw(); }, [redraw]);
 
-  // Size the canvas to its parent (the annotation wrapper)
+  // Size the canvas to the viewport (fixed overlay)
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
@@ -147,7 +185,8 @@ export default function StrokeLayer({
     update();
     const ro = new ResizeObserver(update);
     ro.observe(wrap);
-    return () => ro.disconnect();
+    window.addEventListener('resize', update);
+    return () => { ro.disconnect(); window.removeEventListener('resize', update); };
   }, []);
 
   useEffect(() => {
@@ -160,49 +199,28 @@ export default function StrokeLayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dims]);
 
-  // Initialize refWidth on first edit — capture the wrapper width so strokes scale correctly
+  // Re-render on scroll so strokes stay glued to the text
   useEffect(() => {
-    if (!editable || refWidth !== 0) return;
-    const wrap = wrapRef.current;
-    if (!wrap) return;
-    const r = wrap.getBoundingClientRect();
-    if (r.width > 0) {
-      onChange?.({ refWidth: Math.round(r.width), strokes });
-    }
-  }, [editable, refWidth, strokes]);
-
-  const getRefPoint = e => {
-    const canvas = canvasRef.current;
-    if (!canvas) return { x: 0, y: 0 };
-    const rect = canvas.getBoundingClientRect();
-    const t = e.touches ? e.touches[0] : e;
-    const scale = refWidth ? rect.width / refWidth : 1;
-    return {
-      x: (t.clientX - rect.left) / (scale || 1),
-      y: (t.clientY - rect.top) / (scale || 1),
+    const el = scrollElRef.current || window;
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => { raf = 0; redrawRef.current(); });
     };
-  };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, []);
 
   // ---------- Two-finger scroll while drawing ----------
-  // With touchAction: none, one finger draws — but the user could never scroll
-  // down a long note. Two fingers = scroll the note container instead.
-  const scrollMode = useRef(null); // { startMidY, startScrollTop, count }
-  const findScrollContainer = () => {
-    let el = wrapRef.current;
-    while (el && el !== document.body) {
-      if (el.classList?.contains('editor')) return el;
-      el = el.parentElement;
-    }
-    return null;
-  };
-
   const handleTwoFingerStart = e => {
     const t1 = e.touches[0], t2 = e.touches[1];
     const midY = (t1.clientY + t2.clientY) / 2;
-    const container = findScrollContainer();
+    const container = scrollElRef.current;
     if (!container) return;
     scrollMode.current = { startMidY: midY, startScrollTop: container.scrollTop };
-    // Abort any in-progress stroke
     if (currentRef.current) { currentRef.current = null; redraw(); }
   };
 
@@ -211,28 +229,25 @@ export default function StrokeLayer({
     if (!sm) return;
     const t1 = e.touches[0], t2 = e.touches[1];
     const midY = (t1.clientY + t2.clientY) / 2;
-    const container = findScrollContainer();
+    const container = scrollElRef.current;
     if (container) container.scrollTop = sm.startScrollTop - (midY - sm.startMidY);
   };
 
   const commitStroke = stroke => {
-    const canvas = canvasRef.current;
-    const rectW = canvas ? canvas.getBoundingClientRect().width : 0;
+    const r = pageRect();
     onChange?.({
-      refWidth: drawing?.refWidth || Math.round(rectW) || 0,
+      refWidth: drawing?.refWidth || Math.round(r.width) || 0,
       strokes: [...strokes, stroke],
     });
   };
 
-  const eraseAt = pRef => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const scale = refWidth ? rect.width / refWidth : 1;
+  const eraseAt = pContent => {
+    const r = pageRect();
+    const scale = refWidth ? r.width / refWidth : 1;
     const rRef = toolWidth('eraser', size) / 2 / (scale || 1);
     const filtered = strokes.filter(st =>
       !(st.points || []).some(pt =>
-        Math.hypot(pt.x - pRef.x, pt.y - pRef.y) < rRef + (st.width || 5) / 2
+        Math.hypot(pt.x - pContent.x, pt.y - pContent.y) < rRef + (st.width || 5) / 2
       )
     );
     if (filtered.length !== strokes.length) {
@@ -242,15 +257,14 @@ export default function StrokeLayer({
 
   const handleStart = e => {
     if (!editable) return;
-    // Two fingers → scroll the note instead of drawing
     if (e.touches && e.touches.length >= 2) {
       handleTwoFingerStart(e);
       return;
     }
-    if (scrollMode.current) return; // fingers still lifting after a scroll
+    if (scrollMode.current) return;
     e.preventDefault();
     if (tool === 'text') {
-      const p = getRefPoint(e);
+      const p = toContent(e.touches ? e.touches[0].clientX : e.clientX, e.touches ? e.touches[0].clientY : e.clientY);
       let text = null;
       try { text = window.prompt('Text label'); } catch { text = null; }
       if (text && text.trim()) {
@@ -266,10 +280,10 @@ export default function StrokeLayer({
       return;
     }
     if (tool === 'eraser') {
-      eraseAt(getRefPoint(e));
+      eraseAt(toContent(e.touches ? e.touches[0].clientX : e.clientX, e.touches ? e.touches[0].clientY : e.clientY));
       return;
     }
-    const p = getRefPoint(e);
+    const p = toContent(e.touches ? e.touches[0].clientX : e.clientX, e.touches ? e.touches[0].clientY : e.clientY);
     currentRef.current = {
       tool,
       color,
@@ -288,7 +302,7 @@ export default function StrokeLayer({
     }
     if (scrollMode.current) return;
     e.preventDefault();
-    const p = getRefPoint(e);
+    const p = toContent(e.touches ? e.touches[0].clientX : e.clientX, e.touches ? e.touches[0].clientY : e.clientY);
     if (tool === 'eraser') {
       eraseAt(p);
       return;
@@ -305,9 +319,8 @@ export default function StrokeLayer({
 
   const handleEnd = e => {
     if (!editable) return;
-    // Still ≥2 fingers down, or ending a two-finger scroll → no stroke
     if (e.touches && e.touches.length >= 2) return;
-    if (e.touches && e.touches.length === 1) return; // one finger still down after scroll
+    if (e.touches && e.touches.length === 1) return; // finger still down after scroll
     scrollMode.current = null;
     const cur = currentRef.current;
     currentRef.current = null;
@@ -327,7 +340,7 @@ export default function StrokeLayer({
     <div
       ref={wrapRef}
       style={{
-        position: 'absolute',
+        position: 'fixed',
         inset: 0,
         pointerEvents: editable ? 'auto' : 'none',
         touchAction: editable ? 'none' : 'auto',
