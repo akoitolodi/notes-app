@@ -267,47 +267,6 @@ export async function scanNote({ note, subject, changedLines }) {
   return { blocks, flashcards: study?.flashcards || [], quiz: study?.quiz || [] };
 }
 
-/** Scan a single line for simpler / example. */
-async function scanLine(note, line, request) {
-  const isSimpler = request === 'simpler';
-  const instruction = isSimpler
-    ? 'Explain this line in simpler terms, about 40 words. Use everyday language a student would understand.'
-    : 'Give a concrete example that illustrates the concept in this line. Make it specific and relatable.';
-
-  const prompt = [
-    'You are explaining one line of a class note to help a student learn.',
-    '',
-    'Full note (for context):',
-    '---',
-    note,
-    '---',
-    '',
-    'The line to explain:',
-    `"${line}"`,
-    '',
-    'Request:',
-    instruction,
-    '',
-    'STRICT RULES:',
-    '- NEVER rewrite, edit, or rephrase the original line.',
-    '- Reply in the same language as the note.',
-    '- If you are unsure, say "not sure" — never guess.',
-    '- Keep it to about 40 words.',
-    '',
-    'Return ONLY valid JSON (no markdown, no code fences):',
-    '{ "explanation": "your answer here" }',
-  ].join('\n');
-
-  const raw = await callAI({
-    system: 'You explain class notes. Reply only with valid JSON.',
-    user: prompt,
-    maxTokens: 1024,
-    timeoutMs: 120000,
-  });
-
-  return parseLineJson(raw);
-}
-
 /** Exam summary from all notes in a folder. */
 export async function examSummary({ subject, notes }) {
   if (!notes?.length) throw new Error('No notes to summarize.');

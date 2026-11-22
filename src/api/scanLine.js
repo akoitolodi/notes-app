@@ -1,9 +1,16 @@
 /**
- * Frontend API client — calls /api/scan-line which proxies to the AI.
+ * Frontend API client — /api/scan-line.
+ * Routes based on the AI backend mode (Settings → AI Backend).
  */
 import { API_BASE } from '../config';
+import { getAiMode } from '../lib/aiConfig';
+import { scanLine as directScanLine } from '../lib/aiDirect';
 
 export async function scanLine(note, line, request = 'simpler') {
+  if (getAiMode() === 'direct') {
+    return directScanLine(note, line, request);
+  }
+
   let res;
   try {
     res = await fetch(`${API_BASE}/api/scan-line`, {

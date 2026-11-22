@@ -1,9 +1,16 @@
 /**
  * Frontend API client — /api/exam-summary.
+ * Routes based on the AI backend mode (Settings → AI Backend).
  */
 import { API_BASE } from '../config';
+import { getAiMode } from '../lib/aiConfig';
+import { examSummary as directExamSummary } from '../lib/aiDirect';
 
 export async function examSummary(subject, notes) {
+  if (getAiMode() === 'direct') {
+    return directExamSummary({ subject, notes });
+  }
+
   let res;
   try {
     res = await fetch(`${API_BASE}/api/exam-summary`, {

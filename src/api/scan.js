@@ -1,9 +1,18 @@
 /**
- * Frontend API client — calls /api/scan which proxies to the AI.
+ * Frontend API client — /api/scan.
+ * Routes based on the AI backend mode (Settings → AI Backend):
+ *   - 'termux' (default): POST to the local Termux server
+ *   - 'direct': run the AI engine in-app against the chosen provider
  */
 import { API_BASE } from '../config';
+import { getAiMode } from '../lib/aiConfig';
+import { scanNote as directScanNote } from '../lib/aiDirect';
 
 export async function scanNote(note, subject, changedLines) {
+  if (getAiMode() === 'direct') {
+    return directScanNote({ note, subject, changedLines });
+  }
+
   let res;
   try {
     res = await fetch(`${API_BASE}/api/scan`, {
