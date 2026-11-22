@@ -183,6 +183,38 @@ export default function StrokeLayer({
     };
   };
 
+  // ---------- Two-finger scroll while drawing ----------
+  // With touchAction: none, one finger draws — but the user could never scroll
+  // down a long note. Two fingers = scroll the note container instead.
+  const scrollMode = useRef(null); // { startMidY, startScrollTop, count }
+  const findScrollContainer = () => {
+    let el = wrapRef.current;
+    while (el && el !== document.body) {
+      if (el.classList?.contains('editor')) return el;
+      el = el.parentElement;
+    }
+    return null;
+  };
+
+  const handleTwoFingerStart = e => {
+    const t1 = e.touches[0], t2 = e.touches[1];
+    const midY = (t1.clientY + t2.clientY) / 2;
+    const container = findScrollContainer();
+    if (!container) return;
+    scrollMode.current = { startMidY: midY, startScrollTop: container.scrollTop };
+    // Abort any in-progress stroke
+    if (currentRef.current) { currentRef.current = null; redraw(); }
+  };
+
+  const handleTwoFingerMove = e => {
+    const sm = scrollMode.current;
+    if (!sm) return;
+    const t1 = e.touches[0], t2 = e.touches[1];
+    const midY = (t1.clientY + t2.clientY) / 2;
+    const container = findScrollContainer();
+    if (container) container.scrollTop = sm.startScrollTop - (midY - sm.startMidY);
+  };
+
   const commitStroke = stroke => {
     const canvas = canvasRef.current;
     const rectW = canvas ? canvas.getBoundingClientRect().width : 0;
@@ -210,6 +242,12 @@ export default function StrokeLayer({
 
   const handleStart = e => {
     if (!editable) return;
+    // Two fingers → scroll the note instead of drawing
+    if (e.touches && e.touches.length >= 2) {
+      handleTwoFingerStart(e);
+      return;
+    }
+    if (scrollMode.current) return; // fingers still lifting after a scroll
     e.preventDefault();
     if (tool === 'text') {
       const p = getRefPoint(e);
@@ -244,6 +282,11 @@ export default function StrokeLayer({
 
   const handleMove = e => {
     if (!editable) return;
+    if (e.touches && e.touches.length >= 2) {
+      handleTwoFingerMove(e);
+      return;
+    }
+    if (scrollMode.current) return;
     e.preventDefault();
     const p = getRefPoint(e);
     if (tool === 'eraser') {
@@ -260,8 +303,12 @@ export default function StrokeLayer({
     redraw();
   };
 
-  const handleEnd = () => {
+  const handleEnd = e => {
     if (!editable) return;
+    // Still ≥2 fingers down, or ending a two-finger scroll → no stroke
+    if (e.touches && e.touches.length >= 2) return;
+    if (e.touches && e.touches.length === 1) return; // one finger still down after scroll
+    scrollMode.current = null;
     const cur = currentRef.current;
     currentRef.current = null;
     if (cur) {

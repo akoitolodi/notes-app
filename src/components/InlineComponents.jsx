@@ -92,8 +92,8 @@ export function NoteLine({
     <div className="note-line-wrap">
       <div
         className={`note-line${mistake ? ' has-mistake' : ''}`}
-        onClick={() => { if (b) onLineTap?.(b); }}
-        style={{ cursor: b ? 'pointer' : 'default', position: 'relative' }}
+        onClick={() => onLineTap?.(b, i)}
+        style={{ cursor: 'pointer', position: 'relative' }}
       >
         {hasExpl && <span className="line-dot" aria-hidden="true" />}
         {renderLineText(lines[i])}

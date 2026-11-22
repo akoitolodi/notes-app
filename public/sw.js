@@ -2,7 +2,7 @@
  * Service worker — cache-first for app shell, network-first for API.
  * Makes the app installable and offline-capable.
  */
-const CACHE = 'ai-class-notes:v12';
+const CACHE = 'ai-class-notes:v13';
 const SHELL = [
   './',
   './index.html',

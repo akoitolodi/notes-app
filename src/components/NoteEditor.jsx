@@ -205,6 +205,44 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
     }
   }, [blocks, body, note, busyLine]);
 
+  /** Tap ANY line: open its explanation — fetching it on demand if missing. */
+  const handleLineTap = useCallback(async (block, lineIdx) => {
+    const lineText = (body.split('\n')[lineIdx] || '').trim();
+    // Empty / punctuation-only lines have nothing to explain
+    if (!lineText || !/[a-zA-Z0-9\u00C0-\uFFFF]/.test(lineText)) return;
+    setPanelOpen(true);
+    if (block) {
+      setSelectedLineId(block.id);
+      return;
+    }
+    // No explanation yet → create a placeholder and fetch it now
+    const id = `line-${lineIdx + 1}`;
+    const placeholder = { id, text: lineText, explanation: '', terms: [], mistake: null };
+    setBlocks(prev => [...prev, placeholder]);
+    setSelectedLineId(id);
+    setBusyLine(id);
+    try {
+      const result = await scanNote(body, subject, [lineIdx + 1]);
+      const fresh = (result.blocks || []).find(b => b.id === id);
+      if (fresh) {
+        setBlocks(prev => prev.map(b => (b.id === id ? fresh : b)));
+        // Persist the new block alongside existing ones
+        const updated = blocks.filter(b => b.id !== id).concat([
+          ...blocks.filter(b => b.id !== id),
+          fresh,
+        ]);
+        await updateNote(note.id, { blocks: updated });
+      } else {
+        // AI skipped the line — show that honestly
+        setBlocks(prev => prev.map(b => (b.id === id ? { ...b, explanation: 'The AI could not explain this line. Try rephrasing it.' } : b)));
+      }
+    } catch (err) {
+      setBlocks(prev => prev.map(b => (b.id === id ? { ...b, explanation: `Failed: ${err.message}` } : b)));
+    } finally {
+      setBusyLine(null);
+    }
+  }, [blocks, body, subject, note, busyLine]);
+
   const handleShowOriginal = useCallback(async lineId => {
     const updated = blocks.map(b => (b.id === lineId ? { ...b, show: 'main' } : b));
     setBlocks(updated);
@@ -460,7 +498,7 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
   const lineMistake = i => blockByLine[i]?.mistake || null;
 
   const notePage = (
-    <div className="editor safe-bottom">
+    <div className={`editor safe-bottom${drawMode ? ' draw-padding' : ''}`}>
       {/* Full-note wrapper: relative so the annotation overlay covers EVERYTHING */}
       <div className="note-page-wrap">
         <div className="read-title">{title || 'New Note'}</div>
@@ -476,7 +514,7 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
             <NoteLineComponent
               key={i} i={i} lines={lines} blockByLine={blockByLine}
               lineHasExpl={lineHasExpl} lineMistake={lineMistake}
-              onLineTap={b => { setSelectedLineId(b.id); setPanelOpen(true); }}
+              onLineTap={handleLineTap}
               onToggleChecklist={toggleChecklist}
               onLineRequest={handleLineRequest}
               showOriginal={handleShowOriginal}
@@ -553,6 +591,7 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
             ))}
             <input type="color" value={color} onChange={e => setColor(e.target.value)} title="Custom color" className="color-input" />
           </div>
+          <span className="annotate-hint">2 fingers = scroll</span>
           <button className="draw-close" onClick={() => setDrawMode(false)} aria-label="Done">Done</button>
         </div>
       )}
