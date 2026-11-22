@@ -29,43 +29,48 @@ export default function SettingsScreen({ onBack }) {
 
   const handleModeChange = mode => {
     set(MODE_KEY, mode, setMode);
-    // When switching to direct, we might need to initialize provider config
     if (mode === 'direct') {
-      // Initialize default provider if not set
       const currentProvider = getProviderId();
       const preset = PROVIDERS[currentProvider] || PROVIDERS.groq;
-      localStorage.setItem(PROVIDER_KEY, 'groq');
-      // Initialize default baseUrl/model if not present
-      if (!localStorage.getItem('aicn:aiBaseUrl')) {
-        localStorage.setItem('aicn:aiBaseUrl', preset.baseUrl);
-      }
-      if (!localStorage.getItem('aicn:aiModel')) {
-        localStorage.setItem('aicn:aiModel', preset.defaultModel);
-      }
+      if (!localStorage.getItem(BASEURL_KEY)) localStorage.setItem(BASEURL_KEY, preset.baseUrl);
+      if (!localStorage.getItem(MODEL_KEY)) localStorage.setItem(MODEL_KEY, preset.defaultModel);
+      // Refresh local state to reflect stored defaults
+      setBaseUrl(localStorage.getItem(BASEURL_KEY) || preset.baseUrl);
+      setModel(localStorage.getItem(MODEL_KEY) || preset.defaultModel);
     }
   };
 
   const handleProviderChange = providerId => {
     const preset = PROVIDERS[providerId] || PROVIDERS.groq;
     set(PROVIDER_KEY, providerId, setProvider);
-    localStorage.setItem('aicn:aiBaseUrl', preset.baseUrl);
-    localStorage.setItem('aicn:aiModel', preset.defaultModel);
-    // Clear key when switching providers (different keys for different providers)
-    localStorage.removeItem('aicn:aiKey');
+    localStorage.setItem(BASEURL_KEY, preset.baseUrl);
+    localStorage.setItem(MODEL_KEY, preset.defaultModel);
+    setBaseUrl(preset.baseUrl);
+    setModel(preset.defaultModel);
+    // Clear key when switching providers (different keys per provider)
+    localStorage.removeItem(AIKEY_KEY);
+    setKey('');
   };
 
-  const handleKeyChange = (e) => {
-    const key = e.target.value.trim();
-    localStorage.setItem('aicn:aiKey', key);
+  // IMPORTANT: update React state on every keystroke, otherwise the
+  // controlled input wipes the value and "nothing shows when pasting".
+  const handleKeyChange = e => {
+    setKey(e.target.value);
+    localStorage.setItem(AIKEY_KEY, e.target.value);
   };
 
-  const handleBaseUrlChange = (e) => {
-    localStorage.setItem('aicn:aiBaseUrl', e.target.value.trim());
+  const handleBaseUrlChange = e => {
+    setBaseUrl(e.target.value);
+    localStorage.setItem(BASEURL_KEY, e.target.value);
   };
 
-  const handleModelChange = (e) => {
-    localStorage.setItem('aicn:aiModel', e.target.value.trim());
+  const handleModelChange = e => {
+    setModel(e.target.value);
+    localStorage.setItem(MODEL_KEY, e.target.value);
   };
+
+  const [showKey, setShowKey] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const testConnection = async () => {
     const { baseUrl, key, model, preset } = await import('../lib/aiConfig').then(m => m.getDirectConfig());
@@ -156,8 +161,6 @@ export default function SettingsScreen({ onBack }) {
           onChange={v => set(SIZE_KEY, v, setSize)}
         />
 
-        </div>
-
         <div className="settings-label" style={{ marginTop: 18 }}>Reading</div>
         <label style={{ display: 'flex', alignItems: 'center', gap: 12, paddingTop: 12, cursor: 'pointer' }}>
           <input
@@ -167,96 +170,100 @@ export default function SettingsScreen({ onBack }) {
           />
           <span style={{ fontSize: 15, color: 'var(--text)' }}>Show AI hint under lines</span>
         </label>
+      </div>
 
-        <div className="settings-label" style={{ marginTop: 18 }}>AI Backend</div>
-        <div className="list-group" style={{ margin: 0, padding: 0 }}>
-          {/* Mode selector */}
-          <div className="list-item" style={{ padding: 14, borderBottom: '1px solid var(--divider)' }}>
-            <div className="settings-label" style={{ marginBottom: 12 }}>Mode</div>
-            <Segmented
-              options={[['termux', 'Termux server (local, free)'], ['direct', 'Direct API (cloud, no server needed)']]}
-              value={mode}
-              onChange={handleModeChange}
-            />
-          </div>
+      {/* AI Backend — own group, clean structure */}
+      <div className="list-group" style={{ padding: '14px 16px' }}>
+        <div className="settings-label">AI Backend</div>
+        <Segmented
+          options={[['termux', 'Termux'], ['direct', 'Direct API']]}
+          value={mode}
+          onChange={handleModeChange}
+        />
+        <div className="settings-tip" style={{ marginTop: 8 }}>
+          {mode === 'termux'
+            ? 'Uses the free local Termux server. Start it with the "notes" command.'
+            : 'Calls your chosen AI provider straight from this device — no Termux needed.'}
+        </div>
 
-          {/* Direct mode configuration */}
-          {mode === 'direct' && (
-            <>
-              <div className="list-item" style={{ padding: 14, borderBottom: '1px solid var(--divider)' }}>
-                <div className="settings-label" style={{ marginBottom: 12 }}>Provider</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {Object.entries(PROVIDERS).map(([id, p]) => (
-                    <button
-                      key={id}
-                      className={`attach-btn${provider === id ? ' active' : ''}`}
-                      style={{ flex: '1 1 calc(50% - 4px)', minWidth: 140 }}
-                      onClick={() => handleProviderChange(id)}
-                    >
-                      <div style={{ fontWeight: 600 }}>{p.name}</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{p.badge}</div>
-                    </button>
-                  ))}
-                </div>
+        {mode === 'direct' && (
+          <>
+            <div className="settings-label" style={{ marginTop: 16 }}>Provider</div>
+            <div className="provider-grid">
+              {Object.entries(PROVIDERS).map(([id, p]) => (
+                <button
+                  key={id}
+                  className={`provider-chip${provider === id ? ' active' : ''}`}
+                  onClick={() => handleProviderChange(id)}
+                >
+                  <span className="provider-name">{p.name}</span>
+                  <span className="provider-badge">{p.badge}</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="settings-label" style={{ marginTop: 16 }}>API key</div>
+            <div className="key-row">
+              <input
+                type={showKey ? 'text' : 'password'}
+                className="ai-input"
+                value={key}
+                onChange={handleKeyChange}
+                placeholder="Paste your API key"
+                autoComplete="off"
+                spellCheck="false"
+              />
+              <button className="key-toggle" onClick={() => setShowKey(s => !s)} aria-label="Show or hide key">
+                {showKey ? 'Hide' : 'Show'}
+              </button>
+            </div>
+            {PROVIDERS[provider]?.keyUrl && (
+              <div className="settings-tip" style={{ marginTop: 6 }}>
+                Free key: <a href={PROVIDERS[provider].keyUrl} target="_blank" rel="noopener" style={{ color: 'var(--accent)' }}>{PROVIDERS[provider].keyUrl.replace('https://', '')}</a>
               </div>
+            )}
 
-              <div className="list-item" style={{ padding: 14, borderBottom: '1px solid var(--divider)' }}>
-                <div className="settings-label" style={{ marginBottom: 8 }}>API Key</div>
-                <input
-                  type="password"
-                  value={key}
-                  onChange={handleKeyChange}
-                  placeholder="Paste your API key here"
-                  style={{ width: '100%', padding: 12, borderRadius: 10, border: '1px solid var(--divider)', background: 'var(--bg)', fontSize: 15, fontFamily: 'monospace' }}
-                />
-                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
-                  Get a free key at: <a href={PROVIDERS[provider]?.keyUrl} target="_blank" rel="noopener" style={{ color: 'var(--accent)' }}>{PROVIDERS[provider]?.keyUrl || 'provider console'}</a>
-                </div>
-              </div>
+            <button className="btn btn-primary" onClick={testConnection} style={{ width: '100%', marginTop: 14 }}>
+              🔍 Test Connection
+            </button>
 
-              <div className="list-item" style={{ padding: 14, borderBottom: '1px solid var(--divider)' }}>
-                <div className="settings-label" style={{ marginBottom: 8 }}>Base URL</div>
+            <button
+              className="btn btn-ghost"
+              style={{ width: '100%', marginTop: 8, fontSize: 13 }}
+              onClick={() => setShowAdvanced(s => !s)}
+            >
+              {showAdvanced ? 'Hide advanced' : 'Advanced (base URL, model)'}
+            </button>
+
+            {showAdvanced && (
+              <>
+                <div className="settings-label" style={{ marginTop: 12 }}>Base URL</div>
                 <input
                   type="url"
+                  className="ai-input"
                   value={baseUrl}
                   onChange={handleBaseUrlChange}
-                  placeholder="OpenAI-compatible endpoint (e.g., https://api.groq.com/openai/v1)"
-                  style={{ width: '100%', padding: 12, borderRadius: 10, border: '1px solid var(--divider)', background: 'var(--bg)', fontSize: 15, fontFamily: 'monospace' }}
+                  placeholder="OpenAI-compatible endpoint"
+                  spellCheck="false"
                 />
-              </div>
-
-              <div className="list-item" style={{ padding: 14, borderBottom: '1px solid var(--divider)' }}>
-                <div className="settings-label" style={{ marginBottom: 8 }}>Model</div>
+                <div className="settings-label" style={{ marginTop: 12 }}>Model</div>
                 <input
                   type="text"
+                  className="ai-input"
                   value={model}
                   onChange={handleModelChange}
-                  placeholder="Model ID (e.g., llama-3.3-70b-versatile)"
-                  style={{ width: '100%', padding: 12, borderRadius: 10, border: '1px solid var(--divider)', background: 'var(--bg)', fontSize: 15, fontFamily: 'monospace' }}
+                  placeholder="Model ID"
+                  spellCheck="false"
                 />
-                <div style={{ fontSize: 11, color: 'var(--text-tertiary)', marginTop: 6 }}>
-                  Default for {PROVIDERS[provider]?.name}: <strong>{PROVIDERS[provider]?.defaultModel}</strong>
+                <div className="settings-tip" style={{ marginTop: 6 }}>
+                  Default for {PROVIDERS[provider]?.name}: <strong>{PROVIDERS[provider]?.defaultModel || '—'}</strong>
                 </div>
-              </div>
+              </>
+            )}
+          </>
+        )}
+      </div>
 
-              <div className="list-item" style={{ padding: 14 }}>
-                <button className="btn btn-primary" onClick={testConnection} style={{ width: '100%' }}>
-                  🔍 Test Connection
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-
-        <div className="settings-label" style={{ marginTop: 18 }}>Reading</div>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 12, paddingTop: 12, cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={showHint}
-            onChange={e => handleHintChange(e.target.checked)}
-          />
-          <span style={{ fontSize: 15, color: 'var(--text)' }}>Show AI hint under lines</span>
-        </label>
       <div className="list-group" style={{ padding: '14px 16px' }}>
         <div className="settings-label">Tips</div>
         <div className="settings-tip">
