@@ -1270,6 +1270,31 @@ a:active { opacity: 0.7; }
 }
 .related-trigger:active { background: var(--divider); }
 
+/* Chat toggle chips (Deep Think / Web) */
+.chat-toggles {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px 0;
+  background: var(--bg);
+}
+.chat-chip {
+  border: 1px solid var(--divider);
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.chat-chip.active {
+  border-color: var(--accent);
+  background: rgba(255, 204, 0, 0.2);
+  color: var(--text);
+}
+.chat-chip:disabled { opacity: 0.45; cursor: not-allowed; }
+
 /* ============================================================
    Utility
    ============================================================ */

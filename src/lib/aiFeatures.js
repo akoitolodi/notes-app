@@ -2,7 +2,8 @@
  * aiFeatures — prompt builders + parsers for every study AI feature.
  * All calls go through aiCore (works in Termux AND Direct API modes).
  */
-import { aiText, aiVision } from './aiCore';
+import { aiText, aiVision, webSearch } from './aiCore';
+import { getReasonModel, getTavilyKey } from './aiConfig';
 
 function extractJson(text) {
   let t = text.trim();
@@ -43,16 +44,103 @@ function parseJson(text) {
 const styleHint = style => (style && style !== 'default' ? `Explanation style: ${style}.` : '');
 
 // ---------------- 1. Chat with a note ----------------
-export async function chatWithNote({ note, title, subject, history = [], question, style }) {
-  const sys = `You are a friendly study tutor for a student's class notes. Answer ONLY from the note content below unless the question is general knowledge. Keep answers under 120 words, clear and encouraging. ${styleHint(style)} Reply in the note's language.
+/** Strip reasoning-model <think> blocks (DeepSeek-R1 etc.) */
+function stripThinking(text) {
+  return (text || '')
+    .replace(/<\/?think>/gi, '')
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .trim();
+}
+
+/**
+ * Chat with a note — three intelligence levels:
+ *   web=true  → Tavily search injected, answers cite [n] sources
+ *   deep=true → reasoning model (🧠 Deep Think) — slower, thinks step by step
+ *   default   → evidence-first: pass 1 extracts relevant note lines,
+ *               pass 2 answers ONLY from that evidence (grounded, no hallucination)
+ */
+export async function chatWithNote({ note, title, subject, history = [], question, style, deep = false, web = false }) {
+  const noteSlice = (note || '').slice(0, 6000);
+  const styleLine = styleHint(style);
+  const lang = 'Reply in the note\'s language.';
+
+  // ---- Optional web search ----
+  let webBlock = '';
+  let usedWeb = false;
+  if (web) {
+    const tavily = getTavilyKey();
+    if (!tavily) {
+      return '🌐 Web search needs a free Tavily key. Get one at app.tavily.com, then paste it in Settings → AI Backend → Web search.';
+    }
+    try {
+      const results = await webSearch(question, tavily);
+      if (results.length) {
+        usedWeb = true;
+        webBlock = 'WEB RESULTS (may help, cite as [1], [2]…):\n' + results
+          .map((r, i) => `[${i + 1}] ${r.title}\n${r.content.slice(0, 350)}`)
+          .join('\n\n');
+      }
+    } catch (err) {
+      return `🌐 Search failed: ${err.message}. Try again or turn Web off.`;
+    }
+  }
+
+  // ---- 🧠 Deep Think: reasoning model ----
+  if (deep) {
+    const reasonModel = getReasonModel();
+    const sys = `You are a deep-thinking study tutor for a student's class notes. Think through the problem carefully step by step: 1) restate what is being asked, 2) locate the relevant note content, 3) reason logically, considering alternatives, 4) verify each claim against the note${usedWeb ? ' and web results' : ''}, 5) give a clear, correct final answer (under 150 words) with the key reasoning shown briefly. If you find contradictions or gaps, point them out. ${styleLine} ${lang}
 
 NOTE TITLE: ${title || 'Untitled'}
 SUBJECT: ${subject || 'General'}
 NOTE:
 ---
-${(note || '').slice(0, 6000)}
----`;
-  return aiText({ system: sys, user: question, history: history.slice(-8), maxTokens: 1500, timeoutMs: 180000 });
+${noteSlice}
+---
+${webBlock ? webBlock + '\nCite web sources as [n] when used.' : 'Answer ONLY from the note unless the question is general knowledge.'}`;
+    const raw = await aiText({
+      system: sys,
+      user: question,
+      history: history.slice(-8),
+      maxTokens: 3000,
+      timeoutMs: 300000,
+      modelOverride: reasonModel,
+    });
+    return stripThinking(raw);
+  }
+
+  // ---- Quick mode: evidence-first grounding (2 passes) ----
+  let evidence = null;
+  try {
+    const evSys = `You extract evidence. From the NOTE, list the exact lines relevant to answering the QUESTION.
+OUTPUT ONLY valid JSON: {"lines": ["exact lines copied from the note"], "covered": true|false}
+"covered" is false when the note does not contain enough information to answer. No prose.`;
+    const raw = await aiText({
+      system: evSys,
+      user: `NOTE:\n---\n${noteSlice}\n---\nQUESTION: ${question}`,
+      maxTokens: 800,
+      timeoutMs: 120000,
+    });
+    const d = parseJson(raw);
+    if (d && Array.isArray(d.lines)) evidence = d;
+  } catch { /* fall back to whole note */ }
+
+  let grounding;
+  if (evidence && evidence.lines && evidence.lines.length) {
+    grounding = `RELEVANT NOTE LINES (ground every claim in these):\n${evidence.lines.map(l => `- ${l}`).join('\n')}`;
+  } else if (evidence && evidence.covered === false && !usedWeb) {
+    return `Your note doesn't cover that. 🌐 Turn on **Web** above and ask again — or rephrase within the note's topic.`;
+  } else {
+    grounding = `NOTE:\n---\n${noteSlice}\n---`;
+  }
+
+  const sys = `You are a friendly, rigorous study tutor. ${styleLine} ${lang}
+${grounding}
+${webBlock ? webBlock + '\nWhen you use a web result, cite it as [n].' : 'Answer ONLY from the note unless the question is general knowledge.'}
+
+PROCESS (do this internally, do not print it): 1) restate the question, 2) check the evidence above, 3) reason step by step, 4) verify every claim against the evidence, 5) answer.
+FINAL ANSWER: under 130 words, clear and encouraging. If the evidence contradicts the question's premise, say so.`;
+
+  return aiText({ system: sys, user: question, history: history.slice(-6), maxTokens: 1500, timeoutMs: 180000 });
 }
 
 // ---------------- 2. TL;DR summary ----------------

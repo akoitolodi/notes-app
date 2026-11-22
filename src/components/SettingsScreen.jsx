@@ -4,7 +4,7 @@
  */
 import { useState, useEffect } from 'react';
 import { THEME_KEY, ACCENT_KEY, SIZE_KEY, HINT_KEY, ACCENTS, getSettings, applySettings } from '../theme';
-import { getAiMode, getProviderId, getDirectConfig, getKeyForProvider, setKeyForProvider, migrateLegacyKey, PROVIDERS, maskKey, MODE_KEY, PROVIDER_KEY, BASEURL_KEY, MODEL_KEY } from '../lib/aiConfig';
+import { getAiMode, getProviderId, getDirectConfig, getKeyForProvider, setKeyForProvider, migrateLegacyKey, getReasonModel, getTavilyKey, PROVIDERS, maskKey, MODE_KEY, PROVIDER_KEY, BASEURL_KEY, MODEL_KEY, REASON_KEY, TAVILY_KEY } from '../lib/aiConfig';
 
 export default function SettingsScreen({ onBack }) {
   const initial = getSettings();
@@ -70,6 +70,16 @@ export default function SettingsScreen({ onBack }) {
     localStorage.setItem(MODEL_KEY, e.target.value);
   };
 
+  const handleReasonModelChange = e => {
+    setReasonModel(e.target.value);
+    localStorage.setItem(REASON_KEY, e.target.value);
+  };
+
+  const handleTavilyChange = e => {
+    setTavilyKey(e.target.value);
+    localStorage.setItem(TAVILY_KEY, e.target.value);
+  };
+
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const testConnection = async () => {
@@ -109,6 +119,8 @@ export default function SettingsScreen({ onBack }) {
   const [key, setKey] = useState(() => getKeyForProvider(getProviderId()));
   const [baseUrl, setBaseUrl] = useState(directConfig.baseUrl);
   const [model, setModel] = useState(directConfig.model);
+  const [reasonModel, setReasonModel] = useState(() => getReasonModel());
+  const [tavilyKey, setTavilyKey] = useState(() => getTavilyKey());
 
   const showToast = msg => {
     setToast(msg);
@@ -263,8 +275,17 @@ export default function SettingsScreen({ onBack }) {
                   placeholder="Model ID"
                   spellCheck="false"
                 />
+                <div className="settings-label" style={{ marginTop: 12 }}>🧠 Reasoning model (Deep Think)</div>
+                <input
+                  type="text"
+                  className="ai-input"
+                  value={reasonModel}
+                  onChange={handleReasonModelChange}
+                  placeholder="e.g. deepseek-r1-distill-llama-70b"
+                  spellCheck="false"
+                />
                 <div className="settings-tip" style={{ marginTop: 6 }}>
-                  Default for {PROVIDERS[provider]?.name}: <strong>{PROVIDERS[provider]?.defaultModel || '—'}</strong>
+                  Defaults: {PROVIDERS[provider]?.name} → <strong>{PROVIDERS[provider]?.defaultModel || '—'}</strong> · reasoning → <strong>{PROVIDERS[provider]?.reasonModel || '—'}</strong>
                 </div>
               </>
             )}

@@ -14,6 +14,8 @@ export const AIKEY_KEY = 'aicn:aiKey';       // LEGACY single key (migrated to p
 export const KEYS_KEY = 'aicn:aiKeys';       // JSON map { providerId: key } — per-provider storage
 export const BASEURL_KEY = 'aicn:aiBaseUrl'; // custom base URL override
 export const MODEL_KEY = 'aicn:aiModel';     // custom model override
+export const REASON_KEY = 'aicn:aiReasonModel'; // reasoning model for 🧠 Deep Think
+export const TAVILY_KEY = 'aicn:tavilyKey';  // Tavily API key for 🌐 web search
 
 /**
  * Provider presets. baseUrl must be an OpenAI-compatible chat/completions root.
@@ -26,6 +28,7 @@ export const PROVIDERS = {
     free: true,
     baseUrl: 'https://api.groq.com/openai/v1',
     defaultModel: 'llama-3.3-70b-versatile',
+    reasonModel: 'deepseek-r1-distill-llama-70b',
     models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'openai/gpt-oss-120b', 'openai/gpt-oss-20b'],
     keyUrl: 'https://console.groq.com/keys',
   },
@@ -35,6 +38,7 @@ export const PROVIDERS = {
     free: true,
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     defaultModel: 'gemini-2.0-flash',
+    reasonModel: 'gemini-2.5-flash',
     models: ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-2.5-pro'],
     keyUrl: 'https://aistudio.google.com/apikey',
   },
@@ -44,6 +48,7 @@ export const PROVIDERS = {
     free: true,
     baseUrl: 'https://openrouter.ai/api/v1',
     defaultModel: 'openrouter/free',
+    reasonModel: 'deepseek/deepseek-r1:free',
     models: [
       'openrouter/free',
       'google/gemma-4-31b-it:free',
@@ -59,6 +64,7 @@ export const PROVIDERS = {
     free: false,
     baseUrl: 'https://api.openai.com/v1',
     defaultModel: 'gpt-4o-mini',
+    reasonModel: 'o4-mini',
     models: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],
     keyUrl: 'https://platform.openai.com/api-keys',
   },
@@ -68,6 +74,7 @@ export const PROVIDERS = {
     free: true,
     baseUrl: 'https://api.cerebras.ai/v1',
     defaultModel: 'llama-3.3-70b',
+    reasonModel: 'qwen-3-32b',
     models: ['llama-3.3-70b', 'llama3.1-8b'],
     keyUrl: 'https://cloud.cerebras.ai',
   },
@@ -77,6 +84,7 @@ export const PROVIDERS = {
     free: true,
     baseUrl: 'https://api.mistral.ai/v1',
     defaultModel: 'mistral-small-latest',
+    reasonModel: 'magistral-medium-latest',
     models: ['mistral-small-latest', 'mistral-large-latest', 'open-mistral-nemo'],
     keyUrl: 'https://console.mistral.ai/api-keys',
   },
@@ -86,6 +94,7 @@ export const PROVIDERS = {
     free: true,
     baseUrl: 'https://integrate.api.nvidia.com/v1',
     defaultModel: 'nvidia/nemotron-3.5-super-vl-120b-a12b',
+    reasonModel: 'nvidia/llama-3.3-nemotron-super-49b-v1',
     models: [
       'nvidia/nemotron-3.5-super-vl-120b-a12b',
       'nvidia/nemotron-3.5-lightning-30b-a3b',
@@ -100,6 +109,7 @@ export const PROVIDERS = {
     free: true,
     baseUrl: 'https://api.kilo.ai/api/gateway',
     defaultModel: 'nvidia/nemotron-3.5-super-vl:free',
+    reasonModel: 'deepseek/deepseek-r1:free',
     models: [
       'nvidia/nemotron-3.5-super-vl:free',
       'inclusionai/ling-3.2-flash:free',
@@ -116,6 +126,7 @@ export const PROVIDERS = {
     free: false,
     baseUrl: '',
     defaultModel: '',
+    reasonModel: '',
     models: [],
     keyUrl: '',
   },
@@ -178,6 +189,20 @@ export function setKeyForProvider(pid, key) {
 
 export function getKeyForProvider(pid) {
   return getKeysMap()[pid] || '';
+}
+
+/** Reasoning model for 🧠 Deep Think: override > preset.reasonModel > main model. */
+export function getReasonModel() {
+  const pid = getProviderId();
+  const preset = PROVIDERS[pid] || PROVIDERS.groq;
+  let override = '';
+  try { override = (localStorage.getItem(REASON_KEY) || '').trim(); } catch { /* default */ }
+  return override || preset.reasonModel || preset.defaultModel || '';
+}
+
+/** Tavily key for 🌐 web search (free: app.tavily.com). */
+export function getTavilyKey() {
+  try { return (localStorage.getItem(TAVILY_KEY) || '').trim(); } catch { return ''; }
 }
 
 /** Masked key for display only — never log or send the full key. */

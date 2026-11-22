@@ -26,11 +26,11 @@ function buildMessages({ system, user, imageDataUrl = null, history = [] }) {
   return messages;
 }
 
-export async function aiText({ system, user, maxTokens = 2048, timeoutMs = 180000, history = [] }) {
+export async function aiText({ system, user, maxTokens = 2048, timeoutMs = 180000, history = [], modelOverride = null }) {
   const messages = buildMessages({ system, user, history });
 
   if (getAiMode() === 'direct') {
-    return directChat(messages, maxTokens, timeoutMs);
+    return directChat(messages, maxTokens, timeoutMs, modelOverride);
   }
 
   // Termux mode
@@ -57,13 +57,14 @@ export async function aiText({ system, user, maxTokens = 2048, timeoutMs = 18000
 }
 
 /** Direct-provider chat with a prebuilt messages array. */
-async function directChat(messages, maxTokens, timeoutMs) {
+async function directChat(messages, maxTokens, timeoutMs, modelOverride = null) {
   const { baseUrl, key, model } = getDirectConfig();
   if (!key) throw new Error('No API key configured. Set your key in Settings → AI backend.');
+  const useModel = (modelOverride || '').trim() || model;
   const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, messages, temperature: 0.4, max_tokens: maxTokens }),
+    body: JSON.stringify({ model: useModel, messages, temperature: 0.4, max_tokens: maxTokens }),
     signal: AbortSignal.timeout(timeoutMs),
   });
   if (!res.ok) {
@@ -74,6 +75,28 @@ async function directChat(messages, maxTokens, timeoutMs) {
   const content = data.choices?.[0]?.message?.content;
   if (!content) throw new Error('AI returned no content');
   return content;
+}
+
+/**
+ * Web search via Tavily (free tier: app.tavily.com — 1,000 searches/month).
+ * Returns [{title, url, content}]. Runs through CapacitorHttp in the APK,
+ * so CORS is not an issue.
+ */
+export async function webSearch(query, apiKey, maxResults = 5) {
+  const res = await fetch('https://api.tavily.com/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_key: apiKey, query, max_results: maxResults, search_depth: 'basic' }),
+    signal: AbortSignal.timeout(20000),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Search failed ${res.status}: ${body.slice(0, 150)}`);
+  }
+  const data = await res.json();
+  return (data.results || [])
+    .filter(r => r && r.content)
+    .map(r => ({ title: r.title || '', url: r.url || '', content: r.content || '' }));
 }
 
 /** Vision request (image + prompt). Requires a vision-capable model. */

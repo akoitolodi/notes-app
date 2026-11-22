@@ -5,12 +5,16 @@
  */
 import { useState, useRef, useEffect } from 'react';
 import { chatWithNote } from '../lib/aiFeatures';
+import { getTavilyKey } from '../lib/aiConfig';
 
 export default function ChatSheet({ note, subject, style, onClose, onSave }) {
   const history = note?.chat || [];
   const [messages, setMessages] = useState(history);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [deepOn, setDeepOn] = useState(false);
+  const [webOn, setWebOn] = useState(false);
+  const hasTavily = !!getTavilyKey();
   const listRef = useRef(null);
 
   useEffect(() => {
@@ -33,6 +37,8 @@ export default function ChatSheet({ note, subject, style, onClose, onSave }) {
         history: messages,
         question: q,
         style,
+        deep: deepOn,
+        web: webOn && hasTavily,
       });
       const done = [...next, { role: 'assistant', content: reply }];
       setMessages(done);
@@ -69,8 +75,31 @@ export default function ChatSheet({ note, subject, style, onClose, onSave }) {
           </div>
         ))}
         {busy && (
-          <div className="chat-msg assistant"><span className="spinner" style={{ width: 14, height: 14 }} /> Thinking…</div>
+          <div className="chat-msg assistant"><span className="spinner" style={{ width: 14, height: 14 }} /> {deepOn ? 'Deep thinking…' : 'Thinking…'}</div>
         )}
+      </div>
+
+      <div className="chat-toggles">
+        <button
+          className={`chat-chip${deepOn ? ' active' : ''}`}
+          onClick={() => setDeepOn(d => !d)}
+          aria-pressed={deepOn}
+          title="Slower but thinks step by step with a reasoning model"
+        >
+          🧠 Deep Think
+        </button>
+        <button
+          className={`chat-chip${webOn ? ' active' : ''}`}
+          onClick={() => {
+            if (!hasTavily) return;
+            setWebOn(w => !w);
+          }}
+          aria-pressed={webOn}
+          disabled={!hasTavily}
+          title={hasTavily ? 'Search the web for context' : 'Needs a free Tavily key — Settings → AI Backend → Web search'}
+        >
+          🌐 Web
+        </button>
       </div>
 
       <div className="chat-input-bar">
