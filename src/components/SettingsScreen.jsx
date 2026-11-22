@@ -4,7 +4,7 @@
  */
 import { useState, useEffect } from 'react';
 import { THEME_KEY, ACCENT_KEY, SIZE_KEY, HINT_KEY, ACCENTS, getSettings, applySettings } from '../theme';
-import { getAiMode, getProviderId, getDirectConfig, PROVIDERS, maskKey, MODE_KEY, PROVIDER_KEY, AIKEY_KEY, BASEURL_KEY, MODEL_KEY } from '../lib/aiConfig';
+import { getAiMode, getProviderId, getDirectConfig, getKeyForProvider, setKeyForProvider, migrateLegacyKey, PROVIDERS, maskKey, MODE_KEY, PROVIDER_KEY, BASEURL_KEY, MODEL_KEY } from '../lib/aiConfig';
 
 export default function SettingsScreen({ onBack }) {
   const initial = getSettings();
@@ -47,16 +47,17 @@ export default function SettingsScreen({ onBack }) {
     localStorage.setItem(MODEL_KEY, preset.defaultModel);
     setBaseUrl(preset.baseUrl);
     setModel(preset.defaultModel);
-    // Clear key when switching providers (different keys per provider)
-    localStorage.removeItem(AIKEY_KEY);
-    setKey('');
+    // Load THIS provider's saved key — never wipe other providers' keys
+    setKey(getKeyForProvider(providerId));
   };
 
   // IMPORTANT: update React state on every keystroke, otherwise the
   // controlled input wipes the value and "nothing shows when pasting".
+  // The key is saved per provider, so switching never loses it.
   const handleKeyChange = e => {
-    setKey(e.target.value);
-    localStorage.setItem(AIKEY_KEY, e.target.value);
+    const v = e.target.value;
+    setKey(v);
+    setKeyForProvider(provider, v);
   };
 
   const handleBaseUrlChange = e => {
@@ -103,8 +104,10 @@ export default function SettingsScreen({ onBack }) {
 
   const [mode, setMode] = useState(() => getAiMode());
   const [provider, setProvider] = useState(() => getProviderId());
+  // Migrate any legacy single key into the per-provider map, then load
+  migrateLegacyKey();
   const directConfig = getDirectConfig();
-  const [key, setKey] = useState(directConfig.key);
+  const [key, setKey] = useState(() => getKeyForProvider(getProviderId()));
   const [baseUrl, setBaseUrl] = useState(directConfig.baseUrl);
   const [model, setModel] = useState(directConfig.model);
 
