@@ -15,12 +15,14 @@ import { createPortal } from 'react-dom';
 import { scanNote } from '../api/scan';
 import { scanLine } from '../api/scanLine';
 import { updateNote, moveNote } from '../store/db';
-import SlideUpPanel from './SlideUpPanel';
-import FolderPickerSheet from './FolderPickerSheet';
 import StrokeLayer, { PALETTE, TOOLS, SIZES, SIZE_LABEL } from './StrokeLayer';
 import ImageStrip, { pickImage, compressImage } from './ImageManager';
 import { buildNotePDF, saveNotePDF } from '../lib/pdf';
 import { Capacitor } from '@capacitor/core';
+import ChatSheet from './ChatSheet';
+import { summarizeNote, ocrImage, findRelatedNotes } from '../lib/aiFeatures';
+import SlideUpPanel from './SlideUpPanel';
+import FolderPickerSheet from './FolderPickerSheet';
 import {
   renderLineText,
   MistakeBox,
@@ -29,7 +31,7 @@ import {
 
 const HINT_KEY = 'aicn:showHint';
 
-export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList }) {
+export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList, onOpenNote }) {
   const [mode, setMode] = useState(() => {
     const isNew = !(note?.title || '').trim() && !(note?.body || '').trim();
     return isNew ? 'edit' : 'read';
@@ -65,6 +67,79 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
     if (d && Array.isArray(d.strokes)) return d;
     return { refWidth: 0, strokes: [] };
   });
+
+  // ---------- AI additions (chat, summary, OCR, related notes) ----------
+  const [chatOpen, setChatOpen] = useState(false);
+  const [summary, setSummary] = useState(note?.summary || '');
+  const [summarizing, setSummarizing] = useState(false);
+  const [ocrBusy, setOcrBusy] = useState(false);
+  const [related, setRelated] = useState(null); // null | [] | [{note, reason}]
+  const [relatedOpen, setRelatedOpen] = useState(false);
+  const [relatedBusy, setRelatedBusy] = useState(false);
+
+  const handleSummarize = useCallback(async (force = false) => {
+    if (summarizing) return;
+    if (summary && !force) return;
+    if (!body.trim()) { showToast('Write the note first'); return; }
+    setSummarizing(true);
+    try {
+      const s = await summarizeNote({ note: body, subject, style: 'default' });
+      setSummary(s);
+      await updateNote(note.id, { summary: s });
+    } catch (err) {
+      showToast(`Summary failed: ${err.message}`);
+    } finally {
+      setSummarizing(false);
+    }
+  }, [body, subject, summary, note, summarizing]);
+
+  const handleOcrScan = useCallback(async () => {
+    if (ocrBusy) return;
+    setOcrBusy(true);
+    try {
+      const raw = await pickImage('camera');
+      if (!raw) { setOcrBusy(false); return; }
+      showToast('Reading the photo…');
+      const dataUrl = await compressImage(raw);
+      const text = await ocrImage({ imageDataUrl: dataUrl, subject });
+      if (text && text.trim()) {
+        const newBody = (body ? body + '\n' : '') + text.trim();
+        setBody(newBody);
+        savedRef.current = { ...savedRef.current, body: newBody };
+        await updateNote(note.id, { body: newBody });
+        showToast('Text added to note ✅');
+      } else {
+        showToast('No text found in the photo');
+      }
+    } catch (err) {
+      showToast(`Scan failed: ${err.message}`);
+    } finally {
+      setOcrBusy(false);
+    }
+  }, [ocrBusy, body, subject, note]);
+
+  const handleRelated = useCallback(async () => {
+    if (relatedBusy) return;
+    setRelatedOpen(true);
+    if (related) return; // already fetched this session
+    setRelatedBusy(true);
+    try {
+      const others = (await import('../store/db')).db;
+      const all = await others.notes.where('folderId').equals(note.folderId).toArray();
+      const usable = all.filter(n => n.id !== note.id && !n.trashed && (n.body || '').trim());
+      if (usable.length === 0) { setRelated([]); setRelatedBusy(false); return; }
+      const links = await findRelatedNotes({
+        currentNote: { title, body },
+        otherNotes: usable.map(n => ({ id: n.id, title: n.title, body: n.body })),
+      });
+      setRelated(links.map(l => ({ ...l.note, reason: l.reason })));
+    } catch (err) {
+      showToast(`Related notes failed: ${err.message}`);
+      setRelatedOpen(false);
+    } finally {
+      setRelatedBusy(false);
+    }
+  }, [related, relatedBusy, note, title, body]);
   const [showHint, setShowHint] = useState(() => {
     try { return localStorage.getItem(HINT_KEY) === 'true'; } catch { return false; }
   });
@@ -95,6 +170,8 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
     setDrawings(Array.isArray(d) ? { refWidth: 0, strokes: d }
       : (d && Array.isArray(d.strokes)) ? d : { refWidth: 0, strokes: [] });
     setDrawMode(false);
+    setSummary(note?.summary || '');
+    setRelated(null);
     setFlashcards(note?.flashcards || []);
     setQuiz(note?.quiz || []);
     savedRef.current = { title: note?.title || '', body: note?.body || '' };
@@ -500,7 +577,8 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
           <div className="attachment-row">
             <button className="attach-btn" aria-label="Take photo" onClick={async () => { const raw = await pickImage('camera'); if (raw) addImage(await compressImage(raw)); }}>📷</button>
             <button className="attach-btn" aria-label="Choose from library" onClick={async () => { const raw = await pickImage('library'); if (raw) addImage(await compressImage(raw)); }}>🖼</button>
-            <span className="attach-label">Add photos — annotate after saving</span>
+            <button className="attach-btn" aria-label="Scan text from photo" disabled={ocrBusy} onClick={handleOcrScan}>{ocrBusy ? '⏳' : '📝'}</button>
+            <span className="attach-label">{ocrBusy ? 'Reading the photo…' : 'Add photos — 📝 scans text from a photo'}</span>
           </div>
 
           {/* Image strip (only shows existing) */}
@@ -535,8 +613,32 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
           📁 {folderLabel || 'Folder'} <span className="folder-chip-chevron">›</span>
         </button>
 
+        {/* AI summary card */}
+        {(summary || summarizing) && (
+          <div className="summary-card">
+            <div className="summary-head">
+              <span className="summary-label">✨ Summary</span>
+              {!summarizing && (
+                <button className="summary-regen" onClick={() => handleSummarize(true)} aria-label="Regenerate summary">↻</button>
+              )}
+            </div>
+            {summarizing ? (
+              <div className="scan-indicator" style={{ padding: '4px 0' }}><span className="spinner" style={{ width: 14, height: 14 }} /> Summarizing…</div>
+            ) : (
+              <div className="summary-text">{summary}</div>
+            )}
+          </div>
+        )}
+
         {/* Images */}
         {images.length > 0 && <ImageStrip images={images} readOnly />}
+
+        {/* Summarize trigger when no summary yet */}
+        {!summary && !summarizing && body.trim() && (
+          <button className="summarize-chip" onClick={() => handleSummarize(false)}>
+            ✨ Summarize this note
+          </button>
+        )}
 
         <div className="note-lines">
           {lines.map((_, i) => (
@@ -555,6 +657,11 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
             />
           ))}
         </div>
+
+        {/* Related notes */}
+        <button className="related-trigger" onClick={handleRelated} disabled={relatedBusy}>
+          {relatedBusy ? '⏳ Looking…' : '🔗 Find related notes'}
+        </button>
 
         {/* Full-page annotation overlay — covers the ENTIRE note content.
             Editable only in draw mode; otherwise display-only and tappable-through. */}
@@ -578,6 +685,7 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
         <button className="navbar-btn" style={{ width: 'auto', paddingLeft: 0 }} onClick={onBackToList} aria-label="Back to notes list">‹ Notes</button>
         <span className="navbar-title" style={{ fontSize: 15, opacity: 0 }}>{'\u00A0'}</span>
         <div className="flex items-center gap-8">
+          <button className="navbar-btn" onClick={() => setChatOpen(true)} aria-label="Chat with this note">💬</button>
           <button className={`navbar-btn${drawMode ? ' navbar-btn-active' : ''}`} onClick={() => { setDrawMode(m => { if (!m) setPanelOpen(false); return !m; }); }} aria-label="Annotate note">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 19l7-7 3 3-7 7-3-3z" /><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" /><path d="M2 2l7.586 7.586" /><circle cx="11" cy="11" r="2" />
@@ -658,6 +766,36 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
       )}
 
       {moveOpen && <FolderPickerSheet currentId={note.folderId} onPick={handleMove} onClose={() => setMoveOpen(false)} />}
+
+      {relatedOpen && (
+        <div className="export-overlay" onClick={() => setRelatedOpen(false)}>
+          <div className="export-sheet" onClick={e => e.stopPropagation()} style={{ maxHeight: '75vh', overflowY: 'auto' }}>
+            <div className="export-title">Related notes</div>
+            {related === null && <div className="scan-indicator"><span className="spinner" /> Looking…</div>}
+            {related && related.length === 0 && (
+              <div className="empty-state" style={{ padding: 20 }}><div className="empty-text">No related notes found in this folder.</div></div>
+            )}
+            {related && related.map(r => (
+              <button key={r.id} className="export-btn" onClick={() => { setRelatedOpen(false); onOpenNote?.(r); }}>
+                📄 {r.title || 'New Note'}
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>{r.reason}</div>
+              </button>
+            ))}
+            <button className="export-btn cancel" onClick={() => setRelatedOpen(false)}>Close</button>
+          </div>
+        </div>
+      )}
+
+      {chatOpen && (
+        <ChatSheet
+          note={{ ...note, body, title, chat: note.chat }}
+          subject={subject}
+          onClose={() => setChatOpen(false)}
+          onSave={async msgs => {
+            await updateNote(note.id, { chat: msgs });
+          }}
+        />
+      )}
 
       {toast && <div className="toast">{toast}</div>}
       {printPortal}

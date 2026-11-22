@@ -74,7 +74,7 @@ async function mapPool(items, limit, fn) {
 }
 
 /** Call the AI with a timeout, return raw content string. */
-async function callAI({ system, user, maxTokens = 8192, timeoutMs = 180000 }) {
+export async function callAI({ system, user, maxTokens = 8192, timeoutMs = 180000 }) {
   const { baseUrl, key, model } = getDirectConfig();
 
   if (!key) throw new Error('No API key configured. Set your key in Settings → AI backend.');
@@ -197,7 +197,8 @@ export async function scanLine(note, line, request) {
 }
 
 /** Scan a full note (single call for short notes, parallel chunks for long). */
-export async function scanNote({ note, subject, changedLines }) {
+export async function scanNote({ note, subject, changedLines, style }) {
+  const styleLine = style && style !== 'default' ? `Explanation style: ${style}.` : '';
   const lines = note.split('\n');
   const onlyChanged = Array.isArray(changedLines) && changedLines.length > 0;
 

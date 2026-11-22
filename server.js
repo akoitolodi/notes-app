@@ -7,7 +7,7 @@ import express from 'express';
 import cors from 'cors';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { scanNote } from './lib/ai.js';
+import { scanNote, chat } from './lib/ai.js';
 import { scanLine } from './lib/scanLine.js';
 import { examSummary } from './lib/examSummary.js';
 
@@ -56,6 +56,18 @@ app.post('/api/exam-summary', async (req, res) => {
   } catch (err) {
     console.error('[api/exam-summary] error:', err);
     return res.status(500).json({ error: err.message || 'Exam summary failed' });
+  }
+});
+
+
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { messages, maxTokens } = req.body || {};
+    const content = await chat({ messages, maxTokens });
+    return res.json({ content });
+  } catch (err) {
+    console.error('[api/chat] error:', err);
+    return res.status(500).json({ error: err.message || 'Chat failed' });
   }
 });
 
