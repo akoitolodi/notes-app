@@ -203,101 +203,7 @@ export default function StudyScreen({ note, onBack }) {
       setWeakness(w);
     } catch (e) { alert(e.message); }
     finally { setWeakBusy(false); }
-  }, [note];
-
-  const handleGrade = async (q, ans) => {
-    try {
-      const res = await import('../lib/aiFeatures').then(m => m.gradeAnswer({ note: note.body, question: q.question, answer: ans, style: 'exam-prep' }));
-      return res;
-    } catch (e) { alert(e.message); return null; }
-  };
-
-  const flashcards = note?.flashcards || [];
-  const quiz = note?.quiz || [];
-
-  const [cloze, setCloze] = useState([]);
-  const [clozeBusy, setClozeBusy] = useState(false);
-  const [mnemonics, setMnemonics] = useState([]);
-  const [mnBusy, setMnBusy] = useState(false);
-  const [graderResult, setGraderResult] = useState(null);
-  const [weakness, setWeakness] = useState(null);
-  const [weakBusy, setWeakBusy] = useState(false);
-
-  const handleCloze = useCallback(async () => {
-    setClozeBusy(true);
-    try { const c = await import('../lib/aiFeatures').then(m => m.generateCloze({ note: note.body })); setCloze(c); }
-    catch (e) { alert(e.message); }
-    finally { setClozeBusy(false); }
-  }, [note];
-
-  const handleMnemonics = useCallback(async () => {
-    setMnBusy(true);
-    try { const m = await import('../lib/aiFeatures').then(m => m.generateMnemonics({ note: note.body })); setMnemonics(m); }
-    catch (e) { alert(e.message); }
-    finally { setMnBusy(false); }
-  }, [note];
-
-  const handleAnalyzeWeakness = useCallback(async () => {
-    if (!note.quiz || !note.quiz.length) return;
-    setWeakBusy(true);
-    try {
-      const w = await import('../lib/aiFeatures').then(m => m.analyzeWeakness({ note: note.body, quiz: note.quiz, answers: {}, style: 'exam-prep' }));
-      setWeakness(w);
-    } catch (e) { alert(e.message); }
-    finally { setWeakBusy(false); }
-  }, [note];
-
-  const handleGrade = async (q, ans) => {
-    try {
-      const res = await import('../lib/aiFeatures').then(m => m.gradeAnswer({ note: note.body, question: q.question, answer: ans, style: 'exam-prep' }));
-      return res;
-    } catch (e) { alert(e.message); return null; }
-  };
-
-  const flashcards = note?.flashcards || [];
-  const quiz = note?.quiz || [];
-
-  const [cloze, setCloze] = useState([]);
-  const [clozeBusy, setClozeBusy] = useState(false);
-  const [mnemonics, setMnemonics] = useState([]);
-  const [mnBusy, setMnBusy] = useState(false);
-  const [graderResult, setGraderResult] = useState(null);
-  const [weakness, setWeakness] = useState(null);
-  const [weakBusy, setWeakBusy] = useState(false);
-
-  const handleCloze = useCallback(async () => {
-    setClozeBusy(true);
-    try { const c = await import('../lib/aiFeatures').then(m => m.generateCloze({ note: note.body })); setCloze(c); }
-    catch (e) { alert(e.message); }
-    finally { setClozeBusy(false); }
-  }, [note];
-
-  const handleMnemonics = useCallback(async () => {
-    setMnBusy(true);
-    try { const m = await import('../lib/aiFeatures').then(m => m.generateMnemonics({ note: note.body })); setMnemonics(m); }
-    catch (e) { alert(e.message); }
-    finally { setMnBusy(false); }
-  }, [note];
-
-  const handleAnalyzeWeakness = useCallback(async () => {
-    if (!note.quiz || !note.quiz.length) return;
-    setWeakBusy(true);
-    try {
-      const w = await import('../lib/aiFeatures').then(m => m.analyzeWeakness({ note: note.body, quiz: note.quiz, answers: {}, style: 'exam-prep' }));
-      setWeakness(w);
-    } catch (e) { alert(e.message); }
-    finally { setWeakBusy(false); }
-  }, [note];
-
-  const handleGrade = async (q, ans) => {
-    try {
-      const res = await import('../lib/aiFeatures').then(m => m.gradeAnswer({ note: note.body, question: q.question, answer: ans, style: 'exam-prep' }));
-      return res;
-    } catch (e) { alert(e.message); return null; }
-  };
-
-  const flashcards = note?.flashcards || [];
-  const quiz = note?.quiz || [];
+  }, [note]);
 
   return (
     <div className="screen">
@@ -379,6 +285,7 @@ export default function StudyScreen({ note, onBack }) {
                             </button>
                           ))}
                         <div className="mistake-correction" style={{ marginTop: 8 }}>Answer: {String.fromCharCode(65 + p.answer)}</div>
+                      </div>
                       </div>
                     ))}
                   </div>
