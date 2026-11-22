@@ -247,6 +247,20 @@ export default function SettingsScreen({ onBack }) {
               🔍 Test Connection
             </button>
 
+            <div className="settings-label" style={{ marginTop: 18 }}>🌐 Web search (optional)</div>
+            <input
+              type="password"
+              className="ai-input"
+              value={tavilyKey}
+              onChange={handleTavilyChange}
+              placeholder="Paste Tavily API key"
+              autoComplete="off"
+              spellCheck="false"
+            />
+            <div className="settings-tip" style={{ marginTop: 6 }}>
+              Lets the chat's 🌐 Web toggle search the internet. Free key (1,000 searches/mo): <a href="https://app.tavily.com" target="_blank" rel="noopener" style={{ color: 'var(--accent)' }}>app.tavily.com</a>
+            </div>
+
             <button
               className="btn btn-ghost"
               style={{ width: '100%', marginTop: 8, fontSize: 13 }}
@@ -254,43 +268,23 @@ export default function SettingsScreen({ onBack }) {
             >
               {showAdvanced ? 'Hide advanced' : 'Advanced (base URL, model)'}
             </button>
-
-            {showAdvanced && (
-              <>
-                <div className="settings-label" style={{ marginTop: 12 }}>Base URL</div>
-                <input
-                  type="url"
-                  className="ai-input"
-                  value={baseUrl}
-                  onChange={handleBaseUrlChange}
-                  placeholder="OpenAI-compatible endpoint"
-                  spellCheck="false"
-                />
-                <div className="settings-label" style={{ marginTop: 12 }}>Model</div>
-                <input
-                  type="text"
-                  className="ai-input"
-                  value={model}
-                  onChange={handleModelChange}
-                  placeholder="Model ID"
-                  spellCheck="false"
-                />
-                <div className="settings-label" style={{ marginTop: 12 }}>🧠 Reasoning model (Deep Think)</div>
-                <input
-                  type="text"
-                  className="ai-input"
-                  value={reasonModel}
-                  onChange={handleReasonModelChange}
-                  placeholder="e.g. deepseek-r1-distill-llama-70b"
-                  spellCheck="false"
-                />
-                <div className="settings-tip" style={{ marginTop: 6 }}>
-                  Defaults: {PROVIDERS[provider]?.name} → <strong>{PROVIDERS[provider]?.defaultModel || '—'}</strong> · reasoning → <strong>{PROVIDERS[provider]?.reasonModel || '—'}</strong>
-                </div>
-              </>
-            )}
           </>
         )}
+
+        {/* Web search key — works in BOTH modes (chat 🌐 toggle) */}
+        <div className="settings-label" style={{ marginTop: 18 }}>🌐 Web search (optional)</div>
+        <input
+          type="password"
+          className="ai-input"
+          value={tavilyKey}
+          onChange={handleTavilyChange}
+          placeholder="Paste Tavily API key"
+          autoComplete="off"
+          spellCheck="false"
+        />
+        <div className="settings-tip" style={{ marginTop: 6 }}>
+          Lets the chat's 🌐 Web toggle search the internet. Free key (1,000 searches/mo): <a href="https://app.tavily.com" target="_blank" rel="noopener" style={{ color: 'var(--accent)' }}>app.tavily.com</a>
+        </div>
       </div>
 
       <div className="list-group" style={{ padding: '14px 16px' }}>
