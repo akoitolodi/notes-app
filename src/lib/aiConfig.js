@@ -79,6 +79,20 @@ export const PROVIDERS = {
     models: ['mistral-small-latest', 'mistral-large-latest', 'open-mistral-nemo'],
     keyUrl: 'https://console.mistral.ai/api-keys',
   },
+  nvidia: {
+    name: 'NVIDIA',
+    badge: 'Free credits',
+    free: true,
+    baseUrl: 'https://integrate.api.nvidia.com/v1',
+    defaultModel: 'nvidia/nemotron-3.5-super-vl-120b-a12b',
+    models: [
+      'nvidia/nemotron-3.5-super-vl-120b-a12b',
+      'nvidia/nemotron-3.5-lightning-30b-a3b',
+      'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning',
+      'mistralai/mistral-large-4-1t-a52b',
+    ],
+    keyUrl: 'https://build.nvidia.com',
+  },
   custom: {
     name: 'Custom',
     badge: 'Your endpoint',
