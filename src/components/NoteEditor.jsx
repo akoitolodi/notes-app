@@ -573,12 +573,11 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
           <input type="text" className="editor-title" placeholder="Title" value={title} onChange={e => setTitle(e.target.value)} aria-label="Note title" />
           <input type="text" className="editor-subject" placeholder="Subject (e.g. Biology)" value={subject} onChange={e => setSubject(e.target.value)} aria-label="Subject" />
 
-          {/* Compact attachment row — photos only; drawing happens in read mode */}
+          {/* Compact attachment row */}
           <div className="attachment-row">
-            <button className="attach-btn" aria-label="Take photo" onClick={async () => { const raw = await pickImage('camera'); if (raw) addImage(await compressImage(raw)); }}>📷</button>
-            <button className="attach-btn" aria-label="Choose from library" onClick={async () => { const raw = await pickImage('library'); if (raw) addImage(await compressImage(raw)); }}>🖼</button>
-            <button className="attach-btn" aria-label="Scan text from photo" disabled={ocrBusy} onClick={handleOcrScan}>{ocrBusy ? '⏳' : '📝'}</button>
-            <span className="attach-label">{ocrBusy ? 'Reading the photo…' : 'Add photos — 📝 scans text from a photo'}</span>
+            <button className="attach-btn" aria-label="Take photo" onClick={async () => { const raw = await pickImage('camera'); if (raw) addImage(await compressImage(raw)); }}>📷<span className="attach-btn-label">Photo</span></button>
+            <button className="attach-btn" aria-label="Choose from library" onClick={async () => { const raw = await pickImage('library'); if (raw) addImage(await compressImage(raw)); }}>🖼<span className="attach-btn-label">Gallery</span></button>
+            <button className="attach-btn" aria-label="Scan text from photo (OCR)" disabled={ocrBusy} onClick={handleOcrScan}>{ocrBusy ? '⏳' : '📝'}<span className="attach-btn-label">{ocrBusy ? 'Reading…' : 'Scan text'}</span></button>
           </div>
 
           {/* Image strip (only shows existing) */}
