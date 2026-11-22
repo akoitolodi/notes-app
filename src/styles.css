@@ -125,6 +125,12 @@ a:active { opacity: 0.7; }
   overflow-y: auto;                  /* screens scroll within themselves — Settings lists etc. */
   -webkit-overflow-scrolling: touch; /* smooth momentum scrolling on mobile */
 }
+/* Prevent flex from SQUASHING screen sections to fit the viewport
+   (that clipped the AI Backend section into a small box). Content must
+   keep its natural height so .screen's overflow-y can scroll it. */
+.screen > * {
+  flex-shrink: 0;
+}
 
 /* Safe area for notched phones — used on navbar and bottom sheet */
 .safe-top { padding-top: max(env(safe-area-inset-top, 0px), 8px); }
