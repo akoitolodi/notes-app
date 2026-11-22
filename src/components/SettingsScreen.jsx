@@ -102,6 +102,20 @@ export default function SettingsScreen({ onBack }) {
     setTimeout(() => setToast(null), 2500);
   };
 
+  const Segmented = ({ options, value, onChange }) => (
+    <div className="view-switcher" style={{ margin: '8px 0 0' }}>
+      {options.map(([v, label]) => (
+        <button
+          key={v}
+          className={`view-switch-btn${value === v ? ' active' : ''}`}
+          onClick={() => onChange(v)}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+
   return (
     <div className="screen">
       <header className="navbar safe-top">
