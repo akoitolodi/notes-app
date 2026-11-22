@@ -69,7 +69,11 @@ async function directChat(messages, maxTokens, timeoutMs, modelOverride = null) 
   });
   if (!res.ok) {
     const body = await res.text().catch(() => '');
-    throw new Error(`AI API error ${res.status}: ${body.slice(0, 200)}`);
+    let msg = `AI API error ${res.status}: ${body.slice(0, 200)}`;
+    if (res.status === 404 || res.status === 410) {
+      msg += '\n\n💡 This model may have been retired by the provider. Settings → AI Backend → Advanced → pick another model.';
+    }
+    throw new Error(msg);
   }
   const data = await res.json();
   const content = data.choices?.[0]?.message?.content;
