@@ -75,7 +75,7 @@ async function mapPool(items, limit, fn) {
 
 /** Call the AI with a timeout, return raw content string. */
 async function callAI({ system, user, maxTokens = 8192, timeoutMs = 180000 }) {
-  const { baseUrl, key, model } = await import('./aiConfig').then(m => m.getDirectConfig());
+  const { baseUrl, key, model } = getDirectConfig();
 
   if (!key) throw new Error('No API key configured. Set your key in Settings → AI backend.');
   if (!baseUrl) throw new Error('No base URL configured for the selected provider.');

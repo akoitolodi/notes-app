@@ -73,23 +73,29 @@ export default function SettingsScreen({ onBack }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const testConnection = async () => {
-    const { baseUrl, key, model, preset } = await import('../lib/aiConfig').then(m => m.getDirectConfig());
-    if (!key) { showToast('Enter an API key first'); return; }
+    const bUrl = baseUrl.trim().replace(/\/$/, '');
+    const k = key.trim();
+    const m = model.trim();
+    if (!k) { showToast('Enter an API key first'); return; }
+    if (!bUrl || !m) { showToast('Base URL / model missing — check Advanced'); return; }
     showToast('Testing…');
     try {
-      const res = await fetch(`${baseUrl}/chat/completions`, {
+      const res = await fetch(`${bUrl}/chat/completions`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+        headers: { Authorization: `Bearer ${k}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model,
-          messages: [{ role: 'user', content: 'Say "OK" in 3 words.' }],
+          model: m,
+          messages: [{ role: 'user', content: 'Reply with exactly: OK' }],
           max_tokens: 10,
           temperature: 0,
         }),
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(15000),
       });
       if (res.ok) { showToast('✅ Connected!'); }
-      else { const t = await res.text(); showToast(`❌ ${res.status}: ${t.slice(0, 80)}`); }
+      else {
+        const t = await res.text().catch(() => '');
+        showToast(`❌ ${res.status}: ${t.slice(0, 80)}`);
+      }
     } catch (e) {
       showToast(`❌ ${e.message}`);
     }
