@@ -19,6 +19,8 @@ import SlideUpPanel from './SlideUpPanel';
 import FolderPickerSheet from './FolderPickerSheet';
 import StrokeLayer, { PALETTE, TOOLS, SIZES, SIZE_LABEL } from './StrokeLayer';
 import ImageStrip, { pickImage, compressImage } from './ImageManager';
+import { buildNotePDF, saveNotePDF } from '../lib/pdf';
+import { Capacitor } from '@capacitor/core';
 import {
   renderLineText,
   MistakeBox,
@@ -309,6 +311,33 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
   const handlePrintPdf = withExpl => {
     setExportOpen(false);
     setPrintPayload({ title: title || 'New Note', body, withExpl });
+  };
+
+  // ---------- Real PDF export (works in the APK — no print dialog) ----------
+  const [exporting, setExporting] = useState(false);
+  const isNative = Capacitor.isNativePlatform?.();
+
+  const handleExportPDF = async withExpl => {
+    setExportOpen(false);
+    setExporting(true);
+    try {
+      const doc = await buildNotePDF({
+        title: title || 'New Note',
+        body,
+        blocks,
+        images,
+        drawings,
+        withExplanations: withExpl,
+      });
+      const how = await saveNotePDF(doc, title || 'note');
+      showToast(how === 'shared'
+        ? 'PDF ready — pick where to save or send it'
+        : 'PDF downloaded');
+    } catch (err) {
+      showToast(`PDF failed: ${err.message}`);
+    } finally {
+      setExporting(false);
+    }
   };
 
   const handleMove = async f => {
@@ -612,8 +641,17 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
             <div className="export-title">Share & Export</div>
             <button className="export-btn" onClick={handleShareText}>📤 Share note as text</button>
             <button className="export-btn" onClick={handleCopyText}>📋 Copy note text</button>
-            <button className="export-btn" onClick={() => handlePrintPdf(false)}>📄 Save as PDF</button>
-            {explBlocks.length > 0 && <button className="export-btn" onClick={() => handlePrintPdf(true)}>📄 PDF with explanations</button>}
+            <button className="export-btn" disabled={exporting} onClick={() => handleExportPDF(false)}>
+              {exporting ? '⏳ Building PDF…' : '📄 Export PDF'}
+            </button>
+            {explBlocks.length > 0 && (
+              <button className="export-btn" disabled={exporting} onClick={() => handleExportPDF(true)}>
+                {exporting ? '⏳ Building PDF…' : '📄 PDF with explanations'}
+              </button>
+            )}
+            {!isNative && (
+              <button className="export-btn" onClick={() => handlePrintPdf(false)}>🖨 Print / system PDF</button>
+            )}
             <button className="export-btn cancel" onClick={() => setExportOpen(false)}>Cancel</button>
           </div>
         </div>

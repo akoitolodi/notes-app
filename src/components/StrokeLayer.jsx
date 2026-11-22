@@ -44,7 +44,7 @@ export function toolWidth(tool, size) {
 }
 
 /** Draw one stroke. ctx is pre-translated to content space and pre-scaled. */
-function drawStroke(ctx, s) {
+export function drawStroke(ctx, s) {
   const pts = s.points || [];
   if (!pts.length) return;
 
