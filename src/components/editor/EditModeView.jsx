@@ -42,6 +42,7 @@ import {
 } from '../../lib/voiceDictation';
 import { cleanDictation, polishWritingWithAI } from '../../lib/aiFeatures';
 import { runGrammarCheck, applyGrammarFix } from '../../lib/grammarCheck';
+import { analyzeWritingCraft, applySafeWordyFix } from '../../lib/writingCoach';
 import { getModeMeta, isZeroAiMode } from '../../lib/noteModes';
 import { db, getHiddenLockedFolderIds, getZeroAiFolderIds } from '../../store/db';
 import { useDialog } from '../ui/DialogProvider';
@@ -652,7 +653,7 @@ export default function EditModeView({
             <div className="flex justify-between items-center" style={{ marginBottom: 8 }}>
               <span className="flex items-center gap-6" style={{ fontSize: 13, fontWeight: 700 }}>
                 <SpellCheck size={15} style={{ color: 'var(--accent-ink)' }} />
-                Writing &amp; Grammar Polish
+                Writing Craft &amp; Grammar Coach
               </span>
               <button
                 type="button"
@@ -664,6 +665,72 @@ export default function EditModeView({
                 <X size={14} />
               </button>
             </div>
+
+            {/* 100% Offline, Deterministic, LaTeX- & Code-Safe Style & Readability Coach */}
+            {(() => {
+              const craft = analyzeWritingCraft(body);
+              if (craft.words === 0) return null;
+              return (
+                <div className="craft-panel">
+                  <div className="craft-stats-row">
+                    <span className="craft-pill">
+                      Grade <strong>{craft.gradeLevel}</strong> · {craft.readabilityLabel}
+                    </span>
+                    <span className="craft-pill">
+                      Rhythm <strong>{craft.rhythmScore}/100</strong>
+                    </span>
+                    <span className="craft-pill">
+                      Avg <strong>{craft.avgWordsPerSentence}</strong> w/sent · ~{craft.readingMinutes}m read
+                    </span>
+                    {craft.protectedCount > 0 && (
+                      <span className="craft-pill" style={{ color: 'var(--ok)' }}>
+                        {craft.protectedCount} math/code block{craft.protectedCount === 1 ? '' : 's'} protected
+                      </span>
+                    )}
+                  </div>
+
+                  {craft.wordyFixes.length > 0 && (
+                    <div className="flex gap-6 mt-8" style={{ flexWrap: 'wrap' }}>
+                      {craft.wordyFixes.slice(0, 5).map(fix => (
+                        <button
+                          key={fix.phrase}
+                          type="button"
+                          className="tag-pill"
+                          style={{ cursor: 'pointer', background: 'var(--ok-bg)', color: 'var(--ok)' }}
+                          onClick={() => {
+                            const updated = applySafeWordyFix(body, fix.phrase, fix.replacement);
+                            if (updated !== body) {
+                              onBodyChange(updated);
+                              toast(`Tightened "${fix.phrase}" → "${fix.replacement}"`);
+                            }
+                          }}
+                          title={`${fix.note} (LaTeX & code safe)`}
+                        >
+                          “{fix.phrase}” → “{fix.replacement}”
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {(craft.monotonousRuns.length > 0 || craft.repeatedPhrases.length > 0 || craft.passiveHits.length > 0) && (
+                    <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginTop: 6, lineHeight: 1.45 }}>
+                      {craft.monotonousRuns.length > 0 && (
+                        <div>• Rhythm: {craft.monotonousRuns.join('; ')}</div>
+                      )}
+                      {craft.repeatedPhrases.length > 0 && (
+                        <div>
+                          • Repeated phrases:{' '}
+                          {craft.repeatedPhrases.map(r => `"${r.phrase}" (×${r.count})`).join(', ')}
+                        </div>
+                      )}
+                      {craft.passiveHits.length > 0 && (
+                        <div>• Passive voice check: {craft.passiveHits.slice(0, 4).join(', ')}</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             <div className="flex gap-6" style={{ flexWrap: 'wrap', marginBottom: 8 }}>
               <button

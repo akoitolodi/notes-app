@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { chatWithNote } from '../lib/aiFeatures';
 import { getModeMeta } from '../lib/noteModes';
+import { getLearnerContextDigest } from '../lib/learnerMemory';
 import { resolveLinkedNotes } from '../lib/wikiLinks';
 import { db, getHiddenLockedFolderIds, getZeroAiFolderIds } from '../store/db';
 import MarkdownContent from './ui/MarkdownContent';
@@ -109,6 +110,7 @@ export default function ChatSheet({
   const starterPrompts = modeMeta.chatStarters;
   const [messages, setMessages] = useState(() => cleanHistory(note?.chat));
   const [siblingNotes, setSiblingNotes] = useState([]);
+  const [learnerContext, setLearnerContext] = useState('');
   const [pending, setPending] = useState(null);
   const [streamingText, setStreamingText] = useState('');
   const [statusLabel, setStatusLabel] = useState('');
@@ -148,6 +150,23 @@ export default function ChatSheet({
       live = false;
     };
   }, [note?.folderId, note?.id, note?.body]);
+
+  // Load DeepTutor Persistent Learner Memory for this subject (skipped for journal & vault)
+  useEffect(() => {
+    if (noteMode === 'journal' || noteMode === 'vault') {
+      setLearnerContext('');
+      return undefined;
+    }
+    let live = true;
+    getLearnerContextDigest(note?.subject || subject)
+      .then(ctx => {
+        if (live) setLearnerContext(ctx);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [note?.subject, subject, noteMode]);
 
   useEffect(() => {
     listRef.current?.scrollTo?.({ top: listRef.current.scrollHeight, behavior: 'smooth' });
@@ -208,6 +227,7 @@ export default function ChatSheet({
         subject: note.subject || subject,
         noteMode,
         siblingNotes,
+        learnerContext,
         history: messages,
         question,
         style,
@@ -303,6 +323,7 @@ export default function ChatSheet({
           <div className="chat-sub">
             {note?.title || 'Untitled'}
             {siblingNotes.length > 0 ? ` · ${siblingNotes.length} folder notes linked` : ''}
+            {learnerContext ? ' · DeepTutor Memory' : ''}
           </div>
         </div>
         {messages.length > 0 && (
@@ -427,6 +448,20 @@ export default function ChatSheet({
                       }}
                     >
                       <FilePlus2 size={13} /> Save as note
+                    </button>
+                  )}
+                  {m.verified && !busy && (
+                    <button
+                      type="button"
+                      className="chat-msg-action"
+                      onClick={() =>
+                        ask('Give me one similar practice problem to test if I truly understood that, and wait for my answer.', {
+                          socratic: true,
+                          deep: false,
+                        })
+                      }
+                    >
+                      <Brain size={12} /> Practice similar
                     </button>
                   )}
                 </div>

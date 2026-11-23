@@ -57,6 +57,67 @@ function isRetryableStatus(status) {
   return status === 429 || status === 502 || status === 503 || status === 504;
 }
 
+const THINKING_MODEL_RE =
+  /(deepseek-r1|r1:|qwen[-/]?3|qwq|nemotron|gemini-2\.5|gemini-3|\bo1\b|\bo3\b|\bo4\b|magistral|thinking|reasoner|gpt-5|claude-sonnet-4|claude-opus-4)/i;
+
+/** Detect models that emit internal thinking/reasoning tokens counted against max_tokens. */
+export function isThinkingModel(model = '') {
+  return THINKING_MODEL_RE.test(String(model || ''));
+}
+
+/**
+ * Compute safe max_tokens budget so thinking/reasoning models never exhaust their
+ * token limit inside hidden reasoning before writing the final visible answer.
+ */
+export function computeEffectiveMaxTokens(model, requestedMax = 2048, useReasoning = false, boostRetry = false) {
+  const base = Math.max(256, Number(requestedMax) || 2048);
+  const needsThinkingHeadroom = Boolean(useReasoning || isThinkingModel(model));
+  let budget = needsThinkingHeadroom ? Math.max(base, 4096) : base;
+  if (boostRetry) {
+    budget = Math.max(budget * 2, 8192);
+  }
+  return Math.min(16384, budget);
+}
+
+/**
+ * Extract clean visible text from a model response, with optional last-resort
+ * extraction from reasoning_content / unclosed <think> if the provider truncated mid-thought.
+ */
+export function extractUsableText(rawContent = '', reasoningText = '', { allowReasoningFallback = false } = {}) {
+  const raw = String(rawContent || '');
+  const hasOpenThink = /<think>/i.test(raw);
+  const hasCloseThink = /<\/think>/i.test(raw);
+  if (hasOpenThink && !hasCloseThink) {
+    const beforeThink = raw.slice(0, raw.toLowerCase().indexOf('<think>')).trim();
+    if (beforeThink) return beforeThink;
+    if (!allowReasoningFallback) return '';
+  }
+
+  const cleaned = stripThinking(raw);
+  if (cleaned && !(hasOpenThink && !hasCloseThink)) return cleaned;
+
+  if (!allowReasoningFallback) return '';
+
+  const fallbackSource = String(reasoningText || rawContent || '')
+    .replace(/<\/?think>/gi, '')
+    .trim();
+  if (!fallbackSource) return '';
+
+  const finalMatch = /(?:final answer|answer|conclusion|summary)\s*[:\-]\s*([\s\S]+)$/i.exec(fallbackSource);
+  if (finalMatch && finalMatch[1].trim().length >= 12) {
+    return finalMatch[1].trim();
+  }
+  return fallbackSource;
+}
+
+function buildEmptyResponseError(lastReasoning = '') {
+  const err = new Error('AI returned no content');
+  err.retryable = true;
+  err.isEmptyResponse = true;
+  err.lastReasoning = lastReasoning;
+  return err;
+}
+
 function buildMessages({ system, user, imageDataUrl = null, history = [] }) {
   const messages = [];
   if (system) messages.push({ role: 'system', content: system });
@@ -182,41 +243,47 @@ export async function aiTextStream({
   const candidates = getDirectCandidates(modelOverride, useReasoning);
   const hasFallbacks = candidates.length > 1;
   let lastErr = null;
+  let lastReasoningSeen = '';
 
   for (let idx = 0; idx < candidates.length; idx++) {
     const c = candidates[idx];
     const moreLeft = idx < candidates.length - 1;
     if (c.isFallback) onFallback?.(c.name);
 
-    // If a backup provider exists and primary stalls with 0 bytes for 18s (25s for reasoning), fail over fast!
+    // If a backup provider exists and primary stalls with 0 bytes for 18s (28s for reasoning), fail over fast!
     const ttftWatchdogMs =
       hasFallbacks && moreLeft ? (useReasoning ? 28000 : 18000) : 0;
 
     for (let attempt = 0; attempt < (c.isFallback ? 1 : 2); attempt++) {
+      const effectiveMax = computeEffectiveMaxTokens(c.model, maxTokens, useReasoning, attempt > 0);
       try {
         return await streamRequest({
           url: `${c.baseUrl}/chat/completions`,
           headers: { Authorization: `Bearer ${c.key}`, 'Content-Type': 'application/json' },
-          bodyObj: { model: c.model, messages, temperature: 0.4, max_tokens: maxTokens, stream: true },
+          bodyObj: { model: c.model, messages, temperature: 0.4, max_tokens: effectiveMax, stream: true },
           timeoutMs,
           firstByteTimeoutMs: ttftWatchdogMs,
           signal,
           onToken,
           onStatus,
-          fallbackTextFn: () => directSingleCall(c, messages, maxTokens, timeoutMs, signal),
+          fallbackTextFn: () =>
+            directSingleCall(c, messages, computeEffectiveMaxTokens(c.model, effectiveMax, useReasoning, true), timeoutMs, signal),
         });
       } catch (err) {
         if (err?.isCancelled) throw err;
         lastErr = err;
+        if (err?.lastReasoning) lastReasoningSeen = err.lastReasoning;
         if (err?.retryable && !err?.isFirstByteStall && attempt === 0 && !c.isFallback) {
-          await sleep(750, signal);
+          onStatus?.(err?.isEmptyResponse ? 'Model stopped mid-thought — retrying with more tokens…' : 'Retrying…');
+          await sleep(err?.isEmptyResponse ? 300 : 750, signal);
           continue;
         }
-        // Fail over to backup provider on rate-limit / server error / stall / retired model
+        // Fail over to backup provider on rate-limit / server error / stall / empty response / retired model
         if (
           !(
             err?.retryable ||
             err?.isFirstByteStall ||
+            err?.isEmptyResponse ||
             err?.httpStatus === 404 ||
             err?.httpStatus === 410
           )
@@ -226,6 +293,13 @@ export async function aiTextStream({
         break;
       }
     }
+  }
+
+  // Last-resort recovery: if every provider returned only reasoning_content, surface the clean conclusion rather than failing empty
+  const recovered = extractUsableText('', lastReasoningSeen, { allowReasoningFallback: true });
+  if (recovered) {
+    onToken?.(recovered);
+    return recovered;
   }
 
   throw lastErr || new Error('AI request failed');
@@ -283,9 +357,11 @@ async function streamRequest({
     const contentType = res.headers.get('content-type') || '';
     if (!res.body?.getReader || !contentType.includes('event-stream')) {
       const data = await res.json().catch(() => null);
-      const full = data?.choices?.[0]?.message?.content || data?.content || '';
-      if (!full) throw new Error('AI returned no content');
-      const cleaned = stripThinking(full);
+      const msgObj = data?.choices?.[0]?.message || {};
+      const full = msgObj.content || data?.content || '';
+      const reasoning = msgObj.reasoning_content || msgObj.reasoning || '';
+      const cleaned = extractUsableText(full, reasoning);
+      if (!cleaned) throw buildEmptyResponseError(reasoning || full);
       onToken(cleaned);
       return cleaned;
     }
@@ -294,6 +370,7 @@ async function streamRequest({
     const decoder = new TextDecoder('utf-8');
     let buffer = '';
     let rawAccum = '';
+    let reasoningAccum = '';
     let reasoningChars = 0;
     let lastStatusTs = 0;
 
@@ -317,6 +394,7 @@ async function streamRequest({
           // Surface live thinking activity for reasoning models (Nemotron / DeepSeek-R1 / Qwen3)
           const rDelta = deltaObj.reasoning_content || deltaObj.reasoning || '';
           if (typeof rDelta === 'string' && rDelta) {
+            reasoningAccum += rDelta;
             reasoningChars += rDelta.length;
             const now = Date.now();
             if (onStatus && now - lastStatusTs > 450) {
@@ -348,9 +426,19 @@ async function streamRequest({
       }
     }
 
-    const finalClean = stripThinking(rawAccum);
+    const finalClean = extractUsableText(rawAccum, reasoningAccum);
     if (!finalClean) {
-      return fallbackTextFn();
+      try {
+        const fb = await fallbackTextFn();
+        if (fb) {
+          onToken(fb);
+          return fb;
+        }
+      } catch (fbErr) {
+        if (fbErr?.isCancelled) throw fbErr;
+        throw buildEmptyResponseError(fbErr?.lastReasoning || reasoningAccum || rawAccum);
+      }
+      throw buildEmptyResponseError(reasoningAccum || rawAccum);
     }
     onToken(finalClean);
     return finalClean;
@@ -440,9 +528,12 @@ async function directSingleCall(candidate, messages, maxTokens, timeoutMs, signa
       throw buildHttpError(res.status, body);
     }
     const data = await res.json();
-    const content = data.choices?.[0]?.message?.content;
-    if (!content) throw new Error('AI returned no content');
-    return stripThinking(content);
+    const msgObj = data.choices?.[0]?.message || {};
+    const content = msgObj.content || '';
+    const reasoning = msgObj.reasoning_content || msgObj.reasoning || '';
+    const cleaned = extractUsableText(content, reasoning);
+    if (!cleaned) throw buildEmptyResponseError(reasoning || content);
+    return cleaned;
   } catch (err) {
     if (err?.name === 'AbortError') {
       if (ctrl.wasTimeout()) throw new Error('The AI took too long to answer. Tap Retry.');
@@ -467,27 +558,40 @@ async function directChatWithResilience(
 ) {
   const candidates = getDirectCandidates(modelOverride, useReasoning);
   let lastErr = null;
+  let lastReasoningSeen = '';
 
   for (const c of candidates) {
     if (c.isFallback) onFallback?.(c.name);
 
     for (let attempt = 0; attempt < (c.isFallback ? 1 : 2); attempt++) {
+      const effectiveMax = computeEffectiveMaxTokens(c.model, maxTokens, useReasoning, attempt > 0);
       try {
-        return await directSingleCall(c, messages, maxTokens, timeoutMs, signal);
+        return await directSingleCall(c, messages, effectiveMax, timeoutMs, signal);
       } catch (err) {
         if (err?.isCancelled) throw err;
         lastErr = err;
+        if (err?.lastReasoning) lastReasoningSeen = err.lastReasoning;
         if (err?.retryable && attempt === 0 && !c.isFallback) {
-          await sleep(1200, signal);
+          await sleep(err?.isEmptyResponse ? 350 : 1200, signal);
           continue;
         }
-        if (!(err?.retryable || err?.httpStatus === 404 || err?.httpStatus === 410)) {
+        if (
+          !(
+            err?.retryable ||
+            err?.isEmptyResponse ||
+            err?.httpStatus === 404 ||
+            err?.httpStatus === 410
+          )
+        ) {
           throw err;
         }
         break;
       }
     }
   }
+
+  const recovered = extractUsableText('', lastReasoningSeen, { allowReasoningFallback: true });
+  if (recovered) return recovered;
 
   throw lastErr || new Error('AI request failed');
 }

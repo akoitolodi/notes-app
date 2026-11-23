@@ -45,6 +45,14 @@ import {
   setAiProviderLocked,
   isDevToolkitEnabled,
   setDevToolkitEnabled,
+  isLearnCodingEnabled,
+  setLearnCodingEnabled,
+  isDeepTutorMemoryEnabled,
+  setDeepTutorMemoryEnabled,
+  getCodapiConfig,
+  setCodapiConfig,
+  getDeepTutorUrl,
+  setDeepTutorUrl,
   getGrammarConfig,
   setGrammarConfig,
   getModelsForProvider,
@@ -62,6 +70,7 @@ import {
 import { createAbortController, testTermuxConnection } from '../lib/aiCore';
 import { getRawApiBaseOverride, setApiBase } from '../config';
 import { exportBackup, importBackup } from '../store/db';
+import { testDeepTutorBridge } from '../lib/learnerMemory';
 import { hasVaultPin, lockVault } from '../lib/vault';
 import PinLockSheet from './PinLockSheet';
 import { useDialog } from './ui/DialogProvider';
@@ -174,6 +183,11 @@ export default function SettingsScreen({ onBack, onDataImported }) {
   const [autoFallback, setAutoFallbackState] = useState(() => getAutoFallback());
   const [aiLocked, setAiLocked] = useState(() => isAiProviderLocked() && Boolean(getKeyForProvider(getProviderId()).trim()));
   const [devToolkitOn, setDevToolkitOn] = useState(() => isDevToolkitEnabled());
+  const [learnCodingOn, setLearnCodingOn] = useState(() => isLearnCodingEnabled());
+  const [deepMemoryOn, setDeepMemoryOn] = useState(() => isDeepTutorMemoryEnabled());
+  const [codapiCfg, setCodapiCfg] = useState(() => getCodapiConfig());
+  const [deepTutorUrl, setDeepTutorUrlState] = useState(() => getDeepTutorUrl());
+  const [testingBridge, setTestingBridge] = useState(false);
   const [grammarCfg, setGrammarCfg] = useState(() => getGrammarConfig());
   const [pinModal, setPinModal] = useState(null); // null | 'setup' | 'change' | 'verify-ai-unlock'
   const [vaultPinExists, setVaultPinExists] = useState(() => hasVaultPin());
@@ -785,6 +799,29 @@ export default function SettingsScreen({ onBack, onDataImported }) {
 
         <label className="ios-switch-row mt-8">
           <span className="ios-switch-label" style={{ fontSize: 14 }}>
+            Show Learn Coding Studio (18 Languages)
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+              Fetches live open-source lessons &amp; Exercism challenges online with in-app multi-language code execution.
+            </div>
+          </span>
+          <span className="ios-switch">
+            <input
+              type="checkbox"
+              checked={learnCodingOn}
+              onChange={e => {
+                const v = e.target.checked;
+                setLearnCodingOn(v);
+                setLearnCodingEnabled(v);
+                onDataImported?.();
+                toast(v ? 'Learn Coding Studio enabled' : 'Learn Coding Studio hidden');
+              }}
+            />
+            <span className="ios-switch-track" />
+          </span>
+        </label>
+
+        <label className="ios-switch-row mt-8">
+          <span className="ios-switch-label" style={{ fontSize: 14 }}>
             Show Dev &amp; IT Toolkit
             <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
               Separate offline space for Subnet Calc, Base Converter, JSON/JWT, Regex &amp; Tech Templates. Turn off anytime for a pure notes layout.
@@ -806,7 +843,79 @@ export default function SettingsScreen({ onBack, onDataImported }) {
           </span>
         </label>
 
-        <div className="settings-label mt-16">Private Diary Vault PIN</div>
+        <label className="ios-switch-row mt-8">
+          <span className="ios-switch-label" style={{ fontSize: 14 }}>
+            DeepTutor Persistent Learner Memory
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+              Remembers your weak spots &amp; strengths locally across Chat, Exams, Flashcards &amp; Learn Coding (never touches Hidden Vault or Passwords &amp; Keys).
+            </div>
+          </span>
+          <span className="ios-switch">
+            <input
+              type="checkbox"
+              checked={deepMemoryOn}
+              onChange={e => {
+                const v = e.target.checked;
+                setDeepMemoryOn(v);
+                setDeepTutorMemoryEnabled(v);
+                toast(v ? 'DeepTutor Memory enabled' : 'DeepTutor Memory paused');
+              }}
+            />
+            <span className="ios-switch-track" />
+          </span>
+        </label>
+
+        <div className="settings-label mt-16">Open-Source Bridges (Optional)</div>
+        <div className="settings-tip">
+          Learn Coding uses <strong>api.codapi.org</strong> automatically (no key required). You can also point to a self-hosted <strong>Codapi</strong> runner or <strong>HKUDS/DeepTutor</strong> FastAPI server below.
+        </div>
+        <div className="settings-label mt-12">Codapi Sandbox URL (optional)</div>
+        <input
+          type="url"
+          className="ai-input"
+          value={codapiCfg.url}
+          onChange={e => {
+            const next = { ...codapiCfg, url: e.target.value };
+            setCodapiCfg(next);
+            setCodapiConfig(next);
+          }}
+          placeholder="https://api.codapi.org"
+          spellCheck="false"
+        />
+        <div className="settings-label mt-12">Self-Hosted HKUDS/DeepTutor URL (optional)</div>
+        <div className="flex gap-8">
+          <input
+            type="url"
+            className="ai-input flex-1"
+            value={deepTutorUrl}
+            onChange={e => {
+              setDeepTutorUrlState(e.target.value);
+              setDeepTutorUrl(e.target.value);
+            }}
+            placeholder="e.g. http://127.0.0.1:8001"
+            spellCheck="false"
+          />
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            disabled={testingBridge || !deepTutorUrl.trim()}
+            onClick={async () => {
+              setTestingBridge(true);
+              try {
+                const r = await testDeepTutorBridge(deepTutorUrl);
+                toast(`DeepTutor server reachable (${r.status})!`, { type: 'success' });
+              } catch (err) {
+                toast(err.message, { type: 'error' });
+              } finally {
+                setTestingBridge(false);
+              }
+            }}
+          >
+            <Plug size={14} /> {testingBridge ? '…' : 'Test'}
+          </button>
+        </div>
+
+        <div className="settings-label mt-16">Hidden Vault PIN</div>
         <div className="settings-tip">
           {vaultPinExists
             ? 'Your PIN protects locked folders and hides them from All Notes, Search, and Daily Review.'
@@ -982,7 +1091,7 @@ export default function SettingsScreen({ onBack, onDataImported }) {
           • Press <strong>Ctrl+S</strong> to save immediately or <strong>Ctrl+Shift+S</strong> to save & explain.
         </div>
         <div className="settings-tip" style={{ marginTop: 10, opacity: 0.7 }}>
-          Notes by Bai v1.5.2
+          Notes by Bai v1.6.0
         </div>
       </div>
 

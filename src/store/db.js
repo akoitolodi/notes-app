@@ -41,6 +41,16 @@ db.version(4).stores({
   attachments: 'id, noteId, createdAt',
 });
 
+// v5: additive DeepTutor learnerMemory + online Learn Coding curriculum cache
+db.version(5).stores({
+  folders: '++id, name, createdAt',
+  notes: '++id, folderId, title, updatedAt, pinned, createdAt',
+  examCache: 'folderId',
+  attachments: 'id, noteId, createdAt',
+  learnerMemory: '++id, subject, topic, mastery, mistakesCount, lastPracticedAt',
+  codingCache: 'key, updatedAt',
+});
+
 /** Check whether a note has any meaningful user content (text, images, or drawings). */
 export function noteHasContent(note) {
   if (!note) return false;

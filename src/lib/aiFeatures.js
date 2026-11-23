@@ -42,6 +42,7 @@ export async function chatWithNote({
   subject,
   noteMode = 'study',
   siblingNotes = [],
+  learnerContext = '',
   history = [],
   question,
   style,
@@ -56,6 +57,10 @@ export async function chatWithNote({
   const fullNote = String(note || '');
   const truncated = fullNote.length > 8000;
   const noteSlice = fullNote.slice(0, 8000);
+  const memoryBlock =
+    learnerContext && noteMode !== 'journal' && noteMode !== 'vault'
+      ? `\n${learnerContext}\n`
+      : '';
   const sLine = getStyleLine(style);
   const modeDirective = getChatModeDirective(noteMode);
   const lang = "Reply in the note's language.";
@@ -147,13 +152,13 @@ ${researchBlock}`;
     const reasonModel = getReasonModel();
     onStatus?.('Pass 1/2 — Solving step-by-step…');
 
-    const solveSys = `You are a rigorous analytical tutor. Work through the student's question thoroughly:
+    const solveSys = `You are DeepTutor, a rigorous dual-loop analytical tutor. Work through the student's question thoroughly:
 1. Restate the core problem and identify all premises/assumptions.
-2. Derive the logic or math step by step (use LaTeX $...$ for formulas).
+2. Derive the logic, code, or math step by step (use LaTeX $...$ for formulas).
 3. Explicitly distinguish claims from: (a) the student's notes, (b) external sources [n] if provided, and (c) general principles.
 4. Check at least one edge case, counterexample, or alternative interpretation.
 ${sLine} ${lang}
-
+${memoryBlock}
 NOTE TITLE: ${title || 'Untitled'} (${subject || 'General'})
 NOTE:
 ---
@@ -301,6 +306,7 @@ ${researchBlock || '(No external sources returned — answer from the notes and 
       ? modeDirective
       : 'You are a sharp, rigorous study tutor.'
   } ${sLine} ${lang}
+${memoryBlock}
 NOTE TITLE: ${title || 'Untitled'} (${subject || 'General'})
 ${focusHint}
 ${crossBlock}

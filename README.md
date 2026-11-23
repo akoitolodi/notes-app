@@ -1,4 +1,4 @@
-# Notes by Bai (v1.5.2)
+# Notes by Bai (v1.6.0)
 
 An offline-first Android, desktop & web notes app styled like iOS Notes — universal enough for class study, personal journaling, curiosity deep-dives, and coding — enhanced with a fast AI layer, answerable & printable bond-paper exams, PDF/PPTX importing, SM-2 spaced repetition, voice dictation, and an optional offline Dev & IT Toolkit.
 

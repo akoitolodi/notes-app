@@ -37,6 +37,7 @@ import {
   gradeWrittenAnswersWithAI,
 } from '../lib/examPaper';
 import { db, updateNote } from '../store/db';
+import { getLearnerContextDigest, recordLearningSignal } from '../lib/learnerMemory';
 import MarkdownContent from './ui/MarkdownContent';
 import { useDialog } from './ui/DialogProvider';
 
@@ -196,11 +197,16 @@ export default function ExamPaperScreen({
           .join('\n\n');
       }
 
+      const learnerDigest = await getLearnerContextDigest(subjectName);
+      const enrichedNotes = learnerDigest
+        ? `${notesText}\n\n${learnerDigest}\nPRIORITY: Include extra questions targeting the weak areas above.`
+        : notesText;
+
       const generated = await generateExamPaper({
         examTitle,
         subtitle,
         subject: subjectName,
-        notesText,
+        notesText: enrichedNotes,
         config,
         signal: controller.signal,
       });
@@ -227,8 +233,33 @@ export default function ExamPaperScreen({
 
   const handleCheckPaper = () => {
     setChecked(true);
-    if (paper) persistExamState({ paper, answers, writtenScores, checked: true });
-    toast('Objective items graded! Check your score at the top of the paper.', { type: 'success' });
+    if (paper) {
+      persistExamState({ paper, answers, writtenScores, checked: true });
+      // Feed objective exam results into DeepTutor Persistent Learner Memory
+      try {
+        const report = gradeExamPaperOffline(paper, answers, writtenScores);
+        for (const p of paper.parts || []) {
+          for (let qi = 0; qi < (p.items || []).length; qi++) {
+            const it = p.items[qi];
+            const k = `${p.id || p.type}-${qi}`;
+            const res = report.itemResults?.[k];
+            if (res && typeof res.correct === 'boolean') {
+              recordLearningSignal({
+                subject: subjectName,
+                topic: String(it.prompt || it.question || p.title || 'Exam item').slice(0, 72),
+                correct: res.correct,
+                mistakeSummary: res.correct ? '' : `Missed in ${examTitle}`,
+                source: 'exam',
+                noteMode: 'study',
+              }).catch(() => {});
+            }
+          }
+        }
+      } catch {
+        // non-fatal
+      }
+    }
+    toast('Objective items graded & synced to DeepTutor Memory!', { type: 'success' });
   };
 
   const handleAiGradeWritten = async () => {

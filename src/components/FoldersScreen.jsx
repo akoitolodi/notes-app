@@ -28,6 +28,7 @@ import {
   KeyRound,
   Shield,
   EyeOff,
+  Code2,
 } from 'lucide-react';
 import {
   db,
@@ -42,7 +43,7 @@ import {
 import { instantiateTemplate } from '../lib/templates';
 import { getReviewStats } from '../lib/spacedRepetition';
 import { NOTE_MODE_LIST, getModeMeta } from '../lib/noteModes';
-import { isDevToolkitEnabled } from '../lib/aiConfig';
+import { isDevToolkitEnabled, isLearnCodingEnabled } from '../lib/aiConfig';
 import {
   isVaultUnlocked,
   hasVaultPin,
@@ -76,6 +77,7 @@ export default function FoldersScreen({
   onOpenNote,
   onOpenReview,
   onOpenToolkit,
+  onOpenCoding,
   onOpenTrash,
   onOpenSettings,
 }) {
@@ -96,6 +98,7 @@ export default function FoldersScreen({
   const [vaultUnlocked, setVaultUnlocked] = useState(() => isVaultUnlocked());
   const [pinRequest, setPinRequest] = useState(null); // { mode: 'unlock'|'setup', onDone }
   const [showToolkit, setShowToolkit] = useState(() => isDevToolkitEnabled());
+  const [showCoding, setShowCoding] = useState(() => isLearnCodingEnabled());
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
@@ -129,6 +132,7 @@ export default function FoldersScreen({
     setSummary(await getHomeSummary());
     setReviewStats(getReviewStats());
     setShowToolkit(isDevToolkitEnabled());
+    setShowCoding(isLearnCodingEnabled());
     setVaultUnlocked(isVaultUnlocked());
   }, []);
 
@@ -590,21 +594,40 @@ export default function FoldersScreen({
         </button>
       </div>
 
-      {/* Optional Dev & IT Toolkit Add-on (toggleable in Settings) */}
-      {showToolkit && (
+      {/* Optional Learn Coding Studio & Dev & IT Toolkit Add-ons (toggleable in Settings) */}
+      {(showCoding || showToolkit) && (
         <div className="list-group" style={{ marginTop: 8, marginBottom: 8 }}>
-          <button type="button" className="list-item" onClick={onOpenToolkit}>
-            <span className="list-item-icon">
-              <Wrench size={17} />
-            </span>
-            <div className="list-item-body">
-              <div className="list-item-title">Dev &amp; IT Toolkit</div>
-              <div className="list-item-subtitle">
-                Offline IT tools &amp; cheat sheets
+          {showCoding && (
+            <button type="button" className="list-item" onClick={onOpenCoding}>
+              <span className="list-item-icon">
+                <Code2 size={17} />
+              </span>
+              <div className="list-item-body">
+                <div className="list-item-title">
+                  <span>Learn Coding</span>
+                  <span className="mode-badge mode-code">18 Langs</span>
+                </div>
+                <div className="list-item-subtitle">
+                  Live online guides, challenges &amp; code runner
+                </div>
               </div>
-            </div>
-            <ChevronRight size={17} className="list-item-chevron" />
-          </button>
+              <ChevronRight size={17} className="list-item-chevron" />
+            </button>
+          )}
+          {showToolkit && (
+            <button type="button" className="list-item" onClick={onOpenToolkit}>
+              <span className="list-item-icon">
+                <Wrench size={17} />
+              </span>
+              <div className="list-item-body">
+                <div className="list-item-title">Dev &amp; IT Toolkit</div>
+                <div className="list-item-subtitle">
+                  Offline IT tools &amp; cheat sheets
+                </div>
+              </div>
+              <ChevronRight size={17} className="list-item-chevron" />
+            </button>
+          )}
         </div>
       )}
 

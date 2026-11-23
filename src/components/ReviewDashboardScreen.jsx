@@ -14,8 +14,16 @@ import {
   ExternalLink,
   Layers,
   Clock,
+  Brain,
+  Trash2,
 } from 'lucide-react';
 import { db, getDueFlashcards, saveCardReviewResult } from '../store/db';
+import {
+  recordLearningSignal,
+  getLearnerMemory,
+  deleteLearnerTopic,
+  clearLearnerMemory,
+} from '../lib/learnerMemory';
 import {
   scheduleCard,
   previewIntervals,
@@ -52,11 +60,13 @@ export default function ReviewDashboardScreen({ onBack, onOpenNote, onChanged })
   const [flipped, setFlipped] = useState(false);
   const [sessionReviewed, setSessionReviewed] = useState(0);
   const [stats, setStats] = useState(() => getReviewStats());
+  const [memoryRows, setMemoryRows] = useState([]);
 
   const loadDeck = useCallback(async () => {
     setLoading(true);
-    const data = await getDueFlashcards();
+    const [data, mem] = await Promise.all([getDueFlashcards(), getLearnerMemory()]);
     setSummary(data);
+    setMemoryRows(mem);
     setQueue(data.dueCards);
     setPracticeMode(false);
     setFlipped(false);
@@ -76,6 +86,16 @@ export default function ReviewDashboardScreen({ onBack, onOpenNote, onChanged })
     const nextState = scheduleCard(currentItem.state, rating, now);
 
     await saveCardReviewResult(currentItem.noteId, currentItem.cardIndex, nextState);
+    recordLearningSignal({
+      subject: currentItem.folderName || currentItem.subject || 'General',
+      topic: currentItem.card?.q || currentItem.noteTitle || 'Flashcard',
+      correct: rating === 'good' || rating === 'easy',
+      mistakeSummary: rating === 'again' ? 'Marked Again in Daily Review' : '',
+      source: 'flashcard',
+      noteMode: 'study',
+    })
+      .then(() => getLearnerMemory().then(setMemoryRows))
+      .catch(() => {});
     const nextStats = recordCardReview(now);
     setStats(nextStats);
     setSessionReviewed(n => n + 1);
@@ -302,6 +322,77 @@ export default function ReviewDashboardScreen({ onBack, onOpenNote, onChanged })
             )}
           </>
         )}
+
+        {/* DeepTutor Persistent Learner Memory Panel */}
+        <div className="list-group settings-group" style={{ margin: '18px 0 0' }}>
+          <div className="flex justify-between items-center" style={{ marginBottom: 6 }}>
+            <span className="settings-label flex items-center gap-6" style={{ marginBottom: 0 }}>
+              <Brain size={14} /> DeepTutor Learner Memory ({memoryRows.length})
+            </span>
+            {memoryRows.length > 0 && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={async () => {
+                  await clearLearnerMemory();
+                  setMemoryRows([]);
+                }}
+              >
+                <Trash2 size={12} /> Clear
+              </button>
+            )}
+          </div>
+          <div className="settings-tip" style={{ marginBottom: 8 }}>
+            Tracks strengths &amp; weak concepts from Flashcards, Exam Papers, and Learn Coding so AI Chat &amp; Deep Think remember how you learn (never reads Hidden Vault or Passwords &amp; Keys).
+          </div>
+          {memoryRows.length === 0 ? (
+            <div style={{ fontSize: 12.5, color: 'var(--text-tertiary)' }}>
+              No topics tracked yet — rate flashcards, check an exam paper, or complete a coding challenge to build your memory profile.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {memoryRows.slice(0, 10).map(row => (
+                <div
+                  key={row.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    padding: '7px 10px',
+                    borderRadius: 10,
+                    background: 'var(--fill)',
+                  }}
+                >
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {row.topic}
+                    </div>
+                    <div style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
+                      {row.subject} · Mastery {row.mastery}%{row.mistakesCount ? ` · ${row.mistakesCount} miss${row.mistakesCount === 1 ? '' : 'es'}` : ''}
+                    </div>
+                  </div>
+                  <span
+                    className={`mode-badge ${row.mastery >= 75 ? 'mode-code' : row.mastery < 55 ? 'mode-vault' : 'mode-explore'}`}
+                  >
+                    {row.mastery >= 75 ? 'Strong' : row.mastery < 55 ? 'Focus' : 'Growing'}
+                  </span>
+                  <button
+                    type="button"
+                    className="row-icon-btn"
+                    aria-label={`Remove ${row.topic}`}
+                    onClick={async () => {
+                      await deleteLearnerTopic(row.id);
+                      setMemoryRows(prev => prev.filter(x => x.id !== row.id));
+                    }}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

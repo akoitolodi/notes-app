@@ -21,6 +21,7 @@ import { lockVault, subscribeVault } from './lib/vault';
 import { applySettings } from './theme';
 
 const DevToolkitScreen = lazy(() => import('./components/DevToolkitScreen'));
+const LearnCodingScreen = lazy(() => import('./components/LearnCodingScreen'));
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -178,6 +179,11 @@ export default function App() {
     pushHistoryEntry('toolkit');
   }, [pushHistoryEntry]);
 
+  const handleOpenCoding = useCallback(() => {
+    setScreen('coding');
+    pushHistoryEntry('coding');
+  }, [pushHistoryEntry]);
+
   const handleOpenExamPaper = useCallback(
     ({ sourceNote = null, sourceFolder = null }) => {
       setExamPaperTarget({
@@ -238,6 +244,7 @@ export default function App() {
       screen === 'exam' ||
       screen === 'review' ||
       screen === 'toolkit' ||
+      screen === 'coding' ||
       screen === 'trash' ||
       screen === 'settings'
     ) {
@@ -397,6 +404,21 @@ export default function App() {
         </Suspense>
       );
     }
+    if (screen === 'coding') {
+      return (
+        <Suspense
+          fallback={
+            <div className="screen" style={{ alignItems: 'center', justifyContent: 'center' }}>
+              <div className="scan-indicator">
+                <span className="spinner" /> Loading Learn Coding Studio…
+              </div>
+            </div>
+          }
+        >
+          <LearnCodingScreen onBack={handleBackToFolders} onOpenNote={handleOpenNote} />
+        </Suspense>
+      );
+    }
     if (screen === 'exam' && folder) {
       return (
         <ExamSummaryScreen
@@ -440,6 +462,7 @@ export default function App() {
               onOpenNote={handleOpenNote}
               onOpenReview={handleOpenReview}
               onOpenToolkit={handleOpenToolkit}
+              onOpenCoding={handleOpenCoding}
               onOpenTrash={handleOpenTrash}
               onOpenSettings={handleOpenSettings}
             />

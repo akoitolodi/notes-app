@@ -13,6 +13,11 @@ export const STYLE_KEY = 'aicn:explainStyle';   // 'default' | 'simple' | 'exam-
 export const FALLBACK_KEY = 'aicn:autoFallback'; // boolean string ('true' default)
 export const AI_LOCK_KEY = 'aicn:aiProviderLocked'; // passwordless Hold-to-Unlock safety lock
 export const DEV_TOOLKIT_KEY = 'aicn:addonDevToolkit'; // optional Dev & IT Toolkit add-on ('true' default)
+export const LEARN_CODING_KEY = 'aicn:addonLearnCoding'; // optional Learn Coding Studio ('true' default)
+export const CODAPI_URL_KEY = 'aicn:codapiUrl'; // optional self-hosted Codapi URL (default https://api.codapi.org)
+export const CODAPI_KEY_KEY = 'aicn:codapiKey'; // optional Codapi API key
+export const DEEPTUTOR_URL_KEY = 'aicn:deepTutorUrl'; // optional self-hosted HKUDS/DeepTutor bridge URL
+export const DEEPTUTOR_MEMORY_KEY = 'aicn:deepTutorMemory'; // built-in DeepTutor Learner Memory ('true' default)
 export const GRAMMAR_CONFIG_KEY = 'aicn:grammarConfig'; // JSON { provider, ltUrl, ltUsername, ltApiKey, grammarlyClientId, grammarlyClientSecret, grammarlyToken, saplingKey }
 export const FETCHED_MODELS_KEY = 'aicn:fetchedModels'; // JSON { [providerId]: string[] }
 
@@ -375,6 +380,78 @@ export function isDevToolkitEnabled() {
 export function setDevToolkitEnabled(enabled) {
   try {
     localStorage.setItem(DEV_TOOLKIT_KEY, enabled ? 'true' : 'false');
+  } catch {
+    // non-fatal
+  }
+}
+
+/** Optional Learn Coding Studio toggle (defaults ON, hideable anytime). */
+export function isLearnCodingEnabled() {
+  try {
+    const val = localStorage.getItem(LEARN_CODING_KEY);
+    return val === null ? true : val === 'true';
+  } catch {
+    return true;
+  }
+}
+
+export function setLearnCodingEnabled(enabled) {
+  try {
+    localStorage.setItem(LEARN_CODING_KEY, enabled ? 'true' : 'false');
+  } catch {
+    // non-fatal
+  }
+}
+
+/** Built-in DeepTutor Persistent Learner Memory toggle (defaults ON). */
+export function isDeepTutorMemoryEnabled() {
+  try {
+    const val = localStorage.getItem(DEEPTUTOR_MEMORY_KEY);
+    return val === null ? true : val === 'true';
+  } catch {
+    return true;
+  }
+}
+
+export function setDeepTutorMemoryEnabled(enabled) {
+  try {
+    localStorage.setItem(DEEPTUTOR_MEMORY_KEY, enabled ? 'true' : 'false');
+  } catch {
+    // non-fatal
+  }
+}
+
+export function getCodapiConfig() {
+  try {
+    return {
+      url: (localStorage.getItem(CODAPI_URL_KEY) || 'https://api.codapi.org').trim().replace(/\/+$/, ''),
+      key: (localStorage.getItem(CODAPI_KEY_KEY) || '').trim(),
+    };
+  } catch {
+    return { url: 'https://api.codapi.org', key: '' };
+  }
+}
+
+export function setCodapiConfig({ url, key }) {
+  try {
+    if (url !== undefined) localStorage.setItem(CODAPI_URL_KEY, String(url || '').trim());
+    if (key !== undefined) localStorage.setItem(CODAPI_KEY_KEY, String(key || '').trim());
+  } catch {
+    // non-fatal
+  }
+}
+
+export function getDeepTutorUrl() {
+  try {
+    return (localStorage.getItem(DEEPTUTOR_URL_KEY) || '').trim().replace(/\/+$/, '');
+  } catch {
+    return '';
+  }
+}
+
+export function setDeepTutorUrl(url) {
+  try {
+    localStorage.setItem(DEEPTUTOR_URL_KEY, String(url || '').trim());
   } catch {
     // non-fatal
   }
