@@ -75,11 +75,41 @@ describe('Canvas LMS Integration (.ics, RSS, Quick-Paste & Note Builder)', () =>
     expect(noteMd).toContain('Open in Canvas');
   });
 
+  it('parses real Canvas Atom XML with HTML-escaped links, author name & course title cleanup', () => {
+    const atomXml = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <author><name>canvas-lms</name></author>
+  <id>https://school.instructure.com/courses/3161/announcements</id>
+  <title>C - Integrative Programming and Technologies Announcements Feed</title>
+  <entry>
+    <author><name>Harvey Sean Ocmen</name></author>
+    <content type="html">&lt;p&gt;Hey everyone, welcome!&lt;br&gt;Join here: &lt;a class="inline_disabled" href="https://chat.google.com/room/test123" target="_blank"&gt;IPT 101A Chat&lt;/a&gt;. See you!&lt;/p&gt;</content>
+    <id>tag:canvas.instructure.com,2026-11-23:/discussion_topics/discussion_topic_11974</id>
+    <link href="http://school.instructure.com/courses/3161/discussion_topics/11974"/>
+    <published>2026-11-23T13:31:42+08:00</published>
+    <title>Announcement: Welcome to 2nd Semester | Official Google Chat</title>
+  </entry>
+</feed>`;
+
+    const anns = parseRssAnnouncements(atomXml);
+    expect(anns.length).toBe(1);
+    expect(anns[0].course).toBe('C - Integrative Programming and Technologies');
+    expect(anns[0].author).toBe('Harvey Sean Ocmen');
+    expect(anns[0].url).toBe('https://school.instructure.com/courses/3161/discussion_topics/11974');
+    expect(anns[0].description).not.toContain('<p>');
+    expect(anns[0].description).not.toContain('<a ');
+    expect(anns[0].description).toContain('[IPT 101A Chat](https://chat.google.com/room/test123)');
+
+    const noteMd = buildCanvasNoteContent(anns[0]);
+    expect(noteMd).toContain('**Posted by:** Harvey Sean Ocmen');
+    expect(noteMd).toContain('[IPT 101A Chat](https://chat.google.com/room/test123)');
+  });
+
   it('parses RSS/Atom announcements and auto-detects due dates from pasted Canvas announcements', () => {
     const rss = `<rss><channel><title>CS 201 Announcements</title><item><title>Lab 5 Deadline Extended</title><description><![CDATA[<p>Submit by Friday</p>]]></description><link>https://canvas.example/a/1</link><guid>ann-1</guid><pubDate>Mon, 23 Nov 2026 08:00:00 GMT</pubDate></item></channel></rss>`;
     const anns = parseRssAnnouncements(rss);
     expect(anns.length).toBe(1);
-    expect(anns[0].course).toBe('CS 201 Announcements');
+    expect(anns[0].course).toBe('CS 201');
     expect(anns[0].title).toBe('Lab 5 Deadline Extended');
     expect(anns[0].description).toBe('Submit by Friday');
 

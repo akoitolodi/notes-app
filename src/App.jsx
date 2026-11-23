@@ -17,6 +17,7 @@ import ExamPaperScreen from './components/ExamPaperScreen';
 import TrashScreen from './components/TrashScreen';
 import SettingsScreen from './components/SettingsScreen';
 import { db, ensureSeeded, purgeOldTrash, noteHasContent } from './store/db';
+import { autoSyncCanvasIfStale } from './lib/canvasSync';
 import { lockVault, subscribeVault } from './lib/vault';
 import { applySettings } from './theme';
 
@@ -68,11 +69,18 @@ export default function App() {
     };
   }, []);
 
-  // Seed default folders & purge 30-day-old trash on boot
+  // Seed default folders & purge 30-day-old trash on boot, then quietly auto-sync Canvas if configured
   useEffect(() => {
     applySettings();
-    Promise.all([ensureSeeded(), purgeOldTrash()]).finally(() => setReady(true));
-  }, []);
+    Promise.all([ensureSeeded(), purgeOldTrash()]).finally(() => {
+      setReady(true);
+      autoSyncCanvasIfStale()
+        .then(res => {
+          if (res?.ran && (res.added > 0 || res.updated > 0)) bumpSidebar();
+        })
+        .catch(() => {});
+    });
+  }, [bumpSidebar]);
 
   const pushHistoryEntry = useCallback(nextScreen => {
     try {
@@ -266,16 +274,32 @@ export default function App() {
     logicalBackRef.current = handleLogicalBack;
   }, [handleLogicalBack]);
 
-  // Auto-lock private vault when switching apps / backgrounding tab
+  // Auto-lock private vault when switching apps / backgrounding tab, and auto-sync Canvas on foreground resume
   useEffect(() => {
-    const onHide = () => {
-      if (document.visibilityState === 'hidden') lockVault();
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        lockVault();
+      } else if (document.visibilityState === 'visible') {
+        autoSyncCanvasIfStale()
+          .then(res => {
+            if (res?.ran && (res.added > 0 || res.updated > 0)) bumpSidebar();
+          })
+          .catch(() => {});
+      }
     };
-    document.addEventListener('visibilitychange', onHide);
+    document.addEventListener('visibilitychange', onVisibility);
     let capStateListener = null;
     if (Capacitor.isNativePlatform?.()) {
       CapApp.addListener('appStateChange', ({ isActive }) => {
-        if (!isActive) lockVault();
+        if (!isActive) {
+          lockVault();
+        } else {
+          autoSyncCanvasIfStale()
+            .then(res => {
+              if (res?.ran && (res.added > 0 || res.updated > 0)) bumpSidebar();
+            })
+            .catch(() => {});
+        }
       })
         .then(h => {
           capStateListener = h;
@@ -296,7 +320,7 @@ export default function App() {
       }
     });
     return () => {
-      document.removeEventListener('visibilitychange', onHide);
+      document.removeEventListener('visibilitychange', onVisibility);
       capStateListener?.remove?.();
       unsub();
     };

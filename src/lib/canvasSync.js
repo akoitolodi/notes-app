@@ -20,18 +20,21 @@ export const CANVAS_RSS_KEY = 'aicn:canvasRssUrls';
 export const CANVAS_TOKEN_KEY = 'aicn:canvasToken';
 export const CANVAS_HOST_KEY = 'aicn:canvasHost';
 export const CANVAS_LAST_SYNC_KEY = 'aicn:canvasLastSync';
+export const CANVAS_AUTO_SYNC_KEY = 'aicn:canvasAutoSync';
 
 export function getCanvasSettings() {
   try {
+    const autoRaw = localStorage.getItem(CANVAS_AUTO_SYNC_KEY);
     return {
       icsUrl: (localStorage.getItem(CANVAS_ICS_KEY) || '').trim(),
       rssUrls: (localStorage.getItem(CANVAS_RSS_KEY) || '').trim(),
       host: (localStorage.getItem(CANVAS_HOST_KEY) || '').trim().replace(/\/+$/, ''),
       token: (localStorage.getItem(CANVAS_TOKEN_KEY) || '').trim(),
       lastSync: Number(localStorage.getItem(CANVAS_LAST_SYNC_KEY) || 0) || 0,
+      autoSync: autoRaw === null ? true : autoRaw !== 'false',
     };
   } catch {
-    return { icsUrl: '', rssUrls: '', host: '', token: '', lastSync: 0 };
+    return { icsUrl: '', rssUrls: '', host: '', token: '', lastSync: 0, autoSync: true };
   }
 }
 
@@ -42,6 +45,7 @@ export function saveCanvasSettings(patch) {
     if (patch.host !== undefined) localStorage.setItem(CANVAS_HOST_KEY, String(patch.host || '').trim());
     if (patch.token !== undefined) localStorage.setItem(CANVAS_TOKEN_KEY, String(patch.token || '').trim());
     if (patch.lastSync !== undefined) localStorage.setItem(CANVAS_LAST_SYNC_KEY, String(patch.lastSync || 0));
+    if (patch.autoSync !== undefined) localStorage.setItem(CANVAS_AUTO_SYNC_KEY, patch.autoSync ? 'true' : 'false');
   } catch {
     // non-fatal
   }
@@ -185,39 +189,94 @@ export function parseIcsEvents(icsText) {
   return events.sort((a, b) => (a.dueAt || 0) - (b.dueAt || 0));
 }
 
+function decodeXmlEntities(str) {
+  return String(str || '')
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&#(\d+);/g, (_, n) => {
+      const code = Number(n);
+      return Number.isFinite(code) && code > 0 ? String.fromCharCode(code) : '';
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => {
+      const code = parseInt(hex, 16);
+      return Number.isFinite(code) && code > 0 ? String.fromCharCode(code) : '';
+    })
+    .replace(/&amp;/gi, '&');
+}
+
+/**
+ * Convert escaped HTML inside Canvas Atom `<content type="html">` into clean Markdown
+ * preserving line breaks and clickable `[Label](https://...)` links!
+ */
+function htmlContentToMarkdown(rawHtml) {
+  let html = decodeXmlEntities(rawHtml);
+  // Preserve safe http(s) anchor links as Markdown links
+  html = html.replace(/<a\b[^>]*href=["'](https?:\/\/[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_, href, label) => {
+    const cleanLabel = decodeXmlEntities(label.replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim();
+    const safeUrl = href.trim();
+    return cleanLabel ? `[${cleanLabel}](${safeUrl})` : safeUrl;
+  });
+  // Convert structural breaks to newlines before stripping remaining tags
+  html = html
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(?:p|div|li|h[1-6]|tr)>/gi, '\n')
+    .replace(/<li\b[^>]*>/gi, '- ')
+    .replace(/<[^>]+>/g, ' ');
+
+  return decodeXmlEntities(html)
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
 /** Parse Canvas Course Announcements RSS / Atom XML feeds (when enabled). */
 export function parseRssAnnouncements(xmlText, fallbackCourse = 'Canvas') {
   const xml = String(xmlText || '');
   const out = [];
-  const cleanXmlText = s =>
-    String(s || '')
-      .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+  const cleanPlain = s =>
+    decodeXmlEntities(s)
       .replace(/<[^>]+>/g, ' ')
-      .replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"')
-      .replace(/&#39;/g, "'")
       .replace(/\s+/g, ' ')
       .trim();
 
-  const channelTitleMatch = /<title>([\s\S]*?)<\/title>/i.exec(xml);
-  const courseName = channelTitleMatch ? cleanXmlText(channelTitleMatch[1]).slice(0, 48) : fallbackCourse;
+  // Extract feed-level <title> (before the first <item> or <entry>)
+  const headerPart = xml.split(/<(?:item|entry)\b/i)[0] || xml;
+  const channelTitleMatch = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(headerPart);
+  const rawCourse = channelTitleMatch ? cleanPlain(channelTitleMatch[1]) : fallbackCourse;
+  const courseName =
+    rawCourse
+      .replace(/\s+Announcements\s+Feed$/i, '')
+      .replace(/\s+Announcements$/i, '')
+      .trim()
+      .slice(0, 64) || fallbackCourse;
 
   const itemRe = /<(?:item|entry)\b[^>]*>([\s\S]*?)<\/(?:item|entry)>/gi;
   let m;
   while ((m = itemRe.exec(xml)) !== null) {
     const block = m[1];
-    const title = cleanXmlText((/<title[^>]*>([\s\S]*?)<\/title>/i.exec(block) || [])[1] || '');
-    const desc = cleanXmlText(
-      (/<(?:description|summary|content)[^>]*>([\s\S]*?)<\/(?:description|summary|content)>/i.exec(block) || [])[1] || ''
-    );
+    const title = cleanPlain((/<title[^>]*>([\s\S]*?)<\/title>/i.exec(block) || [])[1] || '');
+    const rawDesc =
+      (/<(?:content|description|summary)[^>]*>([\s\S]*?)<\/(?:content|description|summary)>/i.exec(block) || [])[1] || '';
+    const desc = htmlContentToMarkdown(rawDesc);
+    const authorMatch =
+      /<author[^>]*>[\s\S]*?<name[^>]*>([\s\S]*?)<\/name>[\s\S]*?<\/author>/i.exec(block) ||
+      /<dc:creator[^>]*>([\s\S]*?)<\/dc:creator>/i.exec(block);
+    const author = authorMatch ? cleanPlain(authorMatch[1]) : '';
     const linkMatch =
       /<link[^>]+href=["']([^"']+)["']/i.exec(block) || /<link[^>]*>([\s\S]*?)<\/link>/i.exec(block);
-    const url = linkMatch ? cleanXmlText(linkMatch[1]) : '';
-    const guid = cleanXmlText((/<(?:guid|id)[^>]*>([\s\S]*?)<\/(?:guid|id)>/i.exec(block) || [])[1] || '');
-    const dateRaw = cleanXmlText(
-      (/<(?:pubDate|updated|published)[^>]*>([\s\S]*?)<\/(?:pubDate|updated|published)>/i.exec(block) || [])[1] || ''
+    let url = linkMatch ? cleanPlain(linkMatch[1]) : '';
+    if (/^http:\/\/[^/]*instructure\.com\//i.test(url)) {
+      url = url.replace(/^http:\/\//i, 'https://');
+    }
+    const guid = cleanPlain((/<(?:guid|id)[^>]*>([\s\S]*?)<\/(?:guid|id)>/i.exec(block) || [])[1] || '');
+    const dateRaw = cleanPlain(
+      (/<(?:published|pubDate|updated|dc:date)[^>]*>([\s\S]*?)<\/(?:published|pubDate|updated|dc:date)>/i.exec(block) || [])[1] || ''
     );
     const dt = dateRaw ? new Date(dateRaw) : new Date();
     const validDt = Number.isNaN(dt.getTime()) ? new Date() : dt;
@@ -227,12 +286,13 @@ export function parseRssAnnouncements(xmlText, fallbackCourse = 'Canvas') {
         externalUid: guid || `rss:${title}:${localDateKey(validDt)}`,
         title,
         course: courseName,
+        author,
         type: 'announcement',
         source: 'canvas',
         dateKey: localDateKey(validDt),
         timeLabel: validDt.toLocaleDateString([], { month: 'short', day: 'numeric' }),
         dueAt: validDt.getTime(),
-        description: desc.slice(0, 1200),
+        description: desc.slice(0, 2000),
         url,
       });
     }
@@ -288,6 +348,9 @@ export function buildCanvasNoteContent(item) {
     `- **Course:** ${item.course || 'Canvas'}`,
     `- **${isAnnouncement ? 'Posted' : 'Due'}:** ${item.dateKey}${item.timeLabel ? ` · ${item.timeLabel}` : ''}`,
   ];
+  if (item.author) {
+    lines.push(`- **Posted by:** ${item.author}`);
+  }
   if (item.url) {
     lines.push(`- **Link:** [Open in Canvas](${item.url})`);
   }
@@ -322,6 +385,7 @@ export async function syncCanvasFeeds({ icsUrl = '', rssUrls = '', host = '', to
     fetchedItems.push(...parseIcsEvents(icsText));
   }
 
+  let lastFeedErr = null;
   if (rssUrls && rssUrls.trim()) {
     const urls = rssUrls
       .split(/[\n,]+/)
@@ -331,9 +395,12 @@ export async function syncCanvasFeeds({ icsUrl = '', rssUrls = '', host = '', to
       try {
         const xml = await fetchCanvasText(u);
         fetchedItems.push(...parseRssAnnouncements(xml));
-      } catch {
-        // continue syncing other feeds
+      } catch (err) {
+        lastFeedErr = err;
       }
+    }
+    if (fetchedItems.length === 0 && lastFeedErr && !(icsUrl && icsUrl.trim())) {
+      throw lastFeedErr;
     }
   }
 
@@ -371,6 +438,7 @@ export async function syncCanvasFeeds({ icsUrl = '', rssUrls = '', host = '', to
       await db.plannerItems.update(prev.id, {
         title: item.title,
         course: item.course,
+        author: item.author || prev.author || '',
         dateKey: item.dateKey,
         timeLabel: item.timeLabel,
         dueAt: item.dueAt,
@@ -394,4 +462,38 @@ export async function syncCanvasFeeds({ icsUrl = '', rssUrls = '', host = '', to
   const now = Date.now();
   saveCanvasSettings({ lastSync: now });
   return { added, updated, total: fetchedItems.length, syncedAt: now };
+}
+
+let inFlightAutoSync = null;
+
+/**
+ * Automatically sync Canvas feeds (.ics + course .atom RSS) in the background when
+ * the app opens, resumes from background, or opens School Planner (throttled to 15 min).
+ */
+export async function autoSyncCanvasIfStale({ minIntervalMs = 15 * 60 * 1000, force = false } = {}) {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return { ran: false, reason: 'offline' };
+  }
+  const cfg = getCanvasSettings();
+  const hasAnyFeed = Boolean(cfg.icsUrl || cfg.rssUrls || (cfg.host && cfg.token));
+  if (!hasAnyFeed) return { ran: false, reason: 'unconfigured' };
+  if (!force && !cfg.autoSync) return { ran: false, reason: 'disabled' };
+  if (!force && cfg.lastSync && Date.now() - cfg.lastSync < minIntervalMs) {
+    return { ran: false, reason: 'fresh' };
+  }
+  if (inFlightAutoSync) return inFlightAutoSync;
+
+  inFlightAutoSync = syncCanvasFeeds({
+    icsUrl: cfg.icsUrl,
+    rssUrls: cfg.rssUrls,
+    host: cfg.host,
+    token: cfg.token,
+  })
+    .then(res => ({ ran: true, ...res }))
+    .catch(err => ({ ran: false, error: err?.message || 'Canvas auto-sync failed' }))
+    .finally(() => {
+      inFlightAutoSync = null;
+    });
+
+  return inFlightAutoSync;
 }

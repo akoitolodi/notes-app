@@ -38,10 +38,12 @@ import {
   getCanvasSettings,
   saveCanvasSettings,
   syncCanvasFeeds,
+  autoSyncCanvasIfStale,
   parsePastedAnnouncement,
   buildCanvasNoteContent,
 } from '../lib/canvasSync';
 import { computeTargetFinal } from '../lib/gradeCalc';
+import MarkdownContent from './ui/MarkdownContent';
 import { useDialog } from './ui/DialogProvider';
 
 const DAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -121,6 +123,7 @@ export default function StudentHubScreen({
   const [canvasHost, setCanvasHost] = useState(initCanvas.host);
   const [canvasToken, setCanvasToken] = useState(initCanvas.token);
   const [lastSync, setLastSync] = useState(initCanvas.lastSync);
+  const [autoSync, setAutoSync] = useState(initCanvas.autoSync !== false);
   const [syncing, setSyncing] = useState(false);
   const [showAdvancedCanvas, setShowAdvancedCanvas] = useState(false);
   const [showDone, setShowDone] = useState(false);
@@ -194,7 +197,22 @@ export default function StudentHubScreen({
 
   useEffect(() => {
     refreshData();
-  }, [refreshData]);
+    autoSyncCanvasIfStale()
+      .then(res => {
+        if (res?.ran) {
+          setLastSync(res.syncedAt);
+          refreshData();
+          onChanged?.();
+          if (res.added > 0) {
+            toast(
+              `Canvas auto-synced: ${res.added} new item${res.added === 1 ? '' : 's'}!`,
+              { type: 'success' }
+            );
+          }
+        }
+      })
+      .catch(() => {});
+  }, [refreshData, onChanged, toast]);
 
   // Match a course name to an existing non-vault Subject Folder (or fallback to General)
   const findMatchingFolder = useCallback(
@@ -288,7 +306,7 @@ export default function StudentHubScreen({
       token: cleanToken,
     });
     if (!cleanIcs && !cleanRss && !(cleanHost && cleanToken)) {
-      toast('Paste your Canvas Calendar Feed (.ics) URL first', { type: 'error' });
+      toast('Paste a Canvas Calendar (.ics) or Announcements (.atom) URL first', { type: 'error' });
       return;
     }
     setSyncing(true);
@@ -301,6 +319,7 @@ export default function StudentHubScreen({
       });
       setLastSync(res.syncedAt);
       await refreshData();
+      onChanged?.();
       toast(
         res.total > 0
           ? `Canvas synced! ${res.added} new, ${res.updated} updated`
@@ -862,8 +881,8 @@ export default function StudentHubScreen({
               )}
             </div>
             <p className="settings-help" style={{ marginTop: 6 }}>
-              In Canvas, open <strong>Calendar → Calendar Feed</strong> and copy your personal <code>.ics</code> link.
-              Works on every school account even when admins restrict Access Tokens.
+              <strong>1. Calendar Feed (.ics)</strong> — In Canvas, open <strong>Calendar → Calendar Feed</strong> and
+              copy your link (covers all your courses automatically).
             </p>
             <input
               className="input-field"
@@ -871,6 +890,36 @@ export default function StudentHubScreen({
               value={icsUrl}
               onChange={e => setIcsUrl(e.target.value)}
             />
+
+            <p className="settings-help" style={{ marginTop: 10 }}>
+              <strong>2. Course Announcements Feeds (.atom / RSS)</strong> — Open each Canvas Course →{' '}
+              <strong>Announcements → RSS Feed</strong> and paste its URL below (one URL per line).
+            </p>
+            <textarea
+              className="input-field"
+              rows={2}
+              placeholder="https://yourschool.instructure.com/feeds/announcements/enrollment_xxx.atom"
+              value={rssUrls}
+              onChange={e => setRssUrls(e.target.value)}
+            />
+
+            <label className="ios-switch-row mt-10">
+              <span className="ios-switch-label" style={{ fontSize: 13 }}>
+                Auto-sync when app opens (every 15 min)
+              </span>
+              <span className="ios-switch">
+                <input
+                  type="checkbox"
+                  checked={autoSync}
+                  onChange={e => {
+                    const next = e.target.checked;
+                    setAutoSync(next);
+                    saveCanvasSettings({ autoSync: next });
+                  }}
+                />
+                <span className="ios-switch-track" />
+              </span>
+            </label>
 
             <div className="flex gap-8 mt-10" style={{ flexWrap: 'wrap' }}>
               <button
@@ -888,25 +937,13 @@ export default function StudentHubScreen({
                 onClick={() => setShowAdvancedCanvas(v => !v)}
               >
                 {showAdvancedCanvas ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                RSS &amp; Token Options
+                Optional Access Token
               </button>
             </div>
 
             {showAdvancedCanvas && (
               <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--sep)' }}>
-                <div className="settings-label">Course Announcements RSS URLs (optional)</div>
-                <p className="settings-help">
-                  In Canvas Course → Announcements → <strong>RSS Feed</strong> (if enabled). One URL per line.
-                </p>
-                <textarea
-                  className="input-field"
-                  rows={2}
-                  placeholder="https://yourschool.instructure.com/feeds/announcements/enrollment_xxx.atom"
-                  value={rssUrls}
-                  onChange={e => setRssUrls(e.target.value)}
-                />
-
-                <div className="settings-label mt-12">Optional Canvas Access Token (if school allows it)</div>
+                <div className="settings-label">Optional Canvas Access Token (if school allows it)</div>
                 <input
                   className="input-field"
                   placeholder="Canvas Host (e.g. https://school.instructure.com)"
@@ -1137,15 +1174,15 @@ export default function StudentHubScreen({
                   <div className="list-item-body">
                     <div className="list-item-title">{ann.title}</div>
                     <div className="list-item-subtitle">
-                      {ann.course} · {ann.dateKey}
+                      {ann.course}
+                      {ann.author ? ` · ${ann.author}` : ''} · {ann.dateKey}
                     </div>
                     {ann.description && (
-                      <div className="list-item-subtitle" style={{ marginTop: 4, whiteSpace: 'normal' }}>
-                        {ann.description.slice(0, 200)}
-                        {ann.description.length > 200 ? '…' : ''}
+                      <div style={{ marginTop: 6, fontSize: 13, lineHeight: 1.5, color: 'var(--text-secondary)' }}>
+                        <MarkdownContent text={ann.description} />
                       </div>
                     )}
-                    <div className="flex gap-6 mt-8">
+                    <div className="flex gap-6 mt-8" style={{ flexWrap: 'wrap' }}>
                       <button
                         type="button"
                         className="row-action-chip"
@@ -1153,6 +1190,17 @@ export default function StudentHubScreen({
                       >
                         <FilePlus2 size={12} /> Save to Notes
                       </button>
+                      {ann.url && (
+                        <a
+                          href={ann.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="row-action-chip"
+                          style={{ textDecoration: 'none' }}
+                        >
+                          <ExternalLink size={12} /> Open Canvas
+                        </a>
+                      )}
                       <button
                         type="button"
                         className="row-action-chip"
