@@ -1,6 +1,8 @@
 /**
- * ImportSheet — import .pdf, .pptx, .md, or .txt lecture slides & handouts into a note.
- * Defaults to Instant Offline Extraction (0 API calls) with an optional "Structure with AI" toggle.
+ * ImportSheet — Universal Material Importer:
+ * 1. File Upload (.pdf, .pptx, .docx, .md, .txt) — 100% offline extraction + optional AI structuring
+ * 2. Paste Canvas Page / Module (rich HTML -> clean Markdown keeping headings, tables, code & links)
+ * 3. Batch Multi-Screenshot OCR (select up to 10 slide/handout screenshots -> one combined note)
  */
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
@@ -12,30 +14,49 @@ import {
   X,
   Folder,
   AlertCircle,
+  ClipboardPaste,
+  Images,
 } from 'lucide-react';
-import { db, createNote } from '../store/db';
+import { db, createNote, logStudyActivity } from '../store/db';
 import { isVaultUnlocked } from '../lib/vault';
 import { extractDocument, structureImportedTextWithAI } from '../lib/docImporter';
+import { htmlToCleanMarkdown } from '../lib/htmlToMarkdown';
+import { ocrImage } from '../lib/aiFeatures';
+import { compressImage } from './ImageManager';
 import { useDialog } from './ui/DialogProvider';
 
 export default function ImportSheet({
   defaultFolderId = null,
+  initialFile = null,
+  initialPastedText = '',
+  initialTitle = '',
   onImported,
   onClose,
 }) {
   const { toast } = useDialog();
+  const [mode, setMode] = useState(initialPastedText ? 'paste' : 'file'); // file | paste | ocr
   const [folders, setFolders] = useState([]);
   const [folderId, setFolderId] = useState(
     typeof defaultFolderId === 'number' ? defaultFolderId : ''
   );
-  const [selectedFile, setSelectedFile] = useState(null);
+
+  // Mode 1: File
+  const [selectedFile, setSelectedFile] = useState(initialFile);
+  // Mode 2: Rich Canvas Page Paste
+  const [pasteTitle, setPasteTitle] = useState(initialTitle || '');
+  const [pasteMarkdown, setPasteMarkdown] = useState(initialPastedText || '');
+  // Mode 3: Batch Multi-Screenshot OCR
+  const [ocrFiles, setOcrFiles] = useState([]);
+  const [ocrTitle, setOcrTitle] = useState('');
+
   const [useAi, setUseAi] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
-  const [progress, setProgress] = useState(null); // { current, total }
+  const [progress, setProgress] = useState(null);
   const [error, setError] = useState(null);
 
   const fileInputRef = useRef(null);
+  const ocrInputRef = useRef(null);
   const abortRef = useRef(null);
 
   useEffect(() => {
@@ -43,7 +64,7 @@ export default function ImportSheet({
     db.folders
       .toArray()
       .then(list => {
-        const visible = list.filter(f => unlocked || !f.locked);
+        const visible = list.filter(f => !f.isSystemVault && f.mode !== 'vault' && (unlocked || !f.locked));
         const sorted = [...visible].sort((a, b) => a.name.localeCompare(b.name));
         setFolders(sorted);
         if (typeof defaultFolderId !== 'number' && sorted.length > 0) {
@@ -62,70 +83,139 @@ export default function ImportSheet({
     setError(null);
   };
 
+  const handleOcrFilesPick = e => {
+    const list = Array.from(e.target.files || []).slice(0, 10);
+    if (list.length === 0) return;
+    setOcrFiles(list);
+    setError(null);
+    if (!ocrTitle.trim()) {
+      setOcrTitle(`Scanned Slides (${list.length} images)`);
+    }
+  };
+
+  const handleRichPaste = e => {
+    const html = e.clipboardData?.getData('text/html');
+    const plain = e.clipboardData?.getData('text/plain');
+    if (html && /<[a-z]/i.test(html)) {
+      e.preventDefault();
+      const cleaned = htmlToCleanMarkdown(html, plain);
+      setPasteMarkdown(prev => (prev ? `${prev}\n\n${cleaned}` : cleaned));
+      if (!pasteTitle.trim()) {
+        const firstH = /^#+\s+(.+)$/m.exec(cleaned) || /^(.{4,80})$/m.exec(cleaned);
+        if (firstH) setPasteTitle(firstH[1].replace(/[*_`]/g, '').trim().slice(0, 72));
+      }
+      toast('Converted Canvas HTML into clean Markdown!', { type: 'success' });
+    }
+  };
+
+  const finishSaveNote = async ({ title, rawMarkdown, targetFolder, signal }) => {
+    const subjectName = targetFolder?.name || 'General';
+    let finalBody = rawMarkdown;
+    if (useAi && rawMarkdown.trim()) {
+      try {
+        finalBody = await structureImportedTextWithAI({
+          title,
+          rawMarkdown,
+          subject: subjectName,
+          signal,
+          onStatus: msg => setStatus(msg),
+        });
+      } catch (aiErr) {
+        if (aiErr?.isCancelled) throw aiErr;
+        toast(`AI structuring skipped (${aiErr.message}) — saved offline text.`, { type: 'info' });
+        finalBody = rawMarkdown;
+      }
+    }
+
+    const created = await createNote(
+      targetFolder?.id ?? null,
+      title || 'Imported Material',
+      finalBody,
+      subjectName
+    );
+    await logStudyActivity('notes', 1);
+    toast(`Imported "${title || 'Material'}" into ${subjectName}`, { type: 'success' });
+    onImported?.(created, targetFolder || { id: '__all__', name: 'All Notes' });
+  };
+
   const handleImport = async () => {
-    if (!selectedFile || busy) return;
+    if (busy) return;
+    const targetFolder = folders.find(f => f.id === Number(folderId)) || folders[0];
     const controller = new AbortController();
     abortRef.current = controller;
-
     setBusy(true);
     setError(null);
     setProgress(null);
-    setStatus('Reading file offline…');
 
     try {
-      const extracted = await extractDocument(selectedFile, {
-        onProgress: p => {
-          setProgress(p);
-          setStatus(
-            p.phase === 'slides'
-              ? `Reading slide ${p.current} of ${p.total}…`
-              : `Reading page ${p.current} of ${p.total}…`
-          );
-        },
-      });
-
-      if (controller.signal.aborted) return;
-
-      const targetFolder = folders.find(f => f.id === Number(folderId)) || folders[0];
-      const subjectName = targetFolder?.name || 'General';
-      let finalBody = extracted.rawMarkdown;
-
-      if (useAi) {
-        setProgress(null);
-        finalBody = await structureImportedTextWithAI({
+      if (mode === 'file') {
+        if (!selectedFile) return;
+        setStatus('Reading file offline…');
+        const extracted = await extractDocument(selectedFile, {
+          onProgress: p => {
+            setProgress(p);
+            setStatus(
+              p.phase === 'slides'
+                ? `Reading slide ${p.current} of ${p.total}…`
+                : p.phase === 'docx'
+                  ? 'Reading Word document…'
+                  : `Reading page ${p.current} of ${p.total}…`
+            );
+          },
+        });
+        if (controller.signal.aborted) return;
+        await finishSaveNote({
           title: extracted.title,
           rawMarkdown: extracted.rawMarkdown,
-          subject: subjectName,
+          targetFolder,
           signal: controller.signal,
-          onStatus: setStatus,
+        });
+      } else if (mode === 'paste') {
+        const cleanMd = htmlToCleanMarkdown(pasteMarkdown, pasteMarkdown);
+        if (!cleanMd) throw new Error('Paste a Canvas module page or text first.');
+        const title =
+          pasteTitle.trim() ||
+          cleanMd.split('\n')[0].replace(/^#+\s*/, '').slice(0, 64) ||
+          'Canvas Module Page';
+        await finishSaveNote({
+          title,
+          rawMarkdown: cleanMd,
+          targetFolder,
+          signal: controller.signal,
+        });
+      } else if (mode === 'ocr') {
+        if (ocrFiles.length === 0) throw new Error('Choose at least 1 screenshot or slide photo.');
+        const parts = [];
+        for (let i = 0; i < ocrFiles.length; i++) {
+          if (controller.signal.aborted) return;
+          setProgress({ current: i + 1, total: ocrFiles.length });
+          setStatus(`Running OCR on screenshot ${i + 1} of ${ocrFiles.length}…`);
+          const dataUrl = await new Promise((resolve, reject) => {
+            const r = new FileReader();
+            r.onload = () => resolve(r.result);
+            r.onerror = () => reject(new Error('Could not read image'));
+            r.readAsDataURL(ocrFiles[i]);
+          });
+          const compressed = await compressImage(dataUrl);
+          const text = await ocrImage(compressed, controller.signal);
+          if (text && text.trim()) {
+            parts.push(`## Slide / Page ${i + 1}\n${text.trim()}`);
+          }
+        }
+        if (parts.length === 0) throw new Error('No text could be recognized from the selected images.');
+        await finishSaveNote({
+          title: ocrTitle.trim() || `Scanned Handout (${ocrFiles.length} pages)`,
+          rawMarkdown: parts.join('\n\n'),
+          targetFolder,
+          signal: controller.signal,
         });
       }
-
-      if (controller.signal.aborted) return;
-
-      const created = await createNote(
-        targetFolder?.id ?? null,
-        extracted.title,
-        finalBody,
-        subjectName
-      );
-
-      toast(
-        `Imported "${extracted.title}" (${extracted.pageCount} ${
-          extracted.kind === 'pptx' ? 'slide' : 'page'
-        }${extracted.pageCount === 1 ? '' : 's'})`,
-        { type: 'success' }
-      );
-      onImported?.(created, targetFolder || { id: '__all__', name: 'All Notes' });
     } catch (err) {
-      if (err?.isCancelled || controller.signal.aborted) {
-        setStatus('');
-      } else {
-        setError(err?.message || 'Could not import this file.');
+      if (!err?.isCancelled) {
+        setError(err?.message || 'Import failed.');
       }
     } finally {
       setBusy(false);
-      setProgress(null);
     }
   };
 
@@ -134,7 +224,6 @@ export default function ImportSheet({
       abortRef.current?.abort();
       setBusy(false);
       setStatus('');
-      setProgress(null);
     } else {
       onClose?.();
     }
@@ -142,61 +231,156 @@ export default function ImportSheet({
 
   const pct =
     progress && progress.total > 0
-      ? Math.round((progress.current / progress.total) * 100)
+      ? Math.min(100, Math.round((progress.current / progress.total) * 100))
       : null;
 
+  const canSubmit =
+    !busy &&
+    ((mode === 'file' && Boolean(selectedFile)) ||
+      (mode === 'paste' && Boolean(pasteMarkdown.trim())) ||
+      (mode === 'ocr' && ocrFiles.length > 0));
+
   const modal = (
-    <div className="export-overlay" onClick={() => !busy && onClose?.()}>
-      <div
-        className="export-sheet import-sheet"
-        onClick={e => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Import PDF or Slides"
-      >
-        <div className="flex justify-between items-center" style={{ marginBottom: 12 }}>
-          <div className="export-title" style={{ marginBottom: 0, textAlign: 'left' }}>
-            Import PDF, Slides or Text
+    <div className="export-overlay" onClick={busy ? undefined : onClose}>
+      <div className="export-sheet import-sheet" onClick={e => e.stopPropagation()}>
+        <div className="flex justify-between items-center" style={{ marginBottom: 10 }}>
+          <div className="export-title" style={{ marginBottom: 0 }}>
+            Import Materials
           </div>
           {!busy && (
             <button
               type="button"
               className="navbar-btn"
-              aria-label="Close import dialog"
               onClick={onClose}
+              aria-label="Close import"
             >
-              <X size={18} />
+              <X size={20} />
             </button>
           )}
         </div>
 
-        {/* File Picker Zone */}
-        <button
-          type="button"
-          className={`import-dropzone${selectedFile ? ' has-file' : ''}`}
-          disabled={busy}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          <span className="import-dropzone-icon">
-            {selectedFile ? <FileText size={22} /> : <FileUp size={22} />}
-          </span>
-          <div className="import-dropzone-title">
-            {selectedFile ? selectedFile.name : 'Choose a .pdf, .pptx, .md, or .txt file'}
-          </div>
-          <div className="import-dropzone-sub">
-            {selectedFile
-              ? `${(selectedFile.size / 1024).toFixed(selectedFile.size > 1024 * 1024 ? 0 : 1)} KB · Tap to change`
-              : 'Extracts text, slide bullets & speaker notes 100% offline on this device'}
-          </div>
-        </button>
+        {/* 3-Tab Import Mode Switcher */}
+        <div className="view-switcher" style={{ marginBottom: 12 }}>
+          <button
+            type="button"
+            className={`view-switch-btn${mode === 'file' ? ' active' : ''}`}
+            disabled={busy}
+            onClick={() => setMode('file')}
+          >
+            <FileUp size={13} style={{ marginRight: 4 }} /> File
+          </button>
+          <button
+            type="button"
+            className={`view-switch-btn${mode === 'paste' ? ' active' : ''}`}
+            disabled={busy}
+            onClick={() => setMode('paste')}
+          >
+            <ClipboardPaste size={13} style={{ marginRight: 4 }} /> Canvas Page
+          </button>
+          <button
+            type="button"
+            className={`view-switch-btn${mode === 'ocr' ? ' active' : ''}`}
+            disabled={busy}
+            onClick={() => setMode('ocr')}
+          >
+            <Images size={13} style={{ marginRight: 4 }} /> Multi-OCR
+          </button>
+        </div>
 
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".pdf,.pptx,.md,.markdown,.txt,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/markdown"
-          style={{ display: 'none' }}
-          onChange={handleFilePick}
-        />
+        {/* MODE 1: FILE PICKER (.pdf, .pptx, .docx, .md, .txt) */}
+        {mode === 'file' && (
+          <>
+            <button
+              type="button"
+              className={`import-dropzone${selectedFile ? ' has-file' : ''}`}
+              disabled={busy}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <span className="import-dropzone-icon">
+                {selectedFile ? <FileText size={22} /> : <FileUp size={22} />}
+              </span>
+              <div className="import-dropzone-title">
+                {selectedFile ? selectedFile.name : 'Choose a .pdf, .pptx, .docx, .md, or .txt file'}
+              </div>
+              <div className="import-dropzone-sub">
+                {selectedFile
+                  ? `${(selectedFile.size / 1024).toFixed(selectedFile.size > 1024 * 1024 ? 0 : 1)} KB · Tap to change`
+                  : 'Extracts PDF pages, PowerPoint slides & Word docs 100% offline'}
+              </div>
+            </button>
+
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.pptx,.docx,.md,.markdown,.txt,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown"
+              style={{ display: 'none' }}
+              onChange={handleFilePick}
+            />
+          </>
+        )}
+
+        {/* MODE 2: PASTE CANVAS MODULE PAGE (HTML -> MARKDOWN) */}
+        {mode === 'paste' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <input
+              className="ai-input"
+              style={{ marginTop: 0 }}
+              placeholder="Module / Page title (auto-detected if left blank)"
+              value={pasteTitle}
+              onChange={e => setPasteTitle(e.target.value)}
+              disabled={busy}
+            />
+            <textarea
+              className="ai-input"
+              style={{ marginTop: 0, minHeight: 112 }}
+              placeholder="On Canvas, press Select All → Copy on a Module page, then paste right here! Headings, lists, tables & links convert cleanly to Markdown."
+              value={pasteMarkdown}
+              onPaste={handleRichPaste}
+              onChange={e => setPasteMarkdown(e.target.value)}
+              disabled={busy}
+            />
+          </div>
+        )}
+
+        {/* MODE 3: BATCH MULTI-SCREENSHOT OCR */}
+        {mode === 'ocr' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <input
+              className="ai-input"
+              style={{ marginTop: 0 }}
+              placeholder="Note title (e.g. Week 3 View-Only Slides)"
+              value={ocrTitle}
+              onChange={e => setOcrTitle(e.target.value)}
+              disabled={busy}
+            />
+            <button
+              type="button"
+              className={`import-dropzone${ocrFiles.length > 0 ? ' has-file' : ''}`}
+              disabled={busy}
+              onClick={() => ocrInputRef.current?.click()}
+            >
+              <span className="import-dropzone-icon">
+                <Images size={22} />
+              </span>
+              <div className="import-dropzone-title">
+                {ocrFiles.length > 0
+                  ? `${ocrFiles.length} screenshot${ocrFiles.length === 1 ? '' : 's'} selected`
+                  : 'Select up to 10 slide/handout screenshots'}
+              </div>
+              <div className="import-dropzone-sub">
+                Uses your AI Vision model to extract all screenshots into 1 clean note
+              </div>
+            </button>
+            <input
+              ref={ocrInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              style={{ display: 'none' }}
+              onChange={handleOcrFilesPick}
+            />
+          </div>
+        )}
 
         {/* Target Folder */}
         {folders.length > 0 && (
@@ -221,7 +405,7 @@ export default function ImportSheet({
           </div>
         )}
 
-        {/* Extraction Mode Toggle (Offline 0-call default vs AI Structured) */}
+        {/* Extraction Mode Toggle */}
         <div className="import-mode-grid">
           <button
             type="button"
@@ -232,7 +416,7 @@ export default function ImportSheet({
             <Zap size={16} />
             <div>
               <div className="import-mode-title">Instant Offline</div>
-              <div className="import-mode-sub">0 API calls · Fast & free</div>
+              <div className="import-mode-sub">0 API calls · Fast &amp; free</div>
             </div>
           </button>
           <button
@@ -244,7 +428,7 @@ export default function ImportSheet({
             <Sparkles size={16} />
             <div>
               <div className="import-mode-title">Structure with AI</div>
-              <div className="import-mode-sub">Clean study notes & tags</div>
+              <div className="import-mode-sub">Clean study notes &amp; tags</div>
             </div>
           </button>
         </div>
@@ -282,7 +466,7 @@ export default function ImportSheet({
           <button
             type="button"
             className="btn btn-primary flex-1"
-            disabled={!selectedFile || busy}
+            disabled={!canSubmit}
             onClick={handleImport}
           >
             <FileUp size={16} /> {busy ? 'Importing…' : 'Import Note'}

@@ -30,6 +30,8 @@ import {
   EyeOff,
   Code2,
   Calendar,
+  BookOpen,
+  Bell,
 } from 'lucide-react';
 import {
   db,
@@ -51,6 +53,11 @@ import {
   lockVault,
   subscribeVault,
 } from '../lib/vault';
+import {
+  getInAppAlertSummary,
+  markAllAnnouncementsRead,
+  snoozeInAppBanner,
+} from '../lib/notifications';
 import TemplatePickerSheet from './TemplatePickerSheet';
 import ImportSheet from './ImportSheet';
 import PinLockSheet from './PinLockSheet';
@@ -77,6 +84,7 @@ export default function FoldersScreen({
   onOpenExam,
   onOpenNote,
   onOpenReview,
+  onOpenCourses,
   onOpenPlanner,
   onOpenToolkit,
   onOpenCoding,
@@ -102,6 +110,8 @@ export default function FoldersScreen({
   const [showToolkit, setShowToolkit] = useState(() => isDevToolkitEnabled());
   const [showCoding, setShowCoding] = useState(() => isLearnCodingEnabled());
   const [plannerDueCount, setPlannerDueCount] = useState(0);
+  const [courseCount, setCourseCount] = useState(0);
+  const [alertSummary, setAlertSummary] = useState(null);
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
@@ -138,10 +148,18 @@ export default function FoldersScreen({
     setShowCoding(isLearnCodingEnabled());
     setVaultUnlocked(isVaultUnlocked());
     try {
-      const pItems = await db.plannerItems.toArray();
+      const [pItems, crs, alerts] = await Promise.all([
+        db.plannerItems.toArray(),
+        db.courses.toArray().catch(() => []),
+        getInAppAlertSummary(),
+      ]);
       setPlannerDueCount(pItems.filter(it => !it.done && it.type !== 'announcement').length);
+      setCourseCount(crs.length);
+      setAlertSummary(alerts);
     } catch {
       setPlannerDueCount(0);
+      setCourseCount(0);
+      setAlertSummary(null);
     }
   }, []);
 
@@ -515,6 +533,59 @@ export default function FoldersScreen({
         </div>
       )}
 
+      {/* Persistent In-App Reminder Banner for Overdue / Due Today / Unread Canvas Announcements */}
+      {alertSummary && alertSummary.totalUrgent > 0 && !alertSummary.snoozed && (
+        <div className="sticky-alert-banner" role="alert">
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 9 }}>
+            <Bell size={17} style={{ color: '#ff375f', flexShrink: 0, marginTop: 2 }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, lineHeight: 1.3 }}>
+                {[
+                  alertSummary.overdue.length > 0 ? `${alertSummary.overdue.length} overdue` : '',
+                  alertSummary.dueToday.length > 0 ? `${alertSummary.dueToday.length} due today` : '',
+                  alertSummary.unreadAnnouncements.length > 0
+                    ? `${alertSummary.unreadAnnouncements.length} new announcement${alertSummary.unreadAnnouncements.length === 1 ? '' : 's'}`
+                    : '',
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+                {(alertSummary.overdue[0] || alertSummary.dueToday[0] || alertSummary.unreadAnnouncements[0])?.title}
+              </div>
+              <div className="flex gap-6 mt-8" style={{ flexWrap: 'wrap' }}>
+                <button type="button" className="row-action-chip active-chip" onClick={onOpenPlanner}>
+                  View Tasks
+                </button>
+                {alertSummary.unreadAnnouncements.length > 0 && (
+                  <button
+                    type="button"
+                    className="row-action-chip"
+                    onClick={() => {
+                      markAllAnnouncementsRead(alertSummary.unreadAnnouncements);
+                      refresh();
+                    }}
+                  >
+                    Mark Posts Read
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="row-action-chip"
+                  onClick={() => {
+                    snoozeInAppBanner(60);
+                    refresh();
+                    toast('Reminder snoozed for 1 hour');
+                  }}
+                >
+                  Snooze 1h
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Daily Spaced Repetition Review Card */}
       <button
         type="button"
@@ -591,7 +662,7 @@ export default function FoldersScreen({
           onClick={() => setImportOpen(true)}
         >
           <FileUp size={16} />
-          <span>Import PDF / Slides</span>
+          <span>Import PDF / DOCX / Page</span>
         </button>
         <button
           type="button"
@@ -603,8 +674,23 @@ export default function FoldersScreen({
         </button>
       </div>
 
-      {/* School Planner & Canvas LMS + Learn Coding Studio + Dev & IT Toolkit */}
+      {/* Course Dashboard + School Planner & Canvas LMS + Learn Coding + Dev & IT Toolkit */}
       <div className="list-group" style={{ marginTop: 8, marginBottom: 8 }}>
+        <button type="button" className="list-item" onClick={onOpenCourses}>
+          <span className="list-item-icon">
+            <BookOpen size={17} />
+          </span>
+          <div className="list-item-body">
+            <div className="list-item-title">
+              <span>Course Dashboard</span>
+              {courseCount > 0 && <span className="mode-badge mode-code">{courseCount}</span>}
+            </div>
+            <div className="list-item-subtitle">
+              Canvas-style courses, uploaded modules &amp; Course AI
+            </div>
+          </div>
+          <ChevronRight size={17} className="list-item-chevron" />
+        </button>
         <button type="button" className="list-item" onClick={onOpenPlanner}>
           <span className="list-item-icon">
             <Calendar size={17} />

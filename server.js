@@ -281,7 +281,14 @@ app.post('/api/canvas-proxy', async (req, res) => {
     if (token && typeof token === 'string' && token.trim()) {
       headers.Authorization = `Bearer ${token.trim()}`;
     }
-    const upstream = await fetch(parsed.toString(), { method: 'GET', headers });
+    const upstreamCtrl = new AbortController();
+    const upstreamTimer = setTimeout(() => upstreamCtrl.abort(), 35000);
+    let upstream;
+    try {
+      upstream = await fetch(parsed.toString(), { method: 'GET', headers, signal: upstreamCtrl.signal });
+    } finally {
+      clearTimeout(upstreamTimer);
+    }
     const text = await upstream.text();
     if (!upstream.ok) {
       return res.status(upstream.status).json({

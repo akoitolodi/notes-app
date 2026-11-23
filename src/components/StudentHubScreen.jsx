@@ -43,6 +43,7 @@ import {
   buildCanvasNoteContent,
 } from '../lib/canvasSync';
 import { computeTargetFinal } from '../lib/gradeCalc';
+import { syncDeadlineNotifications } from '../lib/notifications';
 import MarkdownContent from './ui/MarkdownContent';
 import { useDialog } from './ui/DialogProvider';
 
@@ -276,6 +277,7 @@ export default function StudentHubScreen({
     setNewTime('');
     setAddOpen(false);
     toast(`Added "${title}" to ${dateKey}`, { type: 'success' });
+    syncDeadlineNotifications().catch(() => {});
     refreshData();
   };
 
@@ -283,12 +285,14 @@ export default function StudentHubScreen({
     const nextDone = !item.done;
     await db.plannerItems.update(item.id, { done: nextDone, updatedAt: Date.now() });
     if (nextDone) await logStudyActivity('notes', 1);
+    syncDeadlineNotifications().catch(() => {});
     refreshData();
   };
 
   const handleDeleteItem = async id => {
     await db.plannerItems.delete(id);
     toast('Removed item');
+    syncDeadlineNotifications().catch(() => {});
     refreshData();
   };
 

@@ -198,3 +198,53 @@ export function buildFallbackSearchQuery(question, noteTitle = '', subject = '')
   const combined = [...new Set([...titleTokens, ...qTokens, ...subjTokens])];
   return combined.slice(0, 6).join(' ') || String(question || noteTitle || '').slice(0, 80);
 }
+
+/**
+ * Retrieve top-K cited excerpts from a specific Course's uploaded materials/modules
+ * (PDFs, PPTXs, DOCXs, pasted Canvas pages & linked unlocked notes) using offline BM25.
+ * Falls back to leading overview chunks when the student asks a broad question ("summarize this module").
+ */
+export function retrieveCourseChunks(
+  allChunks = [],
+  query = '',
+  { topK = 6, maxChars = 5200, materialIds = null } = {}
+) {
+  const filterSet = Array.isArray(materialIds) && materialIds.length > 0 ? new Set(materialIds) : null;
+  const pool = allChunks.filter(c => c && c.text && (!filterSet || filterSet.has(c.materialId)));
+  if (pool.length === 0) return [];
+
+  const q = String(query || '').trim();
+  const scores = q
+    ? scoreBM25(
+        pool.map(c => `${c.moduleName || ''} ${c.materialTitle || ''} ${c.label || ''} ${c.text}`),
+        q
+      )
+    : pool.map(() => 0);
+
+  const ranked = pool
+    .map((c, idx) => ({ ...c, score: scores[idx] || 0 }))
+    .sort((a, b) => b.score - a.score);
+
+  const hasKeywordMatch = ranked.some(r => r.score >= 0.35);
+  const ordered = hasKeywordMatch ? ranked : pool.map(c => ({ ...c, score: 0 }));
+
+  const selected = [];
+  let usedChars = 0;
+  for (const item of ordered) {
+    if (selected.length >= topK) break;
+    const excerpt = String(item.text || '').slice(0, 950);
+    if (usedChars + excerpt.length > maxChars && selected.length > 0) continue;
+    const citation = [item.moduleName, item.materialTitle, item.label].filter(Boolean).join(' · ');
+    selected.push({
+      materialId: item.materialId,
+      moduleName: item.moduleName || '',
+      materialTitle: item.materialTitle || 'Material',
+      label: item.label || '',
+      citation,
+      excerpt,
+      score: Number((item.score || 0).toFixed(2)),
+    });
+    usedChars += excerpt.length;
+  }
+  return selected;
+}

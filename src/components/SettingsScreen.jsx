@@ -20,6 +20,8 @@ import {
   RotateCw,
   Wifi,
   Share2,
+  Bell,
+  Signal,
 } from 'lucide-react';
 import {
   THEME_KEY,
@@ -79,6 +81,17 @@ import {
   importNoteBaiBundle,
   runLanWifiSync,
 } from '../lib/baiDrop';
+import {
+  getNotificationSettings,
+  saveNotificationSettings,
+  requestNotificationPermission,
+  syncDeadlineNotifications,
+} from '../lib/notifications';
+import {
+  getSlowNetworkSetting,
+  setSlowNetworkSetting,
+  isSlowNetworkActive,
+} from '../lib/netResilience';
 import { testDeepTutorBridge } from '../lib/learnerMemory';
 import { hasVaultPin, lockVault } from '../lib/vault';
 import PinLockSheet from './PinLockSheet';
@@ -212,6 +225,8 @@ export default function SettingsScreen({ onBack, onDataImported }) {
   const [baiCode, setBaiCode] = useState('');
   const [lanUrl, setLanUrl] = useState(() => getSavedLanSyncUrl() || 'http://192.168.1.5:3000');
   const [lanSyncing, setLanSyncing] = useState(false);
+  const [notifCfg, setNotifCfg] = useState(() => getNotificationSettings());
+  const [slowNetMode, setSlowNetMode] = useState(() => getSlowNetworkSetting());
 
   const importInputRef = useRef(null);
   const baiFileInputRef = useRef(null);
@@ -1070,6 +1085,81 @@ export default function SettingsScreen({ onBack, onDataImported }) {
         )}
       </div>
 
+      {/* Persistent Notifications & Slow Internet Resilience */}
+      <div className="list-group settings-group">
+        <div className="settings-label flex items-center gap-6">
+          <Bell size={14} /> Due-Date &amp; Announcement Reminders
+        </div>
+        <div className="settings-tip">
+          Schedules native offline reminders (24h before, 3h before, 7 AM on exam day) plus instant alerts for new
+          Canvas announcements.
+        </div>
+
+        <label className="ios-switch-row mt-10">
+          <span className="ios-switch-label">Enable deadline &amp; announcement alerts</span>
+          <span className="ios-switch">
+            <input
+              type="checkbox"
+              checked={notifCfg.enabled}
+              onChange={async e => {
+                const next = e.target.checked;
+                if (next) {
+                  await requestNotificationPermission();
+                }
+                saveNotificationSettings({ enabled: next });
+                setNotifCfg(prev => ({ ...prev, enabled: next }));
+                const res = await syncDeadlineNotifications();
+                toast(
+                  next
+                    ? `Reminders enabled (${res.scheduledCount} upcoming scheduled)`
+                    : 'Reminders paused',
+                  { type: 'info' }
+                );
+              }}
+            />
+            <span className="ios-switch-track" />
+          </span>
+        </label>
+
+        <label className="ios-switch-row mt-8">
+          <span className="ios-switch-label">Persistent sticky reminder for Due Today / Overdue</span>
+          <span className="ios-switch">
+            <input
+              type="checkbox"
+              checked={notifCfg.stickyOngoing}
+              onChange={async e => {
+                const next = e.target.checked;
+                saveNotificationSettings({ stickyOngoing: next });
+                setNotifCfg(prev => ({ ...prev, stickyOngoing: next }));
+                await syncDeadlineNotifications();
+                toast(next ? 'Sticky reminders enabled' : 'Sticky reminders disabled');
+              }}
+            />
+            <span className="ios-switch-track" />
+          </span>
+        </label>
+
+        <div className="settings-label mt-16 flex items-center gap-6">
+          <Signal size={14} /> Slow Internet Mode ({isSlowNetworkActive() ? 'Active' : 'Normal'})
+        </div>
+        <div className="settings-tip">
+          Widens AI &amp; Canvas timeouts (45s–60s), retries dropped connections automatically, and trims RAG chunks
+          so AI stays fast on weak campus Wi-Fi or 3G mobile data.
+        </div>
+        <Segmented
+          options={[
+            ['auto', 'Auto'],
+            ['on', 'Always On'],
+            ['off', 'Off'],
+          ]}
+          value={slowNetMode}
+          onChange={v => {
+            setSlowNetMode(setSlowNetworkSetting(v));
+            toast(`Slow Internet Mode: ${v === 'on' ? 'Always On' : v === 'off' ? 'Off' : 'Auto-detect'}`);
+          }}
+        />
+      </div>
+
       {/* BaiDrop Offline Import & Local Wi-Fi PC <-> Phone Sync */}
       <div className="list-group settings-group">
         <div className="settings-label flex items-center gap-6">
@@ -1220,7 +1310,7 @@ export default function SettingsScreen({ onBack, onDataImported }) {
           • Press <strong>Ctrl+S</strong> to save immediately or <strong>Ctrl+Shift+S</strong> to save & explain.
         </div>
         <div className="settings-tip" style={{ marginTop: 10, opacity: 0.7 }}>
-          Notes by Bai v1.7.1
+          Notes by Bai v1.8.0
         </div>
       </div>
 

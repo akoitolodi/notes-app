@@ -16,14 +16,17 @@ import ExamSummaryScreen from './components/ExamSummaryScreen';
 import ExamPaperScreen from './components/ExamPaperScreen';
 import TrashScreen from './components/TrashScreen';
 import SettingsScreen from './components/SettingsScreen';
+import ImportSheet from './components/ImportSheet';
 import { db, ensureSeeded, purgeOldTrash, noteHasContent } from './store/db';
 import { autoSyncCanvasIfStale } from './lib/canvasSync';
+import { syncDeadlineNotifications } from './lib/notifications';
 import { lockVault, subscribeVault } from './lib/vault';
 import { applySettings } from './theme';
 
 const DevToolkitScreen = lazy(() => import('./components/DevToolkitScreen'));
 const LearnCodingScreen = lazy(() => import('./components/LearnCodingScreen'));
 const StudentHubScreen = lazy(() => import('./components/StudentHubScreen'));
+const CoursesDashboardScreen = lazy(() => import('./components/CoursesDashboardScreen'));
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -31,7 +34,8 @@ export default function App() {
   const [folder, setFolder] = useState(null);
   const [note, setNote] = useState(null);
   const [noteInitialMode, setNoteInitialMode] = useState(null);
-  const [examPaperTarget, setExamPaperTarget] = useState(null); // { sourceNote?, sourceFolder?, returnScreen }
+  const [examPaperTarget, setExamPaperTarget] = useState(null); // { sourceNote?, sourceFolder?, sourceCourse?, returnScreen }
+  const [sharedImport, setSharedImport] = useState(null); // { file?, text?, title? } from Android Share Target
   const [sidebarTick, setSidebarTick] = useState(0);
   const [isWide, setIsWide] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth >= 900 : false
@@ -74,6 +78,7 @@ export default function App() {
     applySettings();
     Promise.all([ensureSeeded(), purgeOldTrash()]).finally(() => {
       setReady(true);
+      syncDeadlineNotifications().catch(() => {});
       autoSyncCanvasIfStale()
         .then(res => {
           if (res?.ran && (res.added > 0 || res.updated > 0)) bumpSidebar();
@@ -81,6 +86,36 @@ export default function App() {
         .catch(() => {});
     });
   }, [bumpSidebar]);
+
+  // Android "Share to Notes by Bai" Intent Receiver (PDF, PPTX, DOCX, image, or text/link)
+  useEffect(() => {
+    const consumeSharePayload = detail => {
+      if (!detail || typeof detail !== 'object') return;
+      try {
+        if (detail.base64 && detail.fileName) {
+          const bin = atob(detail.base64);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          const file = new File([bytes], detail.fileName, {
+            type: detail.mimeType || 'application/octet-stream',
+          });
+          setSharedImport({ file, title: detail.title || '' });
+        } else if (detail.text) {
+          setSharedImport({ text: detail.text, title: detail.title || 'Shared from Canvas' });
+        }
+      } catch {
+        // ignore malformed payload
+      }
+      if (typeof window !== 'undefined') window.__BAI_SHARED_PAYLOAD__ = null;
+    };
+
+    if (typeof window !== 'undefined' && window.__BAI_SHARED_PAYLOAD__) {
+      consumeSharePayload(window.__BAI_SHARED_PAYLOAD__);
+    }
+    const onShare = e => consumeSharePayload(e?.detail);
+    window.addEventListener('bai-share', onShare);
+    return () => window.removeEventListener('bai-share', onShare);
+  }, []);
 
   const pushHistoryEntry = useCallback(nextScreen => {
     try {
@@ -198,11 +233,17 @@ export default function App() {
     pushHistoryEntry('planner');
   }, [pushHistoryEntry]);
 
+  const handleOpenCourses = useCallback(() => {
+    setScreen('courses');
+    pushHistoryEntry('courses');
+  }, [pushHistoryEntry]);
+
   const handleOpenExamPaper = useCallback(
-    ({ sourceNote = null, sourceFolder = null }) => {
+    ({ sourceNote = null, sourceFolder = null, sourceCourse = null }) => {
       setExamPaperTarget({
         sourceNote,
         sourceFolder,
+        sourceCourse,
         returnScreen: screen,
       });
       setScreen('exam-paper');
@@ -217,6 +258,7 @@ export default function App() {
     if (prev === 'study' && note) setScreen('study');
     else if (prev === 'editor' && note) setScreen('editor');
     else if (prev === 'exam' && folder) setScreen('exam');
+    else if (prev === 'courses') setScreen('courses');
     else handleBackToFolders();
   }, [examPaperTarget, note, folder, handleBackToFolders]);
 
@@ -260,6 +302,7 @@ export default function App() {
       screen === 'toolkit' ||
       screen === 'coding' ||
       screen === 'planner' ||
+      screen === 'courses' ||
       screen === 'trash' ||
       screen === 'settings'
     ) {
@@ -407,6 +450,7 @@ export default function App() {
         <ExamPaperScreen
           sourceNote={examPaperTarget.sourceNote}
           sourceFolder={examPaperTarget.sourceFolder}
+          sourceCourse={examPaperTarget.sourceCourse}
           onBack={handleBackFromExamPaper}
         />
       );
@@ -471,6 +515,28 @@ export default function App() {
         </Suspense>
       );
     }
+    if (screen === 'courses') {
+      return (
+        <Suspense
+          fallback={
+            <div className="screen" style={{ alignItems: 'center', justifyContent: 'center' }}>
+              <div className="scan-indicator">
+                <span className="spinner" /> Loading Course Dashboard…
+              </div>
+            </div>
+          }
+        >
+          <CoursesDashboardScreen
+            onBack={handleBackToFolders}
+            onOpenNote={handleOpenNote}
+            onOpenFolder={handleOpenFolder}
+            onOpenExamPaper={handleOpenExamPaper}
+            onOpenPlanner={handleOpenPlanner}
+            onChanged={bumpSidebar}
+          />
+        </Suspense>
+      );
+    }
     if (screen === 'exam' && folder) {
       return (
         <ExamSummaryScreen
@@ -513,6 +579,7 @@ export default function App() {
               onOpenExam={handleOpenExam}
               onOpenNote={handleOpenNote}
               onOpenReview={handleOpenReview}
+              onOpenCourses={handleOpenCourses}
               onOpenPlanner={handleOpenPlanner}
               onOpenToolkit={handleOpenToolkit}
               onOpenCoding={handleOpenCoding}
@@ -535,6 +602,19 @@ export default function App() {
           )}
         </main>
       </div>
+      {sharedImport && (
+        <ImportSheet
+          initialFile={sharedImport.file || null}
+          initialPastedText={sharedImport.text || ''}
+          initialTitle={sharedImport.title || ''}
+          onImported={(createdNote, targetFolder) => {
+            setSharedImport(null);
+            bumpSidebar();
+            handleOpenNote(createdNote, targetFolder);
+          }}
+          onClose={() => setSharedImport(null)}
+        />
+      )}
     </div>
   );
 }

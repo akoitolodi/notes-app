@@ -65,6 +65,189 @@ db.version(6).stores({
   activityLog: 'dateKey',
 });
 
+// v7: additive Canvas-style Courses Dashboard, Course Modules/Files Library & Indexed BM25 Chunks
+db.version(7).stores({
+  folders: '++id, name, createdAt',
+  notes: '++id, folderId, title, updatedAt, pinned, createdAt',
+  examCache: 'folderId',
+  attachments: 'id, noteId, createdAt',
+  learnerMemory: '++id, subject, topic, mastery, mistakesCount, lastPracticedAt',
+  codingCache: 'key, updatedAt',
+  plannerItems: '++id, type, dateKey, done, source, externalUid',
+  classSchedule: '++id, dayOfWeek, startTime, subject',
+  bugLogs: '++id, language, errorType, createdAt',
+  activityLog: 'dateKey',
+  courses: '++id, code, name, folderId, createdAt',
+  courseMaterials: '++id, courseId, moduleName, kind, createdAt',
+  materialChunks: '++id, courseId, materialId',
+});
+
+export const COURSE_PALETTE = [
+  '#0a84ff',
+  '#28b44c',
+  '#ff9f0a',
+  '#af52de',
+  '#ff375f',
+  '#30b0c7',
+  '#5856d6',
+  '#ff6b35',
+];
+
+/**
+ * Split extracted PDF/PPTX/DOCX/Canvas Page text into compact, cited chunks
+ * (~700–1100 chars each, preserving Slide/Page/Heading markers) for fast offline BM25 RAG.
+ */
+export function buildMaterialChunks(rawText, fallbackLabel = 'Section') {
+  const clean = String(rawText || '').replace(/\r\n/g, '\n').trim();
+  if (!clean) return [];
+
+  // Split first by explicit Slide / Page / Markdown headings if present
+  const sections = clean.split(/(?=^#{1,3}\s+|^---\s*Slide\s+\d+|^---\s*Page\s+\d+)/im);
+  const chunks = [];
+
+  for (let sIdx = 0; sIdx < sections.length; sIdx++) {
+    const sec = sections[sIdx].trim();
+    if (!sec) continue;
+    const firstLine = sec.split('\n')[0].replace(/^#+\s*|^---\s*|\s*---$/g, '').trim();
+    const label = firstLine && firstLine.length <= 64 ? firstLine : `${fallbackLabel} ${sIdx + 1}`;
+
+    if (sec.length <= 1050) {
+      chunks.push({ label, text: sec });
+    } else {
+      const paras = sec.split(/\n{2,}/);
+      let buf = '';
+      let part = 1;
+      for (const p of paras) {
+        if ((buf + '\n\n' + p).length > 1000 && buf) {
+          chunks.push({ label: `${label} (Part ${part})`, text: buf.trim() });
+          part += 1;
+          buf = p;
+        } else {
+          buf = buf ? `${buf}\n\n${p}` : p;
+        }
+      }
+      if (buf.trim()) {
+        chunks.push({ label: part > 1 ? `${label} (Part ${part})` : label, text: buf.trim() });
+      }
+    }
+  }
+  return chunks.slice(0, 180);
+}
+
+/** Save a manually uploaded Course Module / File and index its chunks for Course AI Tutor. */
+export async function saveCourseMaterialWithChunks({
+  courseId,
+  moduleName = 'Module 1',
+  title = 'Untitled Material',
+  kind = 'pdf',
+  fileName = '',
+  extractedText = '',
+  pageCount = 0,
+  sourceUrl = '',
+}) {
+  const matId = await db.courseMaterials.add({
+    courseId,
+    moduleName: String(moduleName || 'Module 1').trim() || 'Module 1',
+    title: String(title || 'Untitled Material').trim(),
+    kind,
+    fileName: String(fileName || ''),
+    extractedText: String(extractedText || ''),
+    pageCount: Number(pageCount) || 0,
+    sourceUrl: String(sourceUrl || ''),
+    createdAt: Date.now(),
+  });
+
+  const chunks = buildMaterialChunks(extractedText, title);
+  if (chunks.length > 0) {
+    await db.materialChunks.bulkAdd(
+      chunks.map(c => ({
+        courseId,
+        materialId: matId,
+        moduleName: String(moduleName || 'Module 1').trim() || 'Module 1',
+        materialTitle: String(title || 'Untitled Material').trim(),
+        label: c.label,
+        text: c.text,
+      }))
+    );
+  }
+  return db.courseMaterials.get(matId);
+}
+
+/** Delete a course material and its indexed BM25 chunks cleanly. */
+export async function deleteCourseMaterial(materialId) {
+  await db.materialChunks.where('materialId').equals(materialId).delete().catch(() => {});
+  await db.courseMaterials.delete(materialId);
+}
+
+/** Auto-discover Canvas courses from synced plannerItems & classSchedule without duplicating. */
+export async function discoverCoursesFromPlanner() {
+  const [existingCourses, plannerItems, schedule, allFolders] = await Promise.all([
+    db.courses.toArray().catch(() => []),
+    db.plannerItems.toArray().catch(() => []),
+    db.classSchedule.toArray().catch(() => []),
+    db.folders.toArray().catch(() => []),
+  ]);
+  const safeFolders = allFolders.filter(f => !f.locked && !f.isSystemVault && f.mode !== 'vault');
+  const existingKeys = new Set(
+    existingCourses.flatMap(c => [
+      String(c.name || '').trim().toLowerCase(),
+      String(c.code || '').trim().toLowerCase(),
+      String(c.icsCourseTag || '').trim().toLowerCase(),
+    ].filter(Boolean))
+  );
+
+  const candidates = new Map();
+  for (const it of plannerItems) {
+    const raw = String(it.course || '').trim();
+    if (!raw || /^(canvas|school|general)$/i.test(raw)) continue;
+    const key = raw.toLowerCase();
+    if (!existingKeys.has(key) && !candidates.has(key)) {
+      candidates.set(key, {
+        name: raw,
+        code: raw.split(/\s*[-–:]\s*/)[0].slice(0, 18) || raw.slice(0, 14),
+        instructor: it.author || '',
+        icsCourseTag: raw,
+      });
+    }
+  }
+  for (const cls of schedule) {
+    const raw = String(cls.subject || '').trim();
+    if (!raw) continue;
+    const key = raw.toLowerCase();
+    if (!existingKeys.has(key) && !candidates.has(key)) {
+      candidates.set(key, {
+        name: raw,
+        code: raw.slice(0, 14),
+        instructor: cls.instructor || '',
+        icsCourseTag: raw,
+      });
+    }
+  }
+
+  let createdCount = 0;
+  let colorIdx = existingCourses.length;
+  for (const cand of candidates.values()) {
+    const matchedFolder = safeFolders.find(
+      f =>
+        f.name.toLowerCase() === cand.name.toLowerCase() ||
+        cand.name.toLowerCase().includes(f.name.toLowerCase())
+    );
+    await db.courses.add({
+      code: cand.code,
+      name: cand.name,
+      icsCourseTag: cand.icsCourseTag,
+      instructor: cand.instructor,
+      color: COURSE_PALETTE[colorIdx % COURSE_PALETTE.length],
+      folderId: matchedFolder?.id ?? null,
+      rssUrl: '',
+      createdAt: Date.now(),
+    });
+    colorIdx += 1;
+    createdCount += 1;
+  }
+  return createdCount;
+}
+
 export function localDateKey(d = new Date()) {
   const yr = d.getFullYear();
   const mo = String(d.getMonth() + 1).padStart(2, '0');

@@ -7,6 +7,7 @@
  */
 import { getApiBase } from '../config';
 import { getAiMode, getDirectConfig, getAutoFallback, getFallbackProviders } from './aiConfig';
+import { getAdaptiveTimeouts } from './netResilience';
 import { stripThinking } from '../../shared/aiParsers.js';
 
 /** ES2015-safe AbortController with timeout + optional parent signal forwarding. */
@@ -250,9 +251,15 @@ export async function aiTextStream({
     const moreLeft = idx < candidates.length - 1;
     if (c.isFallback) onFallback?.(c.name);
 
-    // If a backup provider exists and primary stalls with 0 bytes for 18s (28s for reasoning), fail over fast!
+    const adaptive = getAdaptiveTimeouts();
+    const effectiveTimeoutMs = Math.max(timeoutMs || 0, adaptive.aiTotalMs);
+    // Adaptive TTFT watchdog: widens automatically on Slow Internet Mode (2G/3G) so weak signal never triggers false failovers!
     const ttftWatchdogMs =
-      hasFallbacks && moreLeft ? (useReasoning ? 28000 : 18000) : 0;
+      hasFallbacks && moreLeft
+        ? useReasoning
+          ? adaptive.aiReasonFirstByteMs
+          : adaptive.aiFirstByteMs
+        : 0;
 
     for (let attempt = 0; attempt < (c.isFallback ? 1 : 2); attempt++) {
       const effectiveMax = computeEffectiveMaxTokens(c.model, maxTokens, useReasoning, attempt > 0);
@@ -261,16 +268,20 @@ export async function aiTextStream({
           url: `${c.baseUrl}/chat/completions`,
           headers: { Authorization: `Bearer ${c.key}`, 'Content-Type': 'application/json' },
           bodyObj: { model: c.model, messages, temperature: 0.4, max_tokens: effectiveMax, stream: true },
-          timeoutMs,
+          timeoutMs: effectiveTimeoutMs,
           firstByteTimeoutMs: ttftWatchdogMs,
           signal,
           onToken,
           onStatus,
           fallbackTextFn: () =>
-            directSingleCall(c, messages, computeEffectiveMaxTokens(c.model, effectiveMax, useReasoning, true), timeoutMs, signal),
+            directSingleCall(c, messages, computeEffectiveMaxTokens(c.model, effectiveMax, useReasoning, true), effectiveTimeoutMs, signal),
         });
       } catch (err) {
         if (err?.isCancelled) throw err;
+        // Treat transient network drops on slow Wi-Fi / mobile data as retryable
+        if (err instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(String(err?.message || ''))) {
+          err.retryable = true;
+        }
         lastErr = err;
         if (err?.lastReasoning) lastReasoningSeen = err.lastReasoning;
         if (err?.retryable && !err?.isFirstByteStall && attempt === 0 && !c.isFallback) {
@@ -536,10 +547,17 @@ async function directSingleCall(candidate, messages, maxTokens, timeoutMs, signa
     return cleaned;
   } catch (err) {
     if (err?.name === 'AbortError') {
-      if (ctrl.wasTimeout()) throw new Error('The AI took too long to answer. Tap Retry.');
+      if (ctrl.wasTimeout()) {
+        const tErr = new Error('The AI took too long to answer on slow internet. Tap Retry.');
+        tErr.retryable = true;
+        throw tErr;
+      }
       const cancelled = new Error('Cancelled');
       cancelled.isCancelled = true;
       throw cancelled;
+    }
+    if (err instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(String(err?.message || ''))) {
+      err.retryable = true;
     }
     throw err;
   } finally {

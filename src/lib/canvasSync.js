@@ -14,6 +14,8 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { getApiBase } from '../config';
 import { db, localDateKey } from '../store/db';
+import { fetchWithRetry, getAdaptiveTimeouts } from './netResilience';
+import { syncDeadlineNotifications, notifyNewCanvasAnnouncements } from './notifications';
 
 export const CANVAS_ICS_KEY = 'aicn:canvasIcsUrl';
 export const CANVAS_RSS_KEY = 'aicn:canvasRssUrls';
@@ -66,20 +68,40 @@ export async function fetchCanvasText(url, token = '') {
     headers.Authorization = `Bearer ${token.trim()}`;
   }
 
+  const { fetchMs } = getAdaptiveTimeouts();
+
   if (Capacitor.isNativePlatform?.() && CapacitorHttp?.get) {
-    const res = await CapacitorHttp.get({ url: cleanUrl, headers });
-    if (res.status < 200 || res.status >= 300) {
-      throw new Error(`Canvas returned HTTP ${res.status}`);
+    let lastErr = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const res = await CapacitorHttp.get({
+          url: cleanUrl,
+          headers,
+          connectTimeout: fetchMs,
+          readTimeout: fetchMs,
+        });
+        if (res.status < 200 || res.status >= 300) {
+          throw new Error(`Canvas returned HTTP ${res.status}`);
+        }
+        return typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+      } catch (err) {
+        lastErr = err;
+        if (attempt === 0) await new Promise(r => setTimeout(r, 1200));
+      }
     }
-    return typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+    throw lastErr || new Error('Canvas sync timed out on slow connection');
   }
 
   const apiBase = getApiBase();
-  const res = await fetch(`${apiBase}/api/canvas-proxy`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url: cleanUrl, token: token || undefined }),
-  });
+  const res = await fetchWithRetry(
+    `${apiBase}/api/canvas-proxy`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: cleanUrl, token: token || undefined }),
+    },
+    { retries: 2, timeoutMs: fetchMs }
+  );
   const data = await res.json().catch(() => null);
   if (!res.ok) {
     throw new Error(data?.error || `Canvas sync failed (HTTP ${res.status})`);
@@ -432,6 +454,8 @@ export async function syncCanvasFeeds({ icsUrl = '', rssUrls = '', host = '', to
   const existingAll = await db.plannerItems.toArray();
   const byUid = new Map(existingAll.filter(x => x.externalUid).map(x => [x.externalUid, x]));
 
+  const newlyAddedAnnouncements = [];
+
   for (const item of fetchedItems) {
     const prev = byUid.get(item.externalUid);
     if (prev) {
@@ -456,11 +480,16 @@ export async function syncCanvasFeeds({ icsUrl = '', rssUrls = '', host = '', to
         updatedAt: Date.now(),
       });
       added += 1;
+      if (item.type === 'announcement') newlyAddedAnnouncements.push(item);
     }
   }
 
   const now = Date.now();
   saveCanvasSettings({ lastSync: now });
+  syncDeadlineNotifications().catch(() => {});
+  if (newlyAddedAnnouncements.length > 0) {
+    notifyNewCanvasAnnouncements(newlyAddedAnnouncements).catch(() => {});
+  }
   return { added, updated, total: fetchedItems.length, syncedAt: now };
 }
 

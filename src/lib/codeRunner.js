@@ -11,6 +11,7 @@
 import { aiText, aiTextStream, createAbortController } from './aiCore';
 import { getCodapiConfig } from './aiConfig';
 import { getLanguageMeta } from './codingCatalog';
+import { getAdaptiveTimeouts } from './netResilience';
 
 /** Run JavaScript safely inside a captured-console Function scope (instant & offline). */
 export function runJavaScriptLocally(code) {
@@ -84,7 +85,7 @@ export async function runOnCodapi(sandbox, code) {
   if (key) headers.Authorization = `Bearer ${key}`;
 
   const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
-  const ctrl = createAbortController(15000);
+  const ctrl = createAbortController(getAdaptiveTimeouts().codapiMs);
   try {
     const res = await fetch(`${url}/v1/exec`, {
       method: 'POST',

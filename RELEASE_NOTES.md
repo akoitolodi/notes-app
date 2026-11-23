@@ -1,10 +1,17 @@
-## What's New in Notes by Bai v1.7.1
+## What's New in Notes by Bai v1.8.0
 
-### Automatic Canvas LMS Sync & Real Atom Feed Polish
-- **Auto-Sync on App Open & Resume (Every 15 Min)**: Your Canvas Calendar Feed (`.ics`) and Course Announcements Feeds (`.atom` / RSS) now refresh automatically whenever you open **Notes by Bai**, return to the app, or open **School Planner** — with a toggleable switch in **To-Dos & Canvas** and an instant notification toast when a teacher posts something new.
-- **Clean Canvas Atom HTML + Clickable Links + Teacher Name**: Properly decodes Canvas's escaped `<content type="html">` tags (`&lt;p&gt;`, `&lt;br&gt;`, `&lt;a href="..."&gt;`), preserves clickable links (like class Google Chat or Zoom invites) directly inside announcement cards and `Start Note`, displays the instructor's name, upgrades `instructure.com` links to `https://`, and cleans `" Announcements Feed"` from course titles.
-- **Front-and-Center Announcements RSS Box**: Moved the **Course Announcements Feeds (`.atom` / RSS)** input right below the **Calendar Feed (`.ics`)** box so adding multiple course announcement feeds takes seconds.
+### Canvas-Style Course Dashboard & AI-Indexed Module Library
+- **Course Dashboard**: Visual colored Course Cards mirroring Canvas LMS with **1-Tap Auto-Discover** from your synced Canvas `.ics` / `.atom` feeds and Timetable.
+- **Full Course Workspaces (`Home`, `Modules`, `Posts`, `Tasks`, `Course AI`)**:
+  - Organize manually uploaded **`.pdf`**, **`.pptx`**, **`.docx` (NEW offline Word extractor!)**, **pasted Canvas Module Pages (HTML → clean Markdown)**, and **Batch Multi-Screenshot OCR** into collapsible Modules (`Module 1`, `Module 2`, …).
+  - **Course AI Tutor (BM25 Chunked RAG)**: Chat, generate Study Guides, build Flashcards & Quizzes, or generate **Bond-Paper Practice Exams** grounded strictly in THAT course's uploaded files & modules — with slide/page citations and Exam-Week checkboxes to pick only the chapters covered in your exam!
+- **Android "Share to Notes by Bai"**: Share a `.pdf`, `.pptx`, `.docx`, screenshot, or Canvas/Google Chat link straight from Chrome or Google Chat into Notes by Bai in 1 tap.
 
-> Includes all `v1.7.0` features (School Planner & Canvas Hub, Weekly Timetable, GWA/GPA Calculator, 16-Week Heatmap, Study Commute Audio & Hands-Free Flashcards, Algorithm Visualizer, Reverse Feynman Teach-AI, Offline 2D Math Grapher, Bugs I Solved Debugger, BaiDrop Offline Share & Wi-Fi Sync, OLED True-Black & Paper Textures).
->
-> **Update Note**: Install `Notes-by-Bai.apk` directly over your current version (do not uninstall) — all notes, vault records, schedules, and API keys stay 100% intact.
+### Persistent Due-Date & Announcement Notifications
+- **Native Android Local Notifications (`@capacitor/local-notifications`)**: Automatically schedules offline reminders **24 hours before due**, **3 hours before due**, **7:00 AM on Exam Day**, and instant notifications when new Canvas announcements arrive — plus an optional **Persistent Sticky Reminder** for Due Today / Overdue tasks that stays pinned until marked Done.
+- **Persistent In-App Reminder Banner**: Pinned alert card on Folders Home showing overdue tasks, due-today deadlines, and unread announcements with 1-tap `View Tasks`, `Mark Posts Read`, or `Snooze 1h`.
+
+### Slow Internet Mode & Timeout Protection
+- **Adaptive Slow Internet Mode** (auto-detected on 2G/3G/Save-Data or toggleable in Settings): Widens AI first-byte watchdogs (`45s–60s`), retries dropped connections with exponential backoff (`1s → 3s`) across Canvas sync and AI calls, and tightens RAG chunks so AI streams fast even on weak campus Wi-Fi or mobile data.
+
+> **Update Note**: Install `Notes-by-Bai.apk` directly over your current version (do not uninstall) — Dexie v7 is strictly additive, so all notes, vault records, schedules, and API keys stay 100% intact.

@@ -291,7 +291,98 @@ export async function extractPdfText(
 }
 
 /**
- * Extract any supported local file (.pdf, .pptx, .md, .txt) offline on-device.
+ * Pure-JS offline Word (.docx) XML parser (word/document.xml) preserving headings,
+ * bullet/numbered lists, paragraphs, and Markdown tables.
+ */
+export function extractDocxXmlToMarkdown(xml) {
+  if (!xml) return '';
+  const bodyMatch = /<w:body\b[^>]*>([\s\S]*?)<\/w:body>/i.exec(xml);
+  const body = bodyMatch ? bodyMatch[1] : xml;
+
+  const extractRunText = block => {
+    const runs = [];
+    const tRe = /<w:t\b[^>]*>([\s\S]*?)<\/w:t>/g;
+    let tm;
+    while ((tm = tRe.exec(block)) !== null) {
+      runs.push(decodeXmlEntities(tm[1]));
+    }
+    return runs.join('').replace(/\s+/g, ' ').trim();
+  };
+
+  // Match top-level tables and paragraphs in document order
+  const blockRe = /<w:tbl\b[\s\S]*?<\/w:tbl>|<w:p\b[\s\S]*?<\/w:p>/g;
+  const out = [];
+  let m;
+  while ((m = blockRe.exec(body)) !== null) {
+    const chunk = m[0];
+    if (chunk.startsWith('<w:tbl')) {
+      const trRe = /<w:tr\b[^>]*>([\s\S]*?)<\/w:tr>/g;
+      const rows = [];
+      let rm;
+      while ((rm = trRe.exec(chunk)) !== null) {
+        const tcRe = /<w:tc\b[^>]*>([\s\S]*?)<\/w:tc>/g;
+        const cells = [];
+        let cm;
+        while ((cm = tcRe.exec(rm[1])) !== null) {
+          cells.push(extractRunText(cm[1]).replace(/\|/g, '\\|'));
+        }
+        if (cells.length > 0) rows.push(cells);
+      }
+      if (rows.length > 0) {
+        const cols = Math.max(...rows.map(r => r.length));
+        const pad = r => Array.from({ length: cols }, (_, i) => r[i] || '');
+        out.push(
+          [
+            `| ${pad(rows[0]).join(' | ')} |`,
+            `| ${Array.from({ length: cols }, () => '---').join(' | ')} |`,
+            ...rows.slice(1).map(r => `| ${pad(r).join(' | ')} |`),
+          ].join('\n')
+        );
+      }
+      continue;
+    }
+
+    const txt = extractRunText(chunk);
+    if (!txt) continue;
+    const styleMatch = /<w:pStyle\b[^>]*w:val="([^"]+)"/i.exec(chunk);
+    const styleVal = styleMatch ? styleMatch[1] : '';
+    const headingMatch = /^Heading([1-4])$/i.exec(styleVal);
+    if (headingMatch || /^Title$/i.test(styleVal)) {
+      const lvl = headingMatch ? Math.min(4, Number(headingMatch[1])) : 1;
+      out.push(`${'#'.repeat(lvl)} ${txt}`);
+    } else if (/<w:numPr\b/.test(chunk) || /^List/i.test(styleVal)) {
+      out.push(`- ${txt}`);
+    } else {
+      out.push(txt);
+    }
+  }
+  return out.join('\n\n').trim();
+}
+
+/** Extract Word (.docx) content 100% offline via fflate unzip + word/document.xml parser. */
+export async function extractDocxText(arrayBuffer) {
+  const { unzipSync, strFromU8 } = await import('fflate');
+  let entries;
+  try {
+    entries = unzipSync(new Uint8Array(arrayBuffer));
+  } catch {
+    throw new Error('Could not open this .docx file. Make sure it is a valid Microsoft Word document.');
+  }
+  const docEntry = entries['word/document.xml'];
+  if (!docEntry) {
+    throw new Error('No document body found inside this .docx file.');
+  }
+  const xml = strFromU8(docEntry);
+  const markdown = extractDocxXmlToMarkdown(xml);
+  if (!markdown) {
+    throw new Error('This Word document appears to be empty (or images only).');
+  }
+  const approxPages = Math.max(1, Math.ceil(markdown.length / 2600));
+  return { markdown, pageCount: approxPages };
+}
+
+/**
+ * Extract any supported local file (.pdf, .pptx, .docx, .md, .txt) offline on-device.
  */
 export async function extractDocument(file, { maxPages = MAX_DEFAULT_PDF_PAGES, onProgress = null } = {}) {
   if (!file) throw new Error('No file selected.');
@@ -299,14 +390,21 @@ export async function extractDocument(file, { maxPages = MAX_DEFAULT_PDF_PAGES, 
   const ext = (name.split('.').pop() || '').toLowerCase();
   const title = titleFromFilename(name);
 
-  if (ext === 'ppt') {
-    throw new Error('Legacy .ppt files are not supported — please re-save as .pptx or .pdf first.');
+  if (ext === 'ppt' || ext === 'doc') {
+    throw new Error(`Legacy .${ext} files are not supported — please re-save as .${ext}x or .pdf first.`);
   }
 
   if (ext === 'pptx') {
     const buf = await file.arrayBuffer();
     const res = await extractPptxText(buf, { onProgress });
     return { title, rawMarkdown: res.markdown, pageCount: res.pageCount, truncatedPages: 0, kind: 'pptx' };
+  }
+
+  if (ext === 'docx') {
+    onProgress?.({ current: 1, total: 1, phase: 'docx' });
+    const buf = await file.arrayBuffer();
+    const res = await extractDocxText(buf);
+    return { title, rawMarkdown: res.markdown, pageCount: res.pageCount, truncatedPages: 0, kind: 'docx' };
   }
 
   if (ext === 'pdf') {
@@ -327,7 +425,7 @@ export async function extractDocument(file, { maxPages = MAX_DEFAULT_PDF_PAGES, 
     return { title, rawMarkdown: text, pageCount: 1, truncatedPages: 0, kind: ext === 'txt' ? 'txt' : 'md' };
   }
 
-  throw new Error(`Unsupported file type ".${ext}". Please choose a .pdf, .pptx, .md, or .txt file.`);
+  throw new Error(`Unsupported file type ".${ext}". Please choose a .pdf, .pptx, .docx, .md, or .txt file.`);
 }
 
 /**

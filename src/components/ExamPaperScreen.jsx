@@ -44,14 +44,17 @@ import { useDialog } from './ui/DialogProvider';
 export default function ExamPaperScreen({
   sourceNote = null,
   sourceFolder = null,
+  sourceCourse = null,
   onBack,
 }) {
   const { toast } = useDialog();
 
   const defaultTitle = sourceNote
     ? `${sourceNote.title || 'Note'} — Practice Exam`
-    : `${sourceFolder?.name || 'Subject'} Examination`;
-  const subjectName = sourceNote?.subject || sourceFolder?.name || 'General';
+    : sourceCourse
+      ? `${sourceCourse.code || sourceCourse.name} — Module Exam`
+      : `${sourceFolder?.name || 'Subject'} Examination`;
+  const subjectName = sourceNote?.subject || sourceCourse?.name || sourceFolder?.name || 'General';
 
   const [examTitle, setExamTitle] = useState(defaultTitle);
   const [subtitle, setSubtitle] = useState(subjectName);
@@ -188,6 +191,8 @@ export default function ExamPaperScreen({
       let notesText = '';
       if (sourceNote) {
         notesText = `# ${sourceNote.title || 'Note'}\n${sourceNote.body || ''}`;
+      } else if (sourceCourse?.notesText) {
+        notesText = sourceCourse.notesText;
       } else if (sourceFolder?.id) {
         const list = (await db.notes.where('folderId').equals(sourceFolder.id).toArray()).filter(
           n => !n.trashed
