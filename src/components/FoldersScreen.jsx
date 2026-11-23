@@ -29,6 +29,7 @@ import {
   Shield,
   EyeOff,
   Code2,
+  Calendar,
 } from 'lucide-react';
 import {
   db,
@@ -76,6 +77,7 @@ export default function FoldersScreen({
   onOpenExam,
   onOpenNote,
   onOpenReview,
+  onOpenPlanner,
   onOpenToolkit,
   onOpenCoding,
   onOpenTrash,
@@ -99,6 +101,7 @@ export default function FoldersScreen({
   const [pinRequest, setPinRequest] = useState(null); // { mode: 'unlock'|'setup', onDone }
   const [showToolkit, setShowToolkit] = useState(() => isDevToolkitEnabled());
   const [showCoding, setShowCoding] = useState(() => isLearnCodingEnabled());
+  const [plannerDueCount, setPlannerDueCount] = useState(0);
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
@@ -134,6 +137,12 @@ export default function FoldersScreen({
     setShowToolkit(isDevToolkitEnabled());
     setShowCoding(isLearnCodingEnabled());
     setVaultUnlocked(isVaultUnlocked());
+    try {
+      const pItems = await db.plannerItems.toArray();
+      setPlannerDueCount(pItems.filter(it => !it.done && it.type !== 'announcement').length);
+    } catch {
+      setPlannerDueCount(0);
+    }
   }, []);
 
   useEffect(() => {
@@ -594,42 +603,57 @@ export default function FoldersScreen({
         </button>
       </div>
 
-      {/* Optional Learn Coding Studio & Dev & IT Toolkit Add-ons (toggleable in Settings) */}
-      {(showCoding || showToolkit) && (
-        <div className="list-group" style={{ marginTop: 8, marginBottom: 8 }}>
-          {showCoding && (
-            <button type="button" className="list-item" onClick={onOpenCoding}>
-              <span className="list-item-icon">
-                <Code2 size={17} />
-              </span>
-              <div className="list-item-body">
-                <div className="list-item-title">
-                  <span>Learn Coding</span>
-                  <span className="mode-badge mode-code">18 Langs</span>
-                </div>
-                <div className="list-item-subtitle">
-                  Live online guides, challenges &amp; code runner
-                </div>
+      {/* School Planner & Canvas LMS + Learn Coding Studio + Dev & IT Toolkit */}
+      <div className="list-group" style={{ marginTop: 8, marginBottom: 8 }}>
+        <button type="button" className="list-item" onClick={onOpenPlanner}>
+          <span className="list-item-icon">
+            <Calendar size={17} />
+          </span>
+          <div className="list-item-body">
+            <div className="list-item-title">
+              <span>School Planner &amp; Canvas</span>
+              {plannerDueCount > 0 && (
+                <span className="mode-badge mode-study">{plannerDueCount} due</span>
+              )}
+            </div>
+            <div className="list-item-subtitle">
+              Calendar, Canvas sync, timetable, GWA &amp; heatmap
+            </div>
+          </div>
+          <ChevronRight size={17} className="list-item-chevron" />
+        </button>
+        {showCoding && (
+          <button type="button" className="list-item" onClick={onOpenCoding}>
+            <span className="list-item-icon">
+              <Code2 size={17} />
+            </span>
+            <div className="list-item-body">
+              <div className="list-item-title">
+                <span>Learn Coding</span>
+                <span className="mode-badge mode-code">18 Langs</span>
               </div>
-              <ChevronRight size={17} className="list-item-chevron" />
-            </button>
-          )}
-          {showToolkit && (
-            <button type="button" className="list-item" onClick={onOpenToolkit}>
-              <span className="list-item-icon">
-                <Wrench size={17} />
-              </span>
-              <div className="list-item-body">
-                <div className="list-item-title">Dev &amp; IT Toolkit</div>
-                <div className="list-item-subtitle">
-                  Offline IT tools &amp; cheat sheets
-                </div>
+              <div className="list-item-subtitle">
+                Live guides, challenges, visualizer &amp; runner
               </div>
-              <ChevronRight size={17} className="list-item-chevron" />
-            </button>
-          )}
-        </div>
-      )}
+            </div>
+            <ChevronRight size={17} className="list-item-chevron" />
+          </button>
+        )}
+        {showToolkit && (
+          <button type="button" className="list-item" onClick={onOpenToolkit}>
+            <span className="list-item-icon">
+              <Wrench size={17} />
+            </span>
+            <div className="list-item-body">
+              <div className="list-item-title">Dev &amp; IT Toolkit</div>
+              <div className="list-item-subtitle">
+                Math grapher, bug log &amp; offline IT tools
+              </div>
+            </div>
+            <ChevronRight size={17} className="list-item-chevron" />
+          </button>
+        )}
+      </div>
 
       {/* Hidden Vault Section — completely invisible when locked, revealed only when unlocked */}
       {vaultUnlocked && vaultFolders.length > 0 && (

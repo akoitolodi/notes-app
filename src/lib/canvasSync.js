@@ -1,0 +1,397 @@
+/**
+ * canvasSync — Canvas LMS (by Instructure) integration designed for student accounts
+ * even when school admins disable Personal Access Tokens.
+ *
+ * Transport:
+ * - On Android APK: uses built-in CapacitorHttp.get() natively (0 CORS, 0 external proxy!)
+ * - On Desktop / Web: uses local same-origin POST /api/canvas-proxy in server.js
+ *
+ * Supports:
+ * 1. Canvas Calendar Feed (.ics) -> Assignments, Quizzes, Exams & Due Dates
+ * 2. Canvas Course Announcements RSS/Atom Feed + Quick-Paste Announcement Importer
+ * 3. Optional Canvas Access Token (if enabled by the user's school)
+ */
+import { Capacitor, CapacitorHttp } from '@capacitor/core';
+import { getApiBase } from '../config';
+import { db, localDateKey } from '../store/db';
+
+export const CANVAS_ICS_KEY = 'aicn:canvasIcsUrl';
+export const CANVAS_RSS_KEY = 'aicn:canvasRssUrls';
+export const CANVAS_TOKEN_KEY = 'aicn:canvasToken';
+export const CANVAS_HOST_KEY = 'aicn:canvasHost';
+export const CANVAS_LAST_SYNC_KEY = 'aicn:canvasLastSync';
+
+export function getCanvasSettings() {
+  try {
+    return {
+      icsUrl: (localStorage.getItem(CANVAS_ICS_KEY) || '').trim(),
+      rssUrls: (localStorage.getItem(CANVAS_RSS_KEY) || '').trim(),
+      host: (localStorage.getItem(CANVAS_HOST_KEY) || '').trim().replace(/\/+$/, ''),
+      token: (localStorage.getItem(CANVAS_TOKEN_KEY) || '').trim(),
+      lastSync: Number(localStorage.getItem(CANVAS_LAST_SYNC_KEY) || 0) || 0,
+    };
+  } catch {
+    return { icsUrl: '', rssUrls: '', host: '', token: '', lastSync: 0 };
+  }
+}
+
+export function saveCanvasSettings(patch) {
+  try {
+    if (patch.icsUrl !== undefined) localStorage.setItem(CANVAS_ICS_KEY, String(patch.icsUrl || '').trim());
+    if (patch.rssUrls !== undefined) localStorage.setItem(CANVAS_RSS_KEY, String(patch.rssUrls || '').trim());
+    if (patch.host !== undefined) localStorage.setItem(CANVAS_HOST_KEY, String(patch.host || '').trim());
+    if (patch.token !== undefined) localStorage.setItem(CANVAS_TOKEN_KEY, String(patch.token || '').trim());
+    if (patch.lastSync !== undefined) localStorage.setItem(CANVAS_LAST_SYNC_KEY, String(patch.lastSync || 0));
+  } catch {
+    // non-fatal
+  }
+}
+
+/** Native CapacitorHttp on Android (bypasses CORS cleanly), local /api/canvas-proxy on Web/PC. */
+export async function fetchCanvasText(url, token = '') {
+  const cleanUrl = String(url || '').trim();
+  if (!cleanUrl) throw new Error('Enter a Canvas URL first.');
+  if (!/^https:\/\//i.test(cleanUrl)) {
+    throw new Error('Canvas URL must start with https://');
+  }
+
+  const headers = {
+    Accept: 'text/calendar, application/rss+xml, application/atom+xml, application/json, text/plain, */*',
+  };
+  if (token && token.trim()) {
+    headers.Authorization = `Bearer ${token.trim()}`;
+  }
+
+  if (Capacitor.isNativePlatform?.() && CapacitorHttp?.get) {
+    const res = await CapacitorHttp.get({ url: cleanUrl, headers });
+    if (res.status < 200 || res.status >= 300) {
+      throw new Error(`Canvas returned HTTP ${res.status}`);
+    }
+    return typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+  }
+
+  const apiBase = getApiBase();
+  const res = await fetch(`${apiBase}/api/canvas-proxy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: cleanUrl, token: token || undefined }),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(data?.error || `Canvas sync failed (HTTP ${res.status})`);
+  }
+  return String(data?.body || '');
+}
+
+function unescapeIcs(str) {
+  return String(str || '')
+    .replace(/\\n/gi, '\n')
+    .replace(/\\,/g, ',')
+    .replace(/\\;/g, ';')
+    .replace(/\\\\/g, '\\')
+    .trim();
+}
+
+function parseIcsDate(rawVal) {
+  const clean = String(rawVal || '').trim();
+  // Format 1: 20261128T155900Z (UTC) or 20261128T235900 (floating)
+  const dtMatch = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z?)$/i.exec(clean);
+  if (dtMatch) {
+    const [, y, mo, d, h, mi, s, z] = dtMatch;
+    const dt = z
+      ? new Date(Date.UTC(+y, +mo - 1, +d, +h, +mi, +s))
+      : new Date(+y, +mo - 1, +d, +h, +mi, +s);
+    return {
+      dateKey: localDateKey(dt),
+      timeLabel: dt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+      timestamp: dt.getTime(),
+    };
+  }
+  // Format 2: All-day YYYYMMDD
+  const dayMatch = /^(\d{4})(\d{2})(\d{2})$/.exec(clean);
+  if (dayMatch) {
+    const [, y, mo, d] = dayMatch;
+    const dt = new Date(+y, +mo - 1, +d, 23, 59, 0);
+    return {
+      dateKey: `${y}-${mo}-${d}`,
+      timeLabel: 'All day',
+      timestamp: dt.getTime(),
+    };
+  }
+  return null;
+}
+
+/**
+ * Parse RFC-5545 Canvas .ics calendar feed text into structured assignments/events.
+ */
+export function parseIcsEvents(icsText) {
+  // RFC-5545 line unfolding: CRLF followed by space or tab continues the previous line
+  const unfolded = String(icsText || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\n[ \t]/g, '');
+
+  const lines = unfolded.split('\n');
+  const events = [];
+  let cur = null;
+
+  for (const line of lines) {
+    if (line === 'BEGIN:VEVENT') {
+      cur = {};
+      continue;
+    }
+    if (line === 'END:VEVENT') {
+      if (cur && cur.summary && cur.dateInfo) {
+        // Canvas puts "[COURSE CODE]" at the end of SUMMARY, e.g. "Problem Set 3 [PHYS 101]"
+        let title = cur.summary;
+        let course = 'Canvas';
+        const courseMatch = /\s*\[([^\]]+)\]\s*$/.exec(title);
+        if (courseMatch) {
+          course = courseMatch[1].trim();
+          title = title.slice(0, courseMatch.index).trim() || title;
+        }
+        const isExam = /\b(exam|midterm|final|quiz|long test|practical)\b/i.test(title);
+        events.push({
+          externalUid: cur.uid || `ics:${cur.dateInfo.dateKey}:${title}`,
+          title,
+          course,
+          type: isExam ? 'exam' : 'assignment',
+          source: 'canvas',
+          dateKey: cur.dateInfo.dateKey,
+          timeLabel: cur.dateInfo.timeLabel,
+          dueAt: cur.dateInfo.timestamp,
+          description: cur.description || '',
+          url: cur.url || '',
+        });
+      }
+      cur = null;
+      continue;
+    }
+    if (!cur) continue;
+
+    const colon = line.indexOf(':');
+    if (colon === -1) continue;
+    const rawKey = line.slice(0, colon).toUpperCase();
+    const baseKey = rawKey.split(';')[0];
+    const value = line.slice(colon + 1);
+
+    if (baseKey === 'UID') cur.uid = value.trim();
+    else if (baseKey === 'SUMMARY') cur.summary = unescapeIcs(value);
+    else if (baseKey === 'DESCRIPTION') cur.description = unescapeIcs(value);
+    else if (baseKey === 'URL') cur.url = value.trim();
+    else if (baseKey === 'DTSTART' && !cur.dateInfo) cur.dateInfo = parseIcsDate(value);
+    else if (baseKey === 'DTEND' && !cur.dateInfo) cur.dateInfo = parseIcsDate(value);
+  }
+
+  return events.sort((a, b) => (a.dueAt || 0) - (b.dueAt || 0));
+}
+
+/** Parse Canvas Course Announcements RSS / Atom XML feeds (when enabled). */
+export function parseRssAnnouncements(xmlText, fallbackCourse = 'Canvas') {
+  const xml = String(xmlText || '');
+  const out = [];
+  const cleanXmlText = s =>
+    String(s || '')
+      .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/\s+/g, ' ')
+      .trim();
+
+  const channelTitleMatch = /<title>([\s\S]*?)<\/title>/i.exec(xml);
+  const courseName = channelTitleMatch ? cleanXmlText(channelTitleMatch[1]).slice(0, 48) : fallbackCourse;
+
+  const itemRe = /<(?:item|entry)\b[^>]*>([\s\S]*?)<\/(?:item|entry)>/gi;
+  let m;
+  while ((m = itemRe.exec(xml)) !== null) {
+    const block = m[1];
+    const title = cleanXmlText((/<title[^>]*>([\s\S]*?)<\/title>/i.exec(block) || [])[1] || '');
+    const desc = cleanXmlText(
+      (/<(?:description|summary|content)[^>]*>([\s\S]*?)<\/(?:description|summary|content)>/i.exec(block) || [])[1] || ''
+    );
+    const linkMatch =
+      /<link[^>]+href=["']([^"']+)["']/i.exec(block) || /<link[^>]*>([\s\S]*?)<\/link>/i.exec(block);
+    const url = linkMatch ? cleanXmlText(linkMatch[1]) : '';
+    const guid = cleanXmlText((/<(?:guid|id)[^>]*>([\s\S]*?)<\/(?:guid|id)>/i.exec(block) || [])[1] || '');
+    const dateRaw = cleanXmlText(
+      (/<(?:pubDate|updated|published)[^>]*>([\s\S]*?)<\/(?:pubDate|updated|published)>/i.exec(block) || [])[1] || ''
+    );
+    const dt = dateRaw ? new Date(dateRaw) : new Date();
+    const validDt = Number.isNaN(dt.getTime()) ? new Date() : dt;
+
+    if (title) {
+      out.push({
+        externalUid: guid || `rss:${title}:${localDateKey(validDt)}`,
+        title,
+        course: courseName,
+        type: 'announcement',
+        source: 'canvas',
+        dateKey: localDateKey(validDt),
+        timeLabel: validDt.toLocaleDateString([], { month: 'short', day: 'numeric' }),
+        dueAt: validDt.getTime(),
+        description: desc.slice(0, 1200),
+        url,
+      });
+    }
+  }
+  return out;
+}
+
+const MONTH_MAP = {
+  jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3,
+  may: 4, jun: 5, june: 5, jul: 6, july: 6, aug: 7, august: 7,
+  sep: 8, sept: 8, september: 8, oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11,
+};
+
+/**
+ * Parse a copy-pasted Canvas announcement and automatically detect any mentioned due date!
+ */
+export function parsePastedAnnouncement(rawText, course = 'Canvas') {
+  const clean = String(rawText || '').trim();
+  const lines = clean.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const title = (lines[0] || 'Canvas Announcement').slice(0, 96);
+  const body = lines.slice(1).join('\n') || clean;
+
+  let detectedDateKey = null;
+  const isoMatch = /\b(20\d{2}-\d{2}-\d{2})\b/.exec(clean);
+  if (isoMatch) {
+    detectedDateKey = isoMatch[1];
+  } else {
+    const monMatch = /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(20\d{2}))?\b/i.exec(clean);
+    if (monMatch) {
+      const mIdx = MONTH_MAP[monMatch[1].toLowerCase()];
+      const day = parseInt(monMatch[2], 10);
+      const yr = monMatch[3] ? parseInt(monMatch[3], 10) : new Date().getFullYear();
+      if (mIdx !== undefined && day >= 1 && day <= 31) {
+        detectedDateKey = localDateKey(new Date(yr, mIdx, day));
+      }
+    }
+  }
+
+  return {
+    title,
+    course: String(course || 'Canvas').trim() || 'Canvas',
+    description: body.slice(0, 2000),
+    dateKey: localDateKey(),
+    detectedDateKey,
+  };
+}
+
+/** Build a clean, ready-to-work Note body from a synced Canvas assignment or announcement. */
+export function buildCanvasNoteContent(item) {
+  const isAnnouncement = item.type === 'announcement';
+  const lines = [
+    `## ${isAnnouncement ? 'Canvas Announcement' : 'Canvas Assignment Details'}`,
+    `- **Course:** ${item.course || 'Canvas'}`,
+    `- **${isAnnouncement ? 'Posted' : 'Due'}:** ${item.dateKey}${item.timeLabel ? ` · ${item.timeLabel}` : ''}`,
+  ];
+  if (item.url) {
+    lines.push(`- **Link:** [Open in Canvas](${item.url})`);
+  }
+  lines.push('', `## ${isAnnouncement ? 'Announcement' : 'Instructions'}`);
+  lines.push(item.description ? item.description : '*(No description provided on Canvas)*');
+  if (!isAnnouncement) {
+    lines.push(
+      '',
+      '## Action Checklist',
+      '- [ ] Review related class notes',
+      '- [ ] Draft solution / answers',
+      '- [ ] Double-check & submit on Canvas',
+      '',
+      '## My Work & Notes',
+      ''
+    );
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Sync Canvas .ics feed + optional RSS announcements into Dexie `plannerItems`
+ * cleanly deduplicated by externalUid (preserving user check-off `done` state!).
+ */
+export async function syncCanvasFeeds({ icsUrl = '', rssUrls = '', host = '', token = '' } = {}) {
+  let added = 0;
+  let updated = 0;
+  const fetchedItems = [];
+
+  if (icsUrl && icsUrl.trim()) {
+    const icsText = await fetchCanvasText(icsUrl.trim());
+    fetchedItems.push(...parseIcsEvents(icsText));
+  }
+
+  if (rssUrls && rssUrls.trim()) {
+    const urls = rssUrls
+      .split(/[\n,]+/)
+      .map(s => s.trim())
+      .filter(Boolean);
+    for (const u of urls) {
+      try {
+        const xml = await fetchCanvasText(u);
+        fetchedItems.push(...parseRssAnnouncements(xml));
+      } catch {
+        // continue syncing other feeds
+      }
+    }
+  }
+
+  // Optional Method A (Access Token) if the user's school enables student tokens
+  if (host && token && host.trim() && token.trim()) {
+    const base = host.trim().replace(/\/+$/, '');
+    const todoRaw = await fetchCanvasText(`${base}/api/v1/users/self/todo`, token.trim());
+    const todos = JSON.parse(todoRaw || '[]');
+    if (Array.isArray(todos)) {
+      for (const td of todos) {
+        const a = td.assignment || {};
+        const dt = a.due_at ? new Date(a.due_at) : new Date();
+        fetchedItems.push({
+          externalUid: `canvas-api:assign:${a.id || td.context_name}:${a.due_at || ''}`,
+          title: a.name || td.context_name || 'Canvas Task',
+          course: td.context_name || 'Canvas',
+          type: 'assignment',
+          source: 'canvas',
+          dateKey: localDateKey(dt),
+          timeLabel: dt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+          dueAt: dt.getTime(),
+          description: String(a.description || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1200),
+          url: a.html_url || td.html_url || '',
+        });
+      }
+    }
+  }
+
+  const existingAll = await db.plannerItems.toArray();
+  const byUid = new Map(existingAll.filter(x => x.externalUid).map(x => [x.externalUid, x]));
+
+  for (const item of fetchedItems) {
+    const prev = byUid.get(item.externalUid);
+    if (prev) {
+      await db.plannerItems.update(prev.id, {
+        title: item.title,
+        course: item.course,
+        dateKey: item.dateKey,
+        timeLabel: item.timeLabel,
+        dueAt: item.dueAt,
+        description: item.description,
+        url: item.url,
+        updatedAt: Date.now(),
+      });
+      updated += 1;
+    } else {
+      await db.plannerItems.add({
+        ...item,
+        done: false,
+        priority: item.type === 'exam' ? 'high' : 'normal',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      added += 1;
+    }
+  }
+
+  const now = Date.now();
+  saveCanvasSettings({ lastSync: now });
+  return { added, updated, total: fetchedItems.length, syncedAt: now };
+}

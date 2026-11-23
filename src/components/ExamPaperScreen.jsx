@@ -36,7 +36,7 @@ import {
   gradeExamPaperOffline,
   gradeWrittenAnswersWithAI,
 } from '../lib/examPaper';
-import { db, updateNote } from '../store/db';
+import { db, updateNote, logStudyActivity } from '../store/db';
 import { getLearnerContextDigest, recordLearningSignal } from '../lib/learnerMemory';
 import MarkdownContent from './ui/MarkdownContent';
 import { useDialog } from './ui/DialogProvider';
@@ -233,6 +233,7 @@ export default function ExamPaperScreen({
 
   const handleCheckPaper = () => {
     setChecked(true);
+    logStudyActivity('exams', 1).catch(() => {});
     if (paper) {
       persistExamState({ paper, answers, writtenScores, checked: true });
       // Feed objective exam results into DeepTutor Persistent Learner Memory

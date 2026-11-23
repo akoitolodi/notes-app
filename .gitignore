@@ -17,3 +17,4 @@ keystore.b64
 *.apk
 hunt/
 hunt-*.md
+.baidrop-lan-sync.json

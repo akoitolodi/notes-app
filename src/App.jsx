@@ -22,6 +22,7 @@ import { applySettings } from './theme';
 
 const DevToolkitScreen = lazy(() => import('./components/DevToolkitScreen'));
 const LearnCodingScreen = lazy(() => import('./components/LearnCodingScreen'));
+const StudentHubScreen = lazy(() => import('./components/StudentHubScreen'));
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -184,6 +185,11 @@ export default function App() {
     pushHistoryEntry('coding');
   }, [pushHistoryEntry]);
 
+  const handleOpenPlanner = useCallback(() => {
+    setScreen('planner');
+    pushHistoryEntry('planner');
+  }, [pushHistoryEntry]);
+
   const handleOpenExamPaper = useCallback(
     ({ sourceNote = null, sourceFolder = null }) => {
       setExamPaperTarget({
@@ -245,6 +251,7 @@ export default function App() {
       screen === 'review' ||
       screen === 'toolkit' ||
       screen === 'coding' ||
+      screen === 'planner' ||
       screen === 'trash' ||
       screen === 'settings'
     ) {
@@ -419,6 +426,27 @@ export default function App() {
         </Suspense>
       );
     }
+    if (screen === 'planner') {
+      return (
+        <Suspense
+          fallback={
+            <div className="screen" style={{ alignItems: 'center', justifyContent: 'center' }}>
+              <div className="scan-indicator">
+                <span className="spinner" /> Loading School Planner…
+              </div>
+            </div>
+          }
+        >
+          <StudentHubScreen
+            onBack={handleBackToFolders}
+            onOpenNote={handleOpenNote}
+            onOpenFolder={handleOpenFolder}
+            onOpenExamPaper={handleOpenExamPaper}
+            onChanged={bumpSidebar}
+          />
+        </Suspense>
+      );
+    }
     if (screen === 'exam' && folder) {
       return (
         <ExamSummaryScreen
@@ -461,6 +489,7 @@ export default function App() {
               onOpenExam={handleOpenExam}
               onOpenNote={handleOpenNote}
               onOpenReview={handleOpenReview}
+              onOpenPlanner={handleOpenPlanner}
               onOpenToolkit={handleOpenToolkit}
               onOpenCoding={handleOpenCoding}
               onOpenTrash={handleOpenTrash}

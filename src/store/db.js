@@ -51,6 +51,76 @@ db.version(5).stores({
   codingCache: 'key, updatedAt',
 });
 
+// v6: additive School Planner/Canvas items, Weekly Timetable, Bug Logs & Daily Activity Heatmap
+db.version(6).stores({
+  folders: '++id, name, createdAt',
+  notes: '++id, folderId, title, updatedAt, pinned, createdAt',
+  examCache: 'folderId',
+  attachments: 'id, noteId, createdAt',
+  learnerMemory: '++id, subject, topic, mastery, mistakesCount, lastPracticedAt',
+  codingCache: 'key, updatedAt',
+  plannerItems: '++id, type, dateKey, done, source, externalUid',
+  classSchedule: '++id, dayOfWeek, startTime, subject',
+  bugLogs: '++id, language, errorType, createdAt',
+  activityLog: 'dateKey',
+});
+
+export function localDateKey(d = new Date()) {
+  const yr = d.getFullYear();
+  const mo = String(d.getMonth() + 1).padStart(2, '0');
+  const dy = String(d.getDate()).padStart(2, '0');
+  return `${yr}-${mo}-${dy}`;
+}
+
+/** Log a daily study/coding/note activity tick for the GitHub-style heatmap. */
+export async function logStudyActivity(kind = 'notes', delta = 1) {
+  try {
+    const key = localDateKey();
+    const existing = (await db.activityLog.get(key)) || {
+      dateKey: key,
+      count: 0,
+      notes: 0,
+      reviews: 0,
+      coding: 0,
+      exams: 0,
+    };
+    const next = {
+      ...existing,
+      count: (existing.count || 0) + delta,
+      [kind]: (existing[kind] || 0) + delta,
+      updatedAt: Date.now(),
+    };
+    await db.activityLog.put(next);
+    return next;
+  } catch {
+    return null;
+  }
+}
+
+/** Return the last N days of activity cells (oldest -> today) for the study heatmap. */
+export async function getActivityHeatmap(days = 112) {
+  const rows = await db.activityLog.toArray().catch(() => []);
+  const byKey = new Map(rows.map(r => [r.dateKey, r]));
+  const out = [];
+  const today = new Date();
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    const key = localDateKey(d);
+    const rec = byKey.get(key);
+    out.push({
+      dateKey: key,
+      dayOfWeek: d.getDay(),
+      count: rec?.count || 0,
+      notes: rec?.notes || 0,
+      reviews: rec?.reviews || 0,
+      coding: rec?.coding || 0,
+      exams: rec?.exams || 0,
+    });
+  }
+  return out;
+}
+
 /** Check whether a note has any meaningful user content (text, images, or drawings). */
 export function noteHasContent(note) {
   if (!note) return false;

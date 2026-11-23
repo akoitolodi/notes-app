@@ -29,6 +29,7 @@ import {
   FileText,
   FileSpreadsheet,
   ArrowUpRight,
+  Headphones,
 } from 'lucide-react';
 import { scanNote } from '../api/scan';
 import { scanLine } from '../api/scanLine';
@@ -48,10 +49,13 @@ import {
   diffAndRemapBlocks,
   getHiddenLockedFolderIds,
   getZeroAiFolderIds,
+  logStudyActivity,
 } from '../store/db';
 import StrokeLayer, { renderStrokesToCanvas } from './StrokeLayer';
 import ImageStrip, { pickImage, compressImage } from './ImageManager';
 import ChatSheet from './ChatSheet';
+import AudioStudySheet from './AudioStudySheet';
+import BaiDropSheet from './BaiDropSheet';
 import { summarizeNote, ocrImage, findRelatedNotes } from '../lib/aiFeatures';
 import { instantiateTemplate } from '../lib/templates';
 import { groupNoteLines } from '../lib/codeHighlight';
@@ -135,6 +139,8 @@ export default function NoteEditor({
   const [flashcards, setFlashcards] = useState(note?.flashcards || []);
   const [quiz, setQuiz] = useState(note?.quiz || []);
   const [chatMsgs, setChatMsgs] = useState(note?.chat || []);
+  const [audioOpen, setAudioOpen] = useState(false);
+  const [baiDropOpen, setBaiDropOpen] = useState(false);
   const [images, setImages] = useState(note?.images || []);
   const [drawings, setDrawings] = useState(() => normalizeDrawings(note?.drawings));
 
@@ -413,6 +419,14 @@ export default function NoteEditor({
         setRelatedOpen(false);
         return true;
       }
+      if (audioOpen) {
+        setAudioOpen(false);
+        return true;
+      }
+      if (baiDropOpen) {
+        setBaiDropOpen(false);
+        return true;
+      }
       if (drawMode) {
         setDrawMode(false);
         return true;
@@ -420,7 +434,7 @@ export default function NoteEditor({
       return false;
     });
     return () => onRegisterBack(null);
-  }, [onRegisterBack, chatOpen, panelOpen, moreOpen, exportOpen, moveOpen, relatedOpen, drawMode]);
+  }, [onRegisterBack, chatOpen, panelOpen, moreOpen, exportOpen, moveOpen, relatedOpen, audioOpen, baiDropOpen, drawMode]);
 
   // Persist current text immediately
   const persistCurrentText = useCallback(async () => {
@@ -433,9 +447,12 @@ export default function NoteEditor({
     savedRef.current = { title, body, subject };
     setBlocks(remappedBlocks);
     setSaveState('saved');
+    if (!isZeroAi && (title.trim() || body.trim())) {
+      logStudyActivity('notes', 1).catch(() => {});
+    }
     onNoteChanged?.({ title, body, subject, blocks: remappedBlocks, images, drawings });
     return remappedBlocks;
-  }, [note.id, title, body, subject, blocks, images, drawings, onNoteChanged]);
+  }, [note.id, title, body, subject, blocks, images, drawings, isZeroAi, onNoteChanged]);
 
   const handleBackFromEdit = useCallback(async () => {
     await persistCurrentText();
@@ -1134,6 +1151,15 @@ export default function NoteEditor({
               <button
                 type="button"
                 className="navbar-btn"
+                onClick={() => setAudioOpen(true)}
+                aria-label="Listen to note (Study Commute)"
+                title="Listen to note (Read Aloud / 2-Voice Study Podcast)"
+              >
+                <Headphones size={18} />
+              </button>
+              <button
+                type="button"
+                className="navbar-btn"
                 onClick={() => setChatOpen(true)}
                 aria-label="Chat with this note"
                 title="Ask AI about this note"
@@ -1527,6 +1553,18 @@ export default function NoteEditor({
             <button type="button" className="export-btn" onClick={handleShareText}>
               <Share2 size={18} /> Share note as text
             </button>
+            {!isZeroAi && (
+              <button
+                type="button"
+                className="export-btn"
+                onClick={() => {
+                  setExportOpen(false);
+                  setBaiDropOpen(true);
+                }}
+              >
+                <FileDown size={18} /> BaiDrop Offline Share (.bai / Code)
+              </button>
+            )}
             <button type="button" className="export-btn" onClick={handleCopyText}>
               <ClipboardCopy size={18} /> Copy note text
             </button>
@@ -1652,6 +1690,26 @@ export default function NoteEditor({
             setChatMsgs(msgs);
             await updateNote(note.id, { chat: msgs });
           }}
+        />
+      )}
+
+      {!isZeroAi && (
+        <AudioStudySheet
+          open={audioOpen}
+          onClose={() => setAudioOpen(false)}
+          mode="note"
+          title={title}
+          body={body}
+          subject={subject}
+        />
+      )}
+
+      {!isZeroAi && (
+        <BaiDropSheet
+          open={baiDropOpen}
+          onClose={() => setBaiDropOpen(false)}
+          note={{ ...note, title, body, subject, flashcards, quiz }}
+          folderName={folderLabel || subject || 'Shared'}
         />
       )}
 

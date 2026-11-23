@@ -2,10 +2,18 @@
  * Appearance settings — theme (auto/light/dark), accent color with WCAG-safe
  * foreground & ink colors, font size, and live <meta name="theme-color"> sync.
  */
-export const THEME_KEY = 'aicn:theme';   // 'auto' | 'light' | 'dark'
+export const THEME_KEY = 'aicn:theme';   // 'auto' | 'light' | 'dark' | 'oled'
 export const ACCENT_KEY = 'aicn:accent'; // key into ACCENTS
 export const SIZE_KEY = 'aicn:size';     // 'small' | 'medium' | 'large'
+export const PAPER_KEY = 'aicn:paper';   // 'blank' | 'ruled' | 'dot' | 'grid'
 export const HINT_KEY = 'aicn:showHint'; // boolean string
+
+export const PAPER_STYLES = [
+  ['blank', 'Blank'],
+  ['ruled', 'Ruled'],
+  ['dot', 'Dot Grid'],
+  ['grid', 'Graph'],
+];
 
 export const ACCENTS = {
   yellow: {
@@ -56,16 +64,17 @@ export function getSettings() {
       theme: localStorage.getItem(THEME_KEY) || 'auto',
       accent: localStorage.getItem(ACCENT_KEY) || 'yellow',
       size: localStorage.getItem(SIZE_KEY) || 'medium',
+      paper: localStorage.getItem(PAPER_KEY) || 'blank',
     };
   } catch {
-    return { theme: 'auto', accent: 'yellow', size: 'medium' };
+    return { theme: 'auto', accent: 'yellow', size: 'medium', paper: 'blank' };
   }
 }
 
 export function isDarkTheme() {
   if (typeof document === 'undefined') return false;
   const { theme } = getSettings();
-  if (theme === 'dark') return true;
+  if (theme === 'dark' || theme === 'oled') return true;
   if (theme === 'light') return false;
   return Boolean(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
 }
@@ -85,10 +94,21 @@ let mediaListenerAttached = false;
 export function applySettings() {
   if (typeof document === 'undefined') return;
   const root = document.documentElement;
-  const { theme, accent, size } = getSettings();
+  const { theme, accent, size, paper } = getSettings();
 
-  if (theme === 'auto') root.removeAttribute('data-theme');
-  else root.dataset.theme = theme;
+  if (theme === 'auto') {
+    root.removeAttribute('data-theme');
+    root.removeAttribute('data-oled');
+  } else if (theme === 'oled') {
+    root.dataset.theme = 'dark';
+    root.dataset.oled = 'true';
+  } else {
+    root.dataset.theme = theme;
+    root.removeAttribute('data-oled');
+  }
+
+  if (paper && paper !== 'blank') root.dataset.paper = paper;
+  else root.removeAttribute('data-paper');
 
   const dark = isDarkTheme();
   const a = ACCENTS[accent] || ACCENTS.yellow;

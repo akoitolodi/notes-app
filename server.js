@@ -9,7 +9,7 @@
  */
 import express from 'express';
 import cors from 'cors';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { scanNote, chat, chatStream, validateChatMessages, getAiConfigStatus } from './lib/ai.js';
@@ -251,6 +251,108 @@ app.post('/api/grammar', async (req, res) => {
     return res.json({ score: scoreData });
   } catch (err) {
     return res.status(500).json({ error: err.message || 'Grammarly relay failed' });
+  }
+});
+
+// Canvas LMS (.ics Calendar Feed, RSS Announcements, or optional API) local CORS relay for Web/Desktop
+app.post('/api/canvas-proxy', async (req, res) => {
+  try {
+    const { url, token } = req.body || {};
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({ error: 'Missing Canvas URL' });
+    }
+    let parsed;
+    try {
+      parsed = new URL(url.trim());
+    } catch {
+      return res.status(400).json({ error: 'Invalid Canvas URL' });
+    }
+    if (parsed.protocol !== 'https:') {
+      return res.status(400).json({ error: 'Canvas URL must use https://' });
+    }
+    // Block loopback/private IPs to prevent SSRF
+    if (/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|0\.0\.0\.0|\[::1\])/i.test(parsed.hostname)) {
+      return res.status(403).json({ error: 'Private network hosts are not allowed in Canvas proxy' });
+    }
+    const headers = {
+      Accept: 'text/calendar, application/rss+xml, application/atom+xml, application/json, text/plain, */*',
+      'User-Agent': 'Notes-by-Bai/1.7',
+    };
+    if (token && typeof token === 'string' && token.trim()) {
+      headers.Authorization = `Bearer ${token.trim()}`;
+    }
+    const upstream = await fetch(parsed.toString(), { method: 'GET', headers });
+    const text = await upstream.text();
+    if (!upstream.ok) {
+      return res.status(upstream.status).json({
+        error: `Canvas returned HTTP ${upstream.status}: ${text.slice(0, 140)}`,
+      });
+    }
+    return res.json({
+      status: upstream.status,
+      contentType: upstream.headers.get('content-type') || 'text/plain',
+      body: text,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Canvas proxy failed' });
+  }
+});
+
+// Zero-Cloud Local Wi-Fi PC <-> Phone Sync Hub (never stores Hidden Vault or Passwords & Keys)
+const LAN_SYNC_FILE = join(__dirname, '.baidrop-lan-sync.json');
+function readLanBundle() {
+  try {
+    if (existsSync(LAN_SYNC_FILE)) {
+      return JSON.parse(readFileSync(LAN_SYNC_FILE, 'utf8'));
+    }
+  } catch {
+    // ignore corrupt cache
+  }
+  return { updatedAt: 0, folders: [], notes: [], plannerItems: [], classSchedule: [] };
+}
+
+app.get('/api/lan-sync', (_req, res) => {
+  return res.json(readLanBundle());
+});
+
+app.post('/api/lan-sync', (req, res) => {
+  try {
+    const incoming = req.body || {};
+    const existing = readLanBundle();
+
+    const mergeByKey = (baseArr = [], incArr = [], keyFn) => {
+      const map = new Map();
+      for (const item of baseArr) {
+        if (!item) continue;
+        map.set(keyFn(item), item);
+      }
+      for (const item of incArr) {
+        if (!item) continue;
+        const k = keyFn(item);
+        const prev = map.get(k);
+        if (!prev || (item.updatedAt || 0) >= (prev.updatedAt || 0)) {
+          map.set(k, item);
+        }
+      }
+      return [...map.values()];
+    };
+
+    // Defensive filter: never accept locked / vault folders or notes on LAN sync!
+    const safeFolders = (incoming.folders || []).filter(f => f && !f.locked && !f.isSystemVault && f.mode !== 'vault');
+    const safeNotes = (incoming.notes || []).filter(n => n && n.mode !== 'vault');
+
+    const merged = {
+      updatedAt: Date.now(),
+      folders: mergeByKey(existing.folders, safeFolders, f => String(f.name || f.id).toLowerCase()),
+      notes: mergeByKey(existing.notes, safeNotes, n => `${n.folderName || 'General'}::${n.title || ''}::${n.createdAt || 0}`),
+      plannerItems: mergeByKey(existing.plannerItems, incoming.plannerItems || [], p => p.externalUid || `${p.dateKey}::${p.title}`),
+      classSchedule: mergeByKey(existing.classSchedule, incoming.classSchedule || [], c => `${c.dayOfWeek}::${c.startTime}::${c.subject}`),
+    };
+
+    writeFileSync(LAN_SYNC_FILE, JSON.stringify(merged), 'utf8');
+    return res.json(merged);
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'LAN sync failed' });
   }
 });
 

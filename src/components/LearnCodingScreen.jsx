@@ -27,6 +27,7 @@ import {
   Terminal,
   Globe,
   Eye,
+  BarChart3,
 } from 'lucide-react';
 import {
   CODING_LANGUAGES,
@@ -47,7 +48,8 @@ import {
 } from '../lib/codeRunner';
 import { getLearnerContextDigest, recordLearningSignal } from '../lib/learnerMemory';
 import { aiTextStream } from '../lib/aiCore';
-import { db, createFolder, createNote } from '../store/db';
+import { db, createFolder, createNote, logStudyActivity } from '../store/db';
+import AlgoVisualizer from './AlgoVisualizer';
 import MarkdownContent from './ui/MarkdownContent';
 import { useDialog } from './ui/DialogProvider';
 
@@ -56,8 +58,9 @@ const CATEGORIES = ['All', 'General', 'Web', 'Systems', 'Data & Shell'];
 export default function LearnCodingScreen({ onBack, onOpenNote }) {
   const { toast } = useDialog();
   const [selectedLangId, setSelectedLangId] = useState(null); // null -> Language catalog grid
+  const [standaloneVisual, setStandaloneVisual] = useState(false);
   const [category, setCategory] = useState('All');
-  const [tab, setTab] = useState('lessons'); // 'lessons' | 'playground' | 'practice' | 'docs'
+  const [tab, setTab] = useState('lessons'); // 'lessons' | 'playground' | 'practice' | 'docs' | 'visual'
   const [progress, setProgress] = useState(() => getCodingProgress());
 
   // Online Lessons state
@@ -171,6 +174,7 @@ export default function LearnCodingScreen({ onBack, onOpenNote }) {
     try {
       const res = await executeCode({ langId: lang.id, code: sourceCode, allowAiFallback: true });
       setRunResult(res);
+      logStudyActivity('coding', 1).catch(() => {});
     } catch (err) {
       setRunResult({ ok: false, stdout: '', stderr: err.message, durationMs: 0, engine: 'Runner' });
     } finally {
@@ -306,6 +310,28 @@ export default function LearnCodingScreen({ onBack, onOpenNote }) {
     }
   };
 
+  if (standaloneVisual) {
+    return (
+      <div className="screen list-pad-bottom">
+        <header className="navbar">
+          <button
+            type="button"
+            className="navbar-btn navbar-back"
+            onClick={() => setStandaloneVisual(false)}
+          >
+            <ChevronLeft size={20} /> Languages
+          </button>
+          <span className="navbar-title">Algorithm Visualizer</span>
+          <span style={{ width: 64 }} />
+        </header>
+        <div className="large-title">Algorithm Visualizer</div>
+        <div className="coding-panel">
+          <AlgoVisualizer />
+        </div>
+      </div>
+    );
+  }
+
   // ---------- Language Catalog Home ----------
   if (!selectedLangId) {
     const visibleLangs =
@@ -333,6 +359,29 @@ export default function LearnCodingScreen({ onBack, onOpenNote }) {
           }}
         >
           Live open-source lessons, Exercism practice challenges &amp; real multi-language code execution right inside <strong>Notes by Bai</strong>. Opened lessons cache locally for offline review.
+        </div>
+
+        {/* 1-Tap Offline Algorithm & Data Structure Visualizer Banner */}
+        <div className="list-group" style={{ marginBottom: 12 }}>
+          <button
+            type="button"
+            className="list-item"
+            onClick={() => setStandaloneVisual(true)}
+          >
+            <span className="list-item-icon">
+              <BarChart3 size={17} />
+            </span>
+            <div className="list-item-body">
+              <div className="list-item-title">
+                <span>Algorithm &amp; DS Visualizer</span>
+                <span className="mode-badge mode-study">Offline</span>
+              </div>
+              <div className="list-item-subtitle">
+                Animated Sorting, Binary Search, BFS/DFS/Dijkstra &amp; Call Stack
+              </div>
+            </div>
+            <ChevronLeft size={16} style={{ transform: 'rotate(180deg)', opacity: 0.45 }} />
+          </button>
         </div>
 
         <div className="coding-cat-row">
@@ -410,6 +459,7 @@ export default function LearnCodingScreen({ onBack, onOpenNote }) {
           ['playground', 'Playground', Terminal],
           ['practice', 'Practice', Trophy],
           ['docs', 'Docs', Globe],
+          ['visual', 'Visual', BarChart3],
         ].map(([id, label, Icon]) => (
           <button
             key={id}
@@ -906,6 +956,13 @@ export default function LearnCodingScreen({ onBack, onOpenNote }) {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* TAB 5: OFFLINE ALGORITHM & DATA STRUCTURE VISUALIZER */}
+      {tab === 'visual' && (
+        <div className="coding-panel">
+          <AlgoVisualizer />
         </div>
       )}
     </div>

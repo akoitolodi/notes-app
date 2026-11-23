@@ -33,6 +33,7 @@ import {
 } from '../lib/aiFeatures';
 import { db, updateNote } from '../store/db';
 import { FlashcardDeck, QuizSection } from './study/StudyWidgets';
+import FeynmanCoachTab from './study/FeynmanCoachTab';
 import MarkdownContent from './ui/MarkdownContent';
 import { useDialog } from './ui/DialogProvider';
 
@@ -621,6 +622,7 @@ export default function StudyScreen({ note, onBack, onOpenExamPaper = null }) {
           ['cards', `Cards (${flashcards.length})`],
           ['quiz', `Quiz (${quiz.length})`],
           ['blanks', `Blanks${cloze.length ? ` (${cloze.length})` : ''}`],
+          ['teach', 'Teach AI'],
           ['think', 'Think'],
         ].map(([t, label]) => (
           <button
@@ -696,6 +698,8 @@ export default function StudyScreen({ note, onBack, onOpenExamPaper = null }) {
             )}
           </div>
         )}
+
+        {tab === 'teach' && <FeynmanCoachTab note={note} />}
 
         {tab === 'think' && (
           <div>

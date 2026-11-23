@@ -18,11 +18,15 @@ import {
   Wrench,
   SpellCheck,
   RotateCw,
+  Wifi,
+  Share2,
 } from 'lucide-react';
 import {
   THEME_KEY,
   ACCENT_KEY,
   SIZE_KEY,
+  PAPER_KEY,
+  PAPER_STYLES,
   HINT_KEY,
   ACCENTS,
   getSettings,
@@ -70,6 +74,11 @@ import {
 import { createAbortController, testTermuxConnection } from '../lib/aiCore';
 import { getRawApiBaseOverride, setApiBase } from '../config';
 import { exportBackup, importBackup } from '../store/db';
+import {
+  getSavedLanSyncUrl,
+  importNoteBaiBundle,
+  runLanWifiSync,
+} from '../lib/baiDrop';
 import { testDeepTutorBridge } from '../lib/learnerMemory';
 import { hasVaultPin, lockVault } from '../lib/vault';
 import PinLockSheet from './PinLockSheet';
@@ -163,6 +172,7 @@ export default function SettingsScreen({ onBack, onDataImported }) {
   const [theme, setTheme] = useState(initial.theme);
   const [accent, setAccent] = useState(initial.accent);
   const [size, setSize] = useState(initial.size);
+  const [paper, setPaper] = useState(initial.paper || 'blank');
   const [explainStyle, setStyleState] = useState(() => getExplainStyle());
   const [showHint, setShowHint] = useState(() => {
     try {
@@ -199,8 +209,12 @@ export default function SettingsScreen({ onBack, onDataImported }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [testing, setTesting] = useState(false);
   const [backupBusy, setBackupBusy] = useState(false);
+  const [baiCode, setBaiCode] = useState('');
+  const [lanUrl, setLanUrl] = useState(() => getSavedLanSyncUrl() || 'http://192.168.1.5:3000');
+  const [lanSyncing, setLanSyncing] = useState(false);
 
   const importInputRef = useRef(null);
+  const baiFileInputRef = useRef(null);
 
   const setPref = (lsKey, value, setter) => {
     setter(value);
@@ -460,9 +474,17 @@ export default function SettingsScreen({ onBack, onDataImported }) {
             ['auto', 'Auto'],
             ['light', 'Light'],
             ['dark', 'Dark'],
+            ['oled', 'OLED'],
           ]}
           value={theme}
           onChange={v => setPref(THEME_KEY, v, setTheme)}
+        />
+
+        <div className="settings-label mt-16">Note paper style</div>
+        <Segmented
+          options={PAPER_STYLES}
+          value={paper}
+          onChange={v => setPref(PAPER_KEY, v, setPaper)}
         />
 
         <div className="settings-label mt-16">Accent color</div>
@@ -1048,6 +1070,113 @@ export default function SettingsScreen({ onBack, onDataImported }) {
         )}
       </div>
 
+      {/* BaiDrop Offline Import & Local Wi-Fi PC <-> Phone Sync */}
+      <div className="list-group settings-group">
+        <div className="settings-label flex items-center gap-6">
+          <Share2 size={14} /> BaiDrop Import &amp; Local Wi-Fi Sync
+        </div>
+        <div className="settings-tip">
+          Import a classmate&apos;s portable <code>.bai.json</code> note or paste a <code>BAIDROP1:</code> share code
+          completely offline — or sync unlocked notes over your home/campus Wi-Fi with zero cloud accounts.
+        </div>
+
+        <div className="flex gap-8 mt-10">
+          <input
+            className="ai-input"
+            style={{ marginTop: 0, flex: 1 }}
+            placeholder="Paste BAIDROP1:... share code"
+            value={baiCode}
+            onChange={e => setBaiCode(e.target.value)}
+          />
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            disabled={!baiCode.trim()}
+            onClick={async () => {
+              try {
+                const res = await importNoteBaiBundle(baiCode);
+                setBaiCode('');
+                toast(`Imported "${res.note.title}" into ${res.folder.name}!`, { type: 'success' });
+                onDataImported?.();
+              } catch (err) {
+                toast(`BaiDrop import failed: ${err.message}`, { type: 'error' });
+              }
+            }}
+          >
+            Import Code
+          </button>
+        </div>
+
+        <div className="flex gap-8 mt-8">
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => baiFileInputRef.current?.click()}
+          >
+            <Upload size={14} /> Import .bai.json File
+          </button>
+          <input
+            ref={baiFileInputRef}
+            type="file"
+            accept=".bai.json,.json,application/json"
+            style={{ display: 'none' }}
+            onChange={async e => {
+              const file = e.target.files?.[0];
+              e.target.value = '';
+              if (!file) return;
+              try {
+                const txt = await file.text();
+                const res = await importNoteBaiBundle(txt);
+                toast(`Imported "${res.note.title}" into ${res.folder.name}!`, { type: 'success' });
+                onDataImported?.();
+              } catch (err) {
+                toast(`BaiDrop file failed: ${err.message}`, { type: 'error' });
+              }
+            }}
+          />
+        </div>
+
+        <div className="settings-label mt-16 flex items-center gap-6">
+          <Wifi size={14} /> 1-Tap Local Wi-Fi Sync (PC ↔ Phone)
+        </div>
+        <div className="settings-tip">
+          Run <code>node server.js</code> on your PC on the same Wi-Fi, enter its LAN address below, and tap Sync.
+          Hidden Vault &amp; <strong>Passwords &amp; Keys</strong> are strictly excluded and never leave your device.
+        </div>
+        <div className="flex gap-8 mt-8">
+          <input
+            className="ai-input"
+            style={{ marginTop: 0, flex: 1 }}
+            placeholder="http://192.168.1.5:3000"
+            value={lanUrl}
+            onChange={e => setLanUrl(e.target.value)}
+            spellCheck="false"
+          />
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            disabled={lanSyncing}
+            onClick={async () => {
+              setLanSyncing(true);
+              try {
+                const res = await runLanWifiSync(lanUrl);
+                toast(
+                  `Wi-Fi synced! Pushed ${res.pushedNotes} notes, merged ${res.mergedNotes} notes & ${res.mergedPlanner} planner items.`,
+                  { type: 'success', duration: 4000 }
+                );
+                onDataImported?.();
+              } catch (err) {
+                toast(`Wi-Fi Sync failed: ${err.message}`, { type: 'error', duration: 4000 });
+              } finally {
+                setLanSyncing(false);
+              }
+            }}
+          >
+            <Wifi size={14} /> {lanSyncing ? 'Syncing…' : 'Sync Wi-Fi'}
+          </button>
+        </div>
+      </div>
+
       {/* Data Backup & Restore */}
       <div className="list-group settings-group">
         <div className="settings-label">Backup & Restore</div>
@@ -1091,7 +1220,7 @@ export default function SettingsScreen({ onBack, onDataImported }) {
           • Press <strong>Ctrl+S</strong> to save immediately or <strong>Ctrl+Shift+S</strong> to save & explain.
         </div>
         <div className="settings-tip" style={{ marginTop: 10, opacity: 0.7 }}>
-          Notes by Bai v1.6.1
+          Notes by Bai v1.7.0
         </div>
       </div>
 

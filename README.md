@@ -1,16 +1,17 @@
-# Notes by Bai (v1.6.1)
+# Notes by Bai (v1.7.0)
 
-An offline-first Android, desktop & web notes app styled like iOS Notes — universal enough for class study, personal journaling, curiosity deep-dives, and coding — enhanced with a fast AI layer, answerable & printable bond-paper exams, PDF/PPTX importing, SM-2 spaced repetition, voice dictation, and an optional offline Dev & IT Toolkit.
+An offline-first Android, desktop & web notes app styled like iOS Notes — built for class study, Canvas LMS & school planning, personal journaling, curiosity deep-dives, and coding — enhanced with a fast AI layer, Study Commute audio, answerable & printable bond-paper exams, Learn Coding Studio + Algorithm Visualizer, 2D Math Grapher, SM-2 spaced repetition, and Zero-Cloud BaiDrop sync.
 
 ## Features
 
-- **Multi-Life Modes & PIN-Locked Private Vault**: Switch folders or notes between **Study**, **Journal** (calm reflection, zero quizzes/mistake flags), **Explore** (curiosity & myth-checking), and **Code**, plus a salted SHA-256 PIN lock hiding private folders from Search, All Notes & Daily Review.
-- **Passwordless AI Provider Lock**: Auto-locks your verified AI provider & key (with `Connected in X.Xs` latency check) and unlocks via a tactile 1.5s Press-and-Hold — no extra password needed.
-- **Answerable & Printable Bond-Paper Exam Builder**: Convert any note or folder into an authentic `8.5" × 11"` exam paper combining any mix & count of 8 test types (MC, True/False, Identification, Matching, Enumeration, Problem Solving/Code, Scenario, Essay) — answerable right on screen with instant offline auto-grading + exportable to PDF/Print with a separate Answer Key page.
-- **Universal Rich Writing & Second-Brain Links**: Syntax-highlighted fenced code blocks (with 1-tap Copy & live-streaming Trace/Debug), Markdown tables, `[[Wiki-Links]]` with autocomplete & cross-folder backlinks, KaTeX math (`$E = mc^2$`), and pluggable Grammar & AI Writing Polish (free zero-key LanguageTool, optional Grammarly EDU Writing Score / Sapling keys, and 1-tap AI Polish).
-- **Optional Dev & IT Toolkit Add-on**: Clean, separate, toggleable offline toolkit (IPv4/CIDR Subnet Calculator, Base/Bitwise Converter, JSON/Base64/URL/JWT Inspector, Live Regex Tester, IT Cheat Sheets & Tech templates).
-- **Fast Free-Tier Resilient AI**: TTFT stall watchdog with automatic backup-provider failover, live reasoning progress indicator, single-pass 35-line scanning, Cross-Note Local RAG, Deep Think (Solve → Verify), zero-key Research (Wikipedia + OpenAlex), and Socratic coaching.
-- **Offline-First Core**: Dexie v4 IndexedDB storage, PDF/PPTX offline importer, SM-2 Daily Review & streaks, Voice-to-Notes dictation, OCR & photo explanations, Annotations, JSON Backup/Restore, custom adaptive Android icon, and Day/Night splashes.
+- **School Planner & Canvas LMS Hub**: Interactive Month Calendar, Exam Countdown, Canvas Calendar Feed (`.ics`) sync (works even when school admins block Access Tokens), Quick-Paste Announcement date detector, Weekly Class Timetable, PH GWA / US GPA Target Final Calculator, and 16-Week Study Activity Heatmap.
+- **Study Commute Audio & Reverse Feynman**: Offline Read Aloud + 2-Voice AI Study Podcast on notes, Hands-Free Audio Flashcards in Daily Review, and **Teach the AI** Reverse Feynman roleplay integrated with DeepTutor Persistent Learner Memory.
+- **Learn Coding Studio & Algorithm Visualizer**: 18 languages via live open-source lessons, Exercism challenges, live multi-language code runner, and 100% offline Sorting / Binary Search / BFS-DFS-Dijkstra / Recursion Call-Stack visualizations.
+- **Multi-Life Modes & Hidden PIN Vault**: Switch folders or notes between **Study**, **Journal**, **Explore**, and **Code**, plus a salted SHA-256 Hidden Vault with a permanent Zero-AI `Passwords & Keys` folder.
+- **Answerable & Printable Bond-Paper Exam Builder**: Convert any note or folder into an authentic `8.5" × 11"` exam paper combining any mix & count of 8 test types — answerable right on screen with offline auto-grading + PDF/Print export with a separate Answer Key page.
+- **Dev & IT Toolkit + Offline 2D Math Grapher + Bug Log**: Offline 2D Function Grapher (with 1-tap Save Graph to Note), "Bugs I Solved" Stack-Trace Debugger, IPv4/CIDR Subnet Calculator, Base/Bitwise Converter, JSON/Base64/URL/JWT Inspector, Live Regex Tester, and IT Cheat Sheets.
+- **Zero-Cloud BaiDrop Share & Local Wi-Fi Sync**: Share single notes (with flashcards & quizzes) offline via `.bai.json` or `BAIDROP1:` codes, or run 1-tap PC↔Phone Wi-Fi sync (strictly excluding Hidden Vault & `Passwords & Keys`).
+- **Offline-First Core & Themes**: Dexie v6 IndexedDB storage, OLED True-Black theme, Blank/Ruled/Dot/Graph paper textures, PDF/PPTX offline importer, SM-2 Daily Review, Voice-to-Notes dictation, OCR & photo explanations, Annotations, and JSON Backup/Restore.
 
 ## Quick Start
 

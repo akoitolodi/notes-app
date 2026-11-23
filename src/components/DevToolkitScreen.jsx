@@ -12,7 +12,11 @@ import {
   Braces,
   Regex,
   BookOpen,
+  LineChart,
+  Bug,
 } from 'lucide-react';
+import MathGrapherTab from './toolkit/MathGrapherTab';
+import BugLogTab from './toolkit/BugLogTab';
 import {
   calculateSubnet,
   convertNumberBase,
@@ -110,21 +114,26 @@ export default function DevToolkitScreen({ onBack, onOpenNote }) {
 
       <div className="large-title">IT Toolkit</div>
 
-      <div className="view-switcher">
+      <div className="hub-tabs" role="tablist">
         {[
+          ['grapher', 'Grapher', LineChart],
+          ['bugs', 'Bug Log', Bug],
           ['subnet', 'Subnet', Network],
           ['base', 'Bases', Binary],
           ['json', 'JSON/JWT', Braces],
           ['regex', 'Regex', Regex],
           ['sheets', 'Sheets', BookOpen],
-        ].map(([id, label]) => (
+        ].map(([id, label, Icon]) => (
           <button
             key={id}
             type="button"
-            className={`view-switch-btn${tab === id ? ' active' : ''}`}
+            role="tab"
+            aria-selected={tab === id}
+            className={`hub-tab-btn${tab === id ? ' active' : ''}`}
             onClick={() => setTab(id)}
           >
-            {label}
+            <Icon size={13} />
+            <span>{label}</span>
           </button>
         ))}
       </div>
@@ -539,6 +548,12 @@ export default function DevToolkitScreen({ onBack, onOpenNote }) {
             <MarkdownContent text={activeSheet.markdown} />
           </div>
         )}
+
+        {/* 6. Offline 2D Math Function Grapher */}
+        {tab === 'grapher' && <MathGrapherTab onOpenNote={onOpenNote} />}
+
+        {/* 7. Bugs I Solved — Stack-Trace Debugger */}
+        {tab === 'bugs' && <BugLogTab />}
       </div>
     </div>
   );

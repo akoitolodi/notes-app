@@ -16,8 +16,10 @@ import {
   Clock,
   Brain,
   Trash2,
+  Headphones,
 } from 'lucide-react';
-import { db, getDueFlashcards, saveCardReviewResult } from '../store/db';
+import { db, getDueFlashcards, saveCardReviewResult, logStudyActivity } from '../store/db';
+import AudioStudySheet from './AudioStudySheet';
 import {
   recordLearningSignal,
   getLearnerMemory,
@@ -61,6 +63,7 @@ export default function ReviewDashboardScreen({ onBack, onOpenNote, onChanged })
   const [sessionReviewed, setSessionReviewed] = useState(0);
   const [stats, setStats] = useState(() => getReviewStats());
   const [memoryRows, setMemoryRows] = useState([]);
+  const [audioCardsOpen, setAudioCardsOpen] = useState(false);
 
   const loadDeck = useCallback(async () => {
     setLoading(true);
@@ -86,6 +89,7 @@ export default function ReviewDashboardScreen({ onBack, onOpenNote, onChanged })
     const nextState = scheduleCard(currentItem.state, rating, now);
 
     await saveCardReviewResult(currentItem.noteId, currentItem.cardIndex, nextState);
+    logStudyActivity('reviews', 1).catch(() => {});
     recordLearningSignal({
       subject: currentItem.folderName || currentItem.subject || 'General',
       topic: currentItem.card?.q || currentItem.noteTitle || 'Flashcard',
@@ -159,7 +163,19 @@ export default function ReviewDashboardScreen({ onBack, onOpenNote, onChanged })
         </span>
       </header>
 
-      <div className="large-title">Spaced Repetition</div>
+      <div className="large-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: 16 }}>
+        <span>Spaced Repetition</span>
+        {summary.allCards.length > 0 && (
+          <button
+            type="button"
+            className="row-action-chip"
+            onClick={() => setAudioCardsOpen(true)}
+            title="Hands-free audio flashcard commute mode"
+          >
+            <Headphones size={13} /> Audio Cards
+          </button>
+        )}
+      </div>
 
       {/* Compact Stats Bar */}
       <div className="review-stats-grid">
@@ -394,6 +410,13 @@ export default function ReviewDashboardScreen({ onBack, onOpenNote, onChanged })
           )}
         </div>
       </div>
+
+      <AudioStudySheet
+        open={audioCardsOpen}
+        onClose={() => setAudioCardsOpen(false)}
+        mode="cards"
+        cards={queue.length > 0 ? queue : summary.allCards}
+      />
     </div>
   );
 }
