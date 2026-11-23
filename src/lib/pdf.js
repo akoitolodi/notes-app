@@ -80,7 +80,7 @@ export async function buildNotePDF({ title, body, blocks = [], images = [], draw
     const dim = await imageDims(img.dataUrl);
     if (!dim) continue;
     const w = CONTENT_W;
-    const h = Math.min(contentW * dim.h / dim.w, H - M * 2);
+    const h = Math.min(w * dim.h / dim.w, H - M * 2);
     newPageIfNeeded(h + 12);
     try { doc.addImage(img.dataUrl, 'JPEG', M, y, w, h); } catch { /* skip broken image */ }
     y += h + 14;

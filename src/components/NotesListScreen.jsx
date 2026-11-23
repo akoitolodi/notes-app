@@ -98,7 +98,7 @@ function NoteRow({ note, onOpen, onPin, onDelete, onLongPress, onTagTap }) {
         <div className="flex-1" style={{ minWidth: 0 }}>
           <div className="list-item-title" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 6 }}>
             {note.pinned ? '📌 ' : ''}{note.title || 'New Note'}
-            {(note.images?.length || note.drawings?.strokes?.length) && (
+            {(note.images?.length > 0 || note.drawings?.strokes?.length > 0) && (
               <span style={{ fontSize: 13, color: 'var(--accent)' }}>📎</span>
             )}
           </div>
@@ -268,7 +268,7 @@ export default function NotesListScreen({ folder, onOpenNote, onBack }) {
             </button>
             <button
               className="export-btn"
-              style={{ color: '#ff453a' }}
+              style={{ color: 'var(--bad)' }}
               onClick={async () => {
                 const n = actionNote;
                 setActionNote(null);

@@ -5,7 +5,7 @@
  */
 import { useState, useRef, useEffect, useCallback } from 'react';
 
-const SNAP_POINTS = [0.25, 0.6, 0.95]; // fractions of viewport height
+const SNAP_POINTS = [0.45, 0.7, 0.95]; // fractions of viewport height
 const CLOSE_THRESHOLD = 0.06; // fraction of vh dragged down from peek that closes the panel
 
 export default function SlideUpPanel({

@@ -29,7 +29,7 @@ function Flashcard({ card }) {
   );
 }
 
-function QuizItem({ item, index }) {
+function QuizItem({ item, index, onPick }) {
   const [picked, setPicked] = useState(null);
   const correct = picked != null && picked === item.answer;
 
@@ -41,13 +41,13 @@ function QuizItem({ item, index }) {
           let bg = 'var(--bg-elevated)';
           let color = 'var(--text)';
           if (picked != null) {
-            if (i === item.answer) { bg = 'rgba(52,199,89,0.2)'; color = '#34c759'; }
-            else if (i === picked) { bg = 'rgba(255,69,58,0.2)'; color = '#ff453a'; }
+            if (i === item.answer) { bg = 'rgba(52,199,89,0.2)'; color = 'var(--ok)'; }
+            else if (i === picked) { bg = 'rgba(255,69,58,0.2)'; color = 'var(--bad)'; }
           }
           return (
             <button
               key={i}
-              onClick={() => picked == null && setPicked(i)}
+              onClick={() => { if (picked == null) { setPicked(i); onPick?.(index, i); } }}
               style={{
                 textAlign: 'left', padding: '10px 14px', borderRadius: 10,
                 border: '1px solid var(--divider)', background: bg, color,
@@ -60,7 +60,7 @@ function QuizItem({ item, index }) {
         })}
       </div>
       {picked != null && (
-        <div style={{ marginTop: 10, fontSize: 13, fontWeight: 500, color: correct ? '#34c759' : '#ff453a' }}>
+        <div style={{ marginTop: 10, fontSize: 13, fontWeight: 500, color: correct ? 'var(--ok)' : 'var(--bad)' }}>
           {correct ? '✓ Correct' : '✗ Not quite'}
         </div>
       )}
@@ -72,7 +72,12 @@ function ClozeItem({ item, index, onToggle }) {
   const [show, setShow] = useState(false);
   return (
     <div className="explanation-card">
-      <div style={{ fontSize: 15, fontWeight: 500, marginBottom: 12 }}>{index + 1}. {item.text.replace('____', <span style={{ background: 'var(--accent)', color: 'var(--accent-text)', padding: '2px 6px', borderRadius: 4, fontWeight: 700 }}>____</span>)}</div>
+      <div style={{ fontSize: 15, fontWeight: 500, marginBottom: 12 }}>{index + 1}. {String(item.text || '').split('____').map((part, k, arr) => (
+        <span key={k}>
+          {part}
+          {k < arr.length - 1 && <span style={{ background: 'var(--accent)', color: 'var(--accent-text)', padding: '2px 6px', borderRadius: 4, fontWeight: 700 }}>____</span>}
+        </span>
+      ))}</div>
       <button
         className="btn btn-secondary"
         style={{ width: '100%', marginTop: 8 }}
@@ -95,7 +100,7 @@ function MnemonicsSection({ mnemonics, busy, onGenerate }) {
   return (
     <div>
       <div className="explanation-card" style={{ marginBottom: 12 }}>
-        {mnemonics.map((m, i) => (
+        {(mnemonics || []).map((m, i) => (
           <div key={i} style={{ marginBottom: 12 }}>
             <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{m.term}</div>
             <div style={{ fontSize: 13, color: 'var(--accent)', fontStyle: 'italic' }}>{m.hook}</div>
@@ -119,7 +124,7 @@ function PracticeGrader({ note, onGrade }) {
     setBusy(true);
     setResult(null);
     try {
-      const res = await import('../lib/aiFeatures').then(m => m.gradeAnswer({ note: note.body, question, answer, style: 'exam-prep' }));
+      const res = await import('../lib/aiFeatures').then(m => m.gradeAnswer({ note: note.body, question, userAnswer: answer, style: 'exam-prep' }));
       setResult(res);
     } catch (err) {
       alert(err.message);
@@ -149,7 +154,7 @@ function PracticeGrader({ note, onGrade }) {
         <button className="btn btn-primary" onClick={handleGrade} disabled={busy || !question.trim() || !answer.trim()} style={{ width: '100%' }}>
           {busy ? 'Grading…' : '📝 Grade my answer'}
         </button>
-        {false && (
+        {result && (
           <div className="explanation-mistake" style={{ marginTop: 12 }}>
             <svg className="mistake-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="10" />
@@ -175,10 +180,12 @@ export default function StudyScreen({ note, onBack }) {
 
   const [cloze, setCloze] = useState([]);
   const [clozeBusy, setClozeBusy] = useState(false);
-  const [mnemonics, setMnemonics] = useState([]);
+  const [mnemonics, setMnemonics] = useState(null);
   const [mnBusy, setMnBusy] = useState(false);
   const [graderResult, setGraderResult] = useState(null);
   const [weakness, setWeakness] = useState(null);
+  const [quizAnswers, setQuizAnswers] = useState({});
+  const answeredCount = Object.keys(quizAnswers).length;
   const [weakBusy, setWeakBusy] = useState(false);
 
   const handleCloze = useCallback(async () => {
@@ -199,11 +206,11 @@ export default function StudyScreen({ note, onBack }) {
     if (!note.quiz || !note.quiz.length) return;
     setWeakBusy(true);
     try {
-      const w = await import('../lib/aiFeatures').then(m => m.analyzeWeakness({ note: note.body, quiz: note.quiz, answers: {}, style: 'exam-prep' }));
+      const w = await import('../lib/aiFeatures').then(m => m.analyzeWeakness({ note: note.body, quiz: note.quiz, answers: quizAnswers, style: 'exam-prep' }));
       setWeakness(w);
     } catch (e) { alert(e.message); }
     finally { setWeakBusy(false); }
-  }, [note]);
+  }, [note, quizAnswers]);
 
   return (
     <div className="screen">
@@ -217,22 +224,14 @@ export default function StudyScreen({ note, onBack }) {
       <div className="large-title">{note?.title || 'New Note'}</div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', margin: '0 16px', background: 'var(--bg-elevated)', borderRadius: 10, padding: 3 }}>
-        {['cards', 'quiz', 'blanks', 'practice'].map(t => (
+      <div className="view-switcher">
+        {[['cards', `Cards (${flashcards.length})`], ['quiz', `Quiz (${quiz.length})`], ['blanks', 'Blanks'], ['practice', 'Practice']].map(([t, label]) => (
           <button
             key={t}
+            className={`view-switch-btn${tab === t ? ' active' : ''}`}
             onClick={() => setTab(t)}
-            style={{
-              flex: 1, padding: '8px 0', border: 'none', borderRadius: 8,
-              background: tab === t ? 'var(--bg)' : 'transparent',
-              color: 'var(--text)', fontSize: 13, fontWeight: 600, fontFamily: 'inherit',
-              cursor: 'pointer',
-            }}
           >
-            {t === 'cards' ? `Cards (${flashcards.length})` :
-             t === 'quiz' ? `Quiz (${quiz.length})` :
-             t === 'blanks' ? `Blanks` :
-             `Practice`}
+            {label}
           </button>
         ))}
       </div>
@@ -246,10 +245,10 @@ export default function StudyScreen({ note, onBack }) {
         {tab === 'quiz' && (
           quiz.length === 0
             ? <div className="empty-state"><div className="empty-icon">❓</div><div className="empty-title">No quiz yet</div><div className="empty-text">Save your note to generate a quiz.</div></div>
-            : quiz.map((q, i) => <QuizItem key={i} item={q} index={i} />)
+            : quiz.map((q, i) => <QuizItem key={i} item={q} index={i} onPick={(qi, pick) => setQuizAnswers(a => ({ ...a, [qi]: pick }))} />)
         )}
         {tab === 'blanks' && (
-          <div className="editor" style={{ paddingTop: 12 }}>
+          <div>
             {cloze.length === 0 && !clozeBusy ? (
               <button className="btn btn-primary" onClick={handleCloze} disabled={clozeBusy} style={{ width: '100%', marginBottom: 16 }}>
                 {clozeBusy ? 'Generating…' : '📝 Generate fill-in-the-blank'}
@@ -264,7 +263,7 @@ export default function StudyScreen({ note, onBack }) {
           </div>
         )}
         {tab === 'practice' && (
-          <div className="editor" style={{ paddingTop: 12 }}>
+          <div>
             <MnemonicsSection mnemonics={mnemonics} busy={mnBusy} onGenerate={handleMnemonics} />
             <PracticeGrader note={note} busy={false} onGrade={null} />
             {weakness && (
@@ -284,8 +283,8 @@ export default function StudyScreen({ note, onBack }) {
                               {String.fromCharCode(65 + j)}. {c}
                             </button>
                           ))}
+                        </div>
                         <div className="mistake-correction" style={{ marginTop: 8 }}>Answer: {String.fromCharCode(65 + p.answer)}</div>
-                      </div>
                       </div>
                     ))}
                   </div>
@@ -293,9 +292,14 @@ export default function StudyScreen({ note, onBack }) {
               </div>
             )}
             <div style={{ marginTop: 16 }}>
-              <button className="btn btn-primary" onClick={handleAnalyzeWeakness} disabled={weakBusy} style={{ width: '100%' }}>
+              <button className="btn btn-primary" onClick={handleAnalyzeWeakness} disabled={weakBusy || answeredCount === 0} style={{ width: '100%' }}>
                 {weakBusy ? 'Analyzing…' : '🔍 Analyze my weak areas'}
               </button>
+              {answeredCount === 0 && (
+                <div style={{ marginTop: 8, fontSize: 13, color: 'var(--text-secondary)', textAlign: 'center' }}>
+                  Answer some questions in the Quiz tab first.
+                </div>
+              )}
             </div>
           </div>
         )}

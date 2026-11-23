@@ -201,7 +201,7 @@ export default function FoldersScreen({ onOpenFolder, onOpenExam, onOpenNote, on
             {editingId === folder.id ? (
               <>
                 <button className="btn btn-ghost" style={{ padding: '6px 10px', fontSize: 14 }} onClick={e => handleRename(e, folder.id)}>Rename</button>
-                <button className="btn btn-ghost" style={{ padding: '6px 10px', fontSize: 14, color: '#ff453a' }} onClick={e => handleDelete(e, folder.id)}>Delete</button>
+                <button className="btn btn-ghost" style={{ padding: '6px 10px', fontSize: 14, color: 'var(--bad)' }} onClick={e => handleDelete(e, folder.id)}>Delete</button>
               </>
             ) : (
               <div className="flex items-center gap-8">

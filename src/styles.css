@@ -1493,3 +1493,132 @@ a { color: var(--accent-ink); }
 .navbar { height: auto !important; min-height: calc(44px + env(safe-area-inset-top, 0px)); padding: env(safe-area-inset-top, 0px) 16px 0; }
 .navbar > * { flex-shrink: 0; }
 .screen { padding-top: calc(44px + env(safe-area-inset-top, 0px)); }
+
+
+/* ==========================================================================
+   HOTFIX v2  -  paste at the VERY BOTTOM of src/styles.css (after POLISH LAYER v1)
+   2. Makes the polish colors follow Settings > Appearance (Auto / Light / Dark).
+   3. Makes text colors follow Settings > Accent color (they were stuck on amber).
+   4. Fixes the invisible search field, flat Study/Exam cards, low-contrast
+      "Cancel" / "Tap to flip", and the annotate toolbar overflowing the screen.
+   ========================================================================== */
+
+/* ---- 2. Theme tokens that obey the Appearance setting ----
+   Light is the base. Dark overrides it when Settings = Dark,
+   or when Settings = Auto and the phone itself is in dark mode. */
+:root {
+  --bg-grouped: #f2f2f7;
+  --card-bg: #ffffff;
+  --panel-card: #ffffff;
+  --fill: #ffffff;
+  --press: #e5e5ea;
+  --seg-active: #ffffff;
+  --text-secondary: #6c6c70;
+  --text-tertiary: #aeaeb2;
+  --divider: rgba(60, 60, 67, 0.2);
+  --accent-ink: color-mix(in srgb, var(--accent) 50%, #000);
+  --mistake-ink: #9c5200;
+  --focus: color-mix(in srgb, var(--accent) 50%, #000);
+  --ok: #1e7a3a;
+  --bad: #c4261d;
+}
+:root[data-theme="dark"] {
+  --bg-grouped: #000000;
+  --card-bg: #1c1c1e;
+  --panel-card: #2c2c2e;
+  --fill: #2c2c2e;
+  --press: #2c2c2e;
+  --seg-active: #636366;
+  --text-secondary: #98989d;
+  --text-tertiary: #636366;
+  --divider: rgba(84, 84, 88, 0.65);
+  --accent-ink: var(--accent);
+  --mistake-ink: #ffb340;
+  --focus: var(--accent);
+  --ok: #30d158;
+  --bad: #ff6961;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+  --bg-grouped: #000000;
+  --card-bg: #1c1c1e;
+  --panel-card: #2c2c2e;
+  --fill: #2c2c2e;
+  --press: #2c2c2e;
+  --seg-active: #636366;
+  --text-secondary: #98989d;
+  --text-tertiary: #636366;
+  --divider: rgba(84, 84, 88, 0.65);
+  --accent-ink: var(--accent);
+  --mistake-ink: #ffb340;
+  --focus: var(--accent);
+  --ok: #30d158;
+  --bad: #ff6961;
+  }
+}
+
+/* ---- 3. Accent-aware colors (were hard-coded yellow/amber) ---- */
+::selection { background: color-mix(in srgb, var(--accent) 40%, transparent); }
+.note-line:active { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.list-item .btn-ghost { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.export-btn.cancel { color: var(--accent-ink); }
+.explanation-card [style*="var(--accent)"] { color: var(--accent-ink) !important; }   /* "Tap to flip" */
+
+/* ---- 4. Visibility fixes ---- */
+.search-input { background: rgba(118, 118, 128, 0.12); }                  /* was same grey as the page */
+html:has(.view-switcher), body:has(.view-switcher), .screen:has(.view-switcher) { background: var(--bg-grouped); }
+.screen:has(.view-switcher) .navbar { background: var(--bg-grouped); }    /* Study + Exam: cards now stand out */
+.annotate-bar .tool-group { flex-wrap: wrap; gap: 5px; }
+.annotate-bar .color-swatch { width: 22px; height: 22px; }                /* 12 colors + picker fit one row */
+
+
+/* ==========================================================================
+   v3 additions — chat, settings inputs, links
+   ========================================================================== */
+
+/* ---- Chat: formatted answers ---- */
+.chat-msg.assistant { display: block; white-space: normal; }
+.chat-msg.assistant.chat-busy { display: flex; align-items: center; gap: 8px; }
+.chat-msg .chat-p { margin: 0 0 8px; }
+.chat-msg .chat-p:last-child, .chat-msg .chat-list:last-child { margin-bottom: 0; }
+.chat-msg .chat-h { font-weight: 700; margin: 4px 0 6px; }
+.chat-msg .chat-list { margin: 0 0 8px; padding-left: 20px; }
+.chat-msg .chat-list li { margin-bottom: 4px; }
+.chat-msg .chat-code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.9em; background: var(--fill); padding: 1px 5px; border-radius: 5px; }
+.chat-msg .chat-pre { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; background: var(--fill); padding: 10px 12px; border-radius: 10px; overflow-x: auto; white-space: pre; margin: 4px 0 8px; }
+
+/* ---- Chat: error banner, clear button ---- */
+.chat-error {
+  align-self: stretch;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 12px; border-radius: 12px;
+  background: color-mix(in srgb, var(--bad) 12%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent);
+  color: var(--text); font-size: 14px; line-height: 1.4;
+}
+.chat-retry {
+  flex: none; min-height: 36px; padding: 6px 14px; border: none; border-radius: 999px;
+  background: var(--accent); color: var(--accent-text); font-weight: 600; font-family: inherit; cursor: pointer;
+}
+.chat-head-text { flex: 1; min-width: 0; }
+.chat-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-clear {
+  flex: none; min-height: 36px; padding: 6px 12px; border: none; border-radius: 999px;
+  background: var(--bg-elevated); color: var(--accent-ink); font-size: 14px; font-weight: 600; font-family: inherit; cursor: pointer;
+}
+.chat-clear:disabled { opacity: 0.4; }
+
+/* ---- Chat: tablet / wide screens → centered column instead of edge-to-edge ---- */
+.chat-header, .chat-messages, .chat-toggles, .chat-input-bar {
+  padding-left: max(16px, calc((100% - 720px) / 2));
+  padding-right: max(16px, calc((100% - 720px) / 2));
+}
+.chat-msg { max-width: min(85%, 560px); }
+
+/* the field already changes its border on focus – no second ring on top of it */
+.chat-input:focus-visible, .ai-input:focus-visible { outline: none; }
+
+/* ---- Settings: API-key / URL boxes should look like text, only secrets use monospace ---- */
+.ai-input { font-family: inherit; }
+.ai-input[type="password"], .ai-input[type="url"] { font-family: ui-monospace, Menlo, Consolas, monospace; }
+.settings-tip a { color: var(--accent-ink); }

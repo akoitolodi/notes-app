@@ -157,8 +157,8 @@ function QuizItem({ item, index }) {
           let bg = 'var(--bg-elevated)';
           let color = 'var(--text)';
           if (picked != null) {
-            if (i === item.answer) { bg = 'rgba(52,199,89,0.2)'; color = '#34c759'; }
-            else if (i === picked) { bg = 'rgba(255,69,58,0.2)'; color = '#ff453a'; }
+            if (i === item.answer) { bg = 'rgba(52,199,89,0.2)'; color = 'var(--ok)'; }
+            else if (i === picked) { bg = 'rgba(255,69,58,0.2)'; color = 'var(--bad)'; }
           }
           return (
             <button
@@ -176,7 +176,7 @@ function QuizItem({ item, index }) {
         })}
       </div>
       {picked != null && (
-        <div style={{ marginTop: 10, fontSize: 13, fontWeight: 500, color: correct ? '#34c759' : '#ff453a' }}>
+        <div style={{ marginTop: 10, fontSize: 13, fontWeight: 500, color: correct ? 'var(--ok)' : 'var(--bad)' }}>
           {correct ? '✓ Correct' : '✗ Not quite'}
         </div>
       )}

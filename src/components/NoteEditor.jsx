@@ -14,7 +14,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { scanNote } from '../api/scan';
 import { scanLine } from '../api/scanLine';
-import { updateNote, moveNote } from '../store/db';
+import { updateNote, moveNote, getNote } from '../store/db';
 import StrokeLayer, { PALETTE, TOOLS, SIZES, SIZE_LABEL } from './StrokeLayer';
 import ImageStrip, { pickImage, compressImage } from './ImageManager';
 import { buildNotePDF, saveNotePDF } from '../lib/pdf';
@@ -306,10 +306,8 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
       if (fresh) {
         setBlocks(prev => prev.map(b => (b.id === id ? fresh : b)));
         // Persist the new block alongside existing ones
-        const updated = blocks.filter(b => b.id !== id).concat([
-          ...blocks.filter(b => b.id !== id),
-          fresh,
-        ]);
+        const lineNo = b => parseInt(String(b.id).replace('line-', ''), 10) || 0;
+        const updated = [...blocks.filter(b => b.id !== id), fresh].sort((a, b) => lineNo(a) - lineNo(b));
         await updateNote(note.id, { blocks: updated });
       } else {
         // AI skipped the line — show that honestly
@@ -775,7 +773,7 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
               <div className="empty-state" style={{ padding: 20 }}><div className="empty-text">No related notes found in this folder.</div></div>
             )}
             {related && related.map(r => (
-              <button key={r.id} className="export-btn" onClick={() => { setRelatedOpen(false); onOpenNote?.(r); }}>
+              <button key={r.id} className="export-btn" onClick={async () => { setRelatedOpen(false); const full = await getNote(r.id); if (full) onOpenNote?.(full); }}>
                 📄 {r.title || 'New Note'}
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>{r.reason}</div>
               </button>

@@ -247,19 +247,6 @@ export default function SettingsScreen({ onBack }) {
               🔍 Test Connection
             </button>
 
-            <div className="settings-label" style={{ marginTop: 18 }}>🌐 Web search (optional)</div>
-            <input
-              type="password"
-              className="ai-input"
-              value={tavilyKey}
-              onChange={handleTavilyChange}
-              placeholder="Paste Tavily API key"
-              autoComplete="off"
-              spellCheck="false"
-            />
-            <div className="settings-tip" style={{ marginTop: 6 }}>
-              Lets the chat's 🌐 Web toggle search the internet. Free key (1,000 searches/mo): <a href="https://app.tavily.com" target="_blank" rel="noopener" style={{ color: 'var(--accent)' }}>app.tavily.com</a>
-            </div>
 
             <button
               className="btn btn-ghost"

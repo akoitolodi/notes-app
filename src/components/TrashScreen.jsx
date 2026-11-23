@@ -81,7 +81,7 @@ export default function TrashScreen({ onBack }) {
             </button>
             <button
               className="btn"
-              style={{ padding: '6px 12px', fontSize: 13, marginLeft: 6, flexShrink: 0, background: 'transparent', color: '#ff453a' }}
+              style={{ padding: '6px 12px', fontSize: 13, marginLeft: 6, flexShrink: 0, background: 'transparent', color: 'var(--bad)' }}
               onClick={() => handlePurge(item)}
             >
               Delete

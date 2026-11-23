@@ -117,6 +117,7 @@ export default function App() {
           key={note.id}
           note={note}
           folderName={folder?.name || ''}
+          onOpenNote={handleOpenNote}
           onOpenStudy={async () => {
             // Re-fetch from DB so the Study screen sees the latest scan results
             const fresh = await db.notes.get(note.id);
