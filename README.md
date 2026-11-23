@@ -1,80 +1,58 @@
-# AI Class Notes
+# AI Class Notes (v1.3.0)
 
-## Quick start (Termux backend)
-
-Start the AI backend with one command:
-
-```bash
-notes
-```
-
-(`notes` is installed in `$PREFIX/bin` — it wake-locks the device, `cd`s to the repo and runs `node server.js` on port 8080.)
-
-
-
-A phone notes app styled like the iOS Notes app. When you tap **Save**, the AI
-reads the whole note and explains it beside what you wrote, so you learn while
-you take notes.
+An offline-first mobile & desktop notes app styled like iOS Notes, enhanced with an AI study layer that explains your notes line by line, flags mistakes, chats with streaming citations, and generates flashcards, quizzes, blanks, mnemonics, and exam packs.
 
 ## Features
 
-- **Explain on save** — AI reads the whole note and attaches a short
-  explanation to each key line, term or equation
-- **Three explanation views** — slide-up panel (default), inline under lines,
-  separate swipe page; your choice is remembered
-- **Explain simpler / Give example** — per-line AI re-scan, results persist in
-  all views
-- **Mistake check** — flags possible errors with a suggested fix you can
-  accept or ignore (ignored/accepted state persists)
-- **Study mode** — flashcards (tap to flip) and multiple-choice quizzes
-- **Exam summary** — one-page summary, cards and quiz for a whole folder
-- **Folders, search, pin, swipe actions** — full notes app basics
-- **Offline-first** — notes live in IndexedDB on the phone; dark mode;
-  installable PWA; Android APK via GitHub Actions
+- **Offline-first & Safe**: Notes, study progress, drawings, and image Blob attachments live locally in IndexedDB (Dexie v4), with auto-save, 30-day Trash recovery, and full JSON Backup & Restore.
+- **Rich Markdown + LaTeX Math**: Headings, bold/italic, code, interactive `- [ ]` checklists, `#tags`, and KaTeX equations (`$E = mc^2$` / `$$...$$`), plus a mobile formatting toolbar.
+- **Explain on Demand**: Smart LCS line diffing remaps existing explanations when you insert/move lines and scans only changed lines. Re-explain any line **Simpler** or with an **Example**, or accept/ignore mistake suggestions.
+- **Streaming AI Tutor & Multi-Step Research**: Grounded in your note **and** sibling folder notes (offline Cross-Note Local RAG), with **Deep Think** (2-pass Solve → Skeptical Verify), **Research** (zero-key Wikipedia + OpenAlex academic papers + optional Tavily with clickable citations & 1-tap Save as Note), and **Socratic** coaching mode.
+- **Vision OCR & Photo Explanations**: Snap or attach photos, zoom full-screen, extract text via OCR, or ask AI to explain diagrams and slides.
+- **Annotations**: Pen, highlighter, eraser, arrows, lines, and inline text labels with adaptive light/dark ink and Undo/Redo/Clear.
+- **Critical Thinking & Study Mode**: Interactive Flashcard Flip Deck with spaced-repetition mastery tracking, higher-order scored Quizzes, type-to-check Fill-in-the-Blank Cloze, **Challenge My Notes** logical & assumption audit, **Feynman Technique Coach**, Mnemonics, Answer Grader, Weakness Detection, and Folder Exam Summaries + Predicted Exam Questions.
+- **Free-Tier Resilient AI Backends**: Run directly against Groq, Google Gemini (AI Studio free tier), OpenRouter, OpenAI, Cerebras, Mistral, NVIDIA, Kilo, or any OpenAI-compatible API with automatic 429 retry & backup-provider auto-failover — or relay through your own local/Termux Express server or Vercel serverless functions.
+- **Unicode PDF Export & Responsive UI**: Export notes or exam study packs to A4 PDF, with automatic 2-pane split view on tablets/desktops, Dark Mode, and 5 WCAG-accessible accents.
 
-## Stack
-
-React + Vite · Express (dev server + serverless functions in `api/`) ·
-IndexedDB (Dexie) · Capacitor (Android) · AI via any OpenAI-compatible API
-
-## Setup
+## Quick Start
 
 ```bash
 npm install
-cp .env.example .env    # then fill in FREELLMAPI_API_KEY
+cp .env.example .env    # Optional: needed only for local/Termux backend mode
 npm run build
-node server.js          # serves the app + /api/* on port 8080
+npm run dev             # Serves built app + /api/* on http://127.0.0.1:8080
 ```
 
-For development with hot reload: `npx vite` (port 5173, proxies `/api` to
-port 3002) plus `node server.js`.
+For hot-reload frontend development alongside the backend:
 
-### Environment variables
+```bash
+# Terminal 1 (API backend on 127.0.0.1:8080)
+npm run dev
 
-| Variable | Purpose |
-|---|---|
-| `FREELLMAPI_API_KEY` | API key for the AI provider (server-side only) |
-| `FREELLMAPI_BASE_URL` | OpenAI-compatible base URL (default `http://127.0.0.1:3001/v1`) |
-| `FREELLMAPI_MODEL` | Model id (default `auto`) |
-| `PORT` | Port for the Express server (default `8080`) |
-
-The AI key lives **only** on the server; the front end calls `/api/*` and never
-touches the key.
-
-## Android APK
-
-Pushes to `main` trigger a GitHub Actions build
-(`.github/workflows/build-apk.yml`) that produces a debug APK artifact.
-Releases attach the APK — install it and the app talks to the on-device
-backend at `http://127.0.0.1:8080` (see `src/config.js`).
+# Terminal 2 (Vite dev server on localhost:5173, proxies /api -> 127.0.0.1:8080)
+npm run dev:web
+```
 
 ## Scripts
 
-| Command | What it does |
-|---|---|
-| `npm run dev` | Start the Express server (port 8080) |
-| `npm run build` | Production web build to `dist/` |
-| `npx vite` | Dev server with hot reload |
-| `node qa-review.js <model>` | Ask an AI to review the codebase for bugs |
-# CI trigger Sat Nov 21 23:07:11 CST 2026
-# Debug Sat Nov 21 23:15:45 CST 2026
+| Command | Description |
+| :--- | :--- |
+| `npm run dev` | Start the Express backend server (`127.0.0.1:8080` by default) |
+| `npm run dev:web` | Start Vite hot-reload dev server (`localhost:5173`) |
+| `npm run build` | Production web build into `dist/` |
+| `npm test` | Run Vitest unit & IndexedDB test suite |
+
+## Environment Variables (Server Mode)
+
+| Variable | Default | Purpose |
+| :--- | :--- | :--- |
+| `FREELLMAPI_API_KEY` | — | API key for the upstream OpenAI-compatible AI provider |
+| `FREELLMAPI_BASE_URL` | `http://127.0.0.1:3001/v1` | Upstream OpenAI-compatible base URL |
+| `FREELLMAPI_MODEL` | `auto` | Default model ID |
+| `PORT` | `8080` | Express listening port |
+| `HOST` | `127.0.0.1` | Bind address (set `0.0.0.0` explicitly for LAN access) |
+| `CORS_ORIGIN` | local origins | Comma-separated allowed origins (or `*` for open LAN) |
+
+## Android APK
+
+Pushes to `main` run tests, build the Vite bundle, sync Capacitor, and produce a signed release APK via `.github/workflows/build-apk.yml`.

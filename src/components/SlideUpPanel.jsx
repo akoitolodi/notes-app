@@ -1,12 +1,20 @@
 /**
- * Slide-up panel (iOS bottom sheet) — shows AI explanations for a tapped line.
- * Three snap heights: peek (25%), half (60%), full (95%). Drag up/down between
- * them; drag down past peek to close.
+ * SlideUpPanel — iOS bottom sheet for line explanations.
+ *
+ * Upgrades:
+ * - Pointer-event drag handling (touch + desktop mouse) using direct DOM height
+ *   updates during drag (zero 60fps React re-renders).
+ * - Escape key support.
+ * - Respects mistakeIgnored / dismissed and provides Accept fix / Ignore actions.
+ * - Highlights active variant (Original / Simpler / Example) with spinner on load.
+ * - Renders explanations with Markdown + KaTeX support.
  */
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { X, AlertTriangle, Sparkles, Lightbulb, FileText } from 'lucide-react';
+import MarkdownContent from './ui/MarkdownContent';
 
-const SNAP_POINTS = [0.45, 0.7, 0.95]; // fractions of viewport height
-const CLOSE_THRESHOLD = 0.06; // fraction of vh dragged down from peek that closes the panel
+const SNAP_POINTS = [0.46, 0.72, 0.92];
+const CLOSE_THRESHOLD = 0.08;
 
 export default function SlideUpPanel({
   open,
@@ -17,103 +25,134 @@ export default function SlideUpPanel({
   onExplainSimpler,
   onGiveExample,
   onShowOriginal,
+  onApplyCorrection,
+  onDismissMistake,
+  dismissed = {},
   busyLineId,
 }) {
-  const [snap, setSnap] = useState(SNAP_POINTS[0]); // current height fraction
+  const [snap, setSnap] = useState(SNAP_POINTS[0]);
   const [vh, setVh] = useState(() => (typeof window !== 'undefined' ? window.innerHeight : 800));
   const panelRef = useRef(null);
-  const drag = useRef(null); // { startY, startSnap }
+  const dragRef = useRef(null);
 
-  // Track viewport height so the panel resizes when the keyboard opens/closes
-  // or the device rotates.
   useEffect(() => {
     const onResize = () => setVh(window.innerHeight);
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // Reset to peek height whenever the panel opens
   useEffect(() => {
     if (open) setSnap(SNAP_POINTS[0]);
   }, [open]);
 
-  const handleTouchStart = useCallback(e => {
-    // Only start a sheet drag from the handle or header — let content scroll freely
-    const t = e.target.closest?.('.panel-handle, .panel-header');
-    if (!t) return;
-    const touch = e.touches[0];
-    drag.current = { startY: touch.clientY, startSnap: snap, moved: false };
-    if (panelRef.current) panelRef.current.style.transition = 'none';
-  }, [snap]);
+  // Escape closes panel
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = e => {
+      if (e.key === 'Escape') onClose?.();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
 
-  const handleTouchMove = useCallback(e => {
-    if (!drag.current) return;
-    const t = e.touches[0];
-    const deltaUp = drag.current.startY - t.clientY; // + when dragging up
-    drag.current.moved = true;
-    const vh = window.innerHeight;
-    const next = Math.max(
-      SNAP_POINTS[0] - 0.25, // allow dragging well below peek so it can close
-      Math.min(SNAP_POINTS[2], drag.current.startSnap + deltaUp / vh)
-    );
-    setSnap(next);
+  const handlePointerDown = useCallback(
+    e => {
+      if (e.button && e.button !== 0) return;
+      const handle = e.target.closest?.('.panel-handle, .panel-header');
+      if (!handle || e.target.closest?.('button')) return;
+      e.currentTarget.setPointerCapture?.(e.pointerId);
+      dragRef.current = { startY: e.clientY, startSnap: snap, liveSnap: snap };
+      if (panelRef.current) panelRef.current.style.transition = 'none';
+    },
+    [snap]
+  );
+
+  const handlePointerMove = useCallback(e => {
+    const d = dragRef.current;
+    if (!d) return;
+    const deltaUp = d.startY - e.clientY;
+    const curVh = window.innerHeight || 800;
+    const next = Math.max(0.16, Math.min(SNAP_POINTS[2], d.startSnap + deltaUp / curVh));
+    d.liveSnap = next;
+    if (panelRef.current) {
+      panelRef.current.style.height = `${next * curVh}px`;
+    }
   }, []);
 
-  const handleTouchEnd = useCallback(() => {
-    if (!drag.current) return;
-    const { startSnap } = drag.current;
-    drag.current = null;
+  const handlePointerUp = useCallback(() => {
+    const d = dragRef.current;
+    if (!d) return;
+    dragRef.current = null;
     if (panelRef.current) {
-      panelRef.current.style.transition = 'height 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+      panelRef.current.style.transition = 'height 0.22s cubic-bezier(0.22, 1, 0.36, 1)';
     }
-    // Dragged down past threshold → close
-    if (snap < startSnap - CLOSE_THRESHOLD && snap <= SNAP_POINTS[0]) {
+    const endSnap = d.liveSnap;
+    if (endSnap < d.startSnap - CLOSE_THRESHOLD && endSnap <= SNAP_POINTS[0]) {
       onClose?.();
       return;
     }
-    // Snap to nearest point
-    const nearest = SNAP_POINTS.reduce((best, p) =>
-      Math.abs(p - snap) < Math.abs(best - snap) ? p : best
-    , SNAP_POINTS[0]);
+    const nearest = SNAP_POINTS.reduce(
+      (best, p) => (Math.abs(p - endSnap) < Math.abs(best - endSnap) ? p : best),
+      SNAP_POINTS[0]
+    );
     setSnap(nearest);
-  }, [snap, onClose]);
+    if (panelRef.current) {
+      panelRef.current.style.height = `${nearest * (window.innerHeight || 800)}px`;
+    }
+  }, [onClose]);
 
-  // Find block for selected line (or first with content)
   const selectedBlock = blocks.find(b => b.id === selectedLineId);
-  const displayBlock = selectedBlock || blocks.find(b => b.explanation || b.simpler || b.example) || blocks[0];
+  const displayBlock =
+    selectedBlock || blocks.find(b => b.explanation || b.simpler || b.example) || blocks[0];
 
-  // Which explanation text to display for a block (persisted `show` field)
-  const activeVariant = block => {
-    if (block.show === 'simpler' && block.simpler) return block.simpler;
-    if (block.show === 'example' && block.example) return block.example;
-    return block.explanation || '';
+  const activeVariantKey = block => {
+    if (!block) return 'main';
+    if (block.show === 'simpler' && block.simpler) return 'simpler';
+    if (block.show === 'example' && block.example) return 'example';
+    return 'main';
+  };
+
+  const activeVariantText = block => {
+    const v = activeVariantKey(block);
+    if (v === 'simpler') return block.simpler;
+    if (v === 'example') return block.example;
+    return block?.explanation || '';
   };
 
   if (!open) return null;
 
+  const isBusy = displayBlock && busyLineId === displayBlock.id;
+  const variant = activeVariantKey(displayBlock);
+  const showMistake = Boolean(
+    displayBlock?.mistake && !displayBlock.mistakeIgnored && !dismissed[displayBlock.id]
+  );
+
   return (
     <>
-      <div className="panel-overlay visible" onClick={onClose} aria-hidden="true" />
+      <div className="panel-overlay" onClick={onClose} aria-hidden="true" />
       <div
         ref={panelRef}
-        className="panel open"
-        style={{ height: `${Math.max(snap, 0.05) * vh}px` }}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
+        className="panel"
+        style={{ height: `${snap * vh}px`, transition: 'height 0.22s cubic-bezier(0.22, 1, 0.36, 1)' }}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
         role="dialog"
         aria-modal="true"
         aria-label="Explanations"
       >
-        <div
-          className="panel-handle"
-          aria-hidden="true"
-          style={{ touchAction: 'none' }}
-        />
+        <div className="panel-handle" aria-hidden="true" />
         <div className="panel-header">
           <h2 className="panel-title">Explanations</h2>
-          <button className="panel-close" onClick={onClose} aria-label="Close">
-            ×
+          <button
+            type="button"
+            className="navbar-btn"
+            style={{ color: 'var(--text-secondary)' }}
+            onClick={onClose}
+            aria-label="Close explanations"
+          >
+            <X size={20} />
           </button>
         </div>
 
@@ -121,8 +160,47 @@ export default function SlideUpPanel({
           {displayBlock ? (
             <div className="explanation-card">
               <div className="explanation-line">{displayBlock.text}</div>
+
+              {(displayBlock.simpler || displayBlock.example) && (
+                <div className="variant-pills">
+                  <button
+                    type="button"
+                    className={`variant-pill${variant === 'main' ? ' active' : ''}`}
+                    onClick={() => onShowOriginal?.(displayBlock.id)}
+                  >
+                    Original
+                  </button>
+                  {displayBlock.simpler && (
+                    <button
+                      type="button"
+                      className={`variant-pill${variant === 'simpler' ? ' active' : ''}`}
+                      onClick={() => onExplainSimpler?.(displayBlock.id)}
+                    >
+                      Simpler
+                    </button>
+                  )}
+                  {displayBlock.example && (
+                    <button
+                      type="button"
+                      className={`variant-pill${variant === 'example' ? ' active' : ''}`}
+                      onClick={() => onGiveExample?.(displayBlock.id)}
+                    >
+                      Example
+                    </button>
+                  )}
+                </div>
+              )}
+
               <div className="explanation-text">
-                {busyLineId === displayBlock.id ? 'Thinking…' : activeVariant(displayBlock) || 'No explanation yet.'}
+                {isBusy ? (
+                  <div className="scan-indicator" style={{ padding: 0 }}>
+                    <span className="spinner" /> Thinking…
+                  </div>
+                ) : activeVariantText(displayBlock) ? (
+                  <MarkdownContent text={activeVariantText(displayBlock)} />
+                ) : (
+                  'No explanation yet.'
+                )}
               </div>
 
               {displayBlock.terms && displayBlock.terms.length > 0 && (
@@ -135,92 +213,127 @@ export default function SlideUpPanel({
                 </div>
               )}
 
-              {displayBlock.mistake && (
+              {showMistake && (
                 <div className="explanation-mistake">
-                  <svg className="mistake-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <circle cx="12" cy="12" r="10" />
-                    <line x1="12" y1="8" x2="12" y2="12" />
-                    <line x1="12" y1="16" x2="12.01" y2="16" />
-                  </svg>
-                  <div>
+                  <AlertTriangle size={18} className="mistake-icon" />
+                  <div className="flex-1">
                     <div className="mistake-reason">{displayBlock.mistake.reason}</div>
-                    <div className="mistake-correction">Suggestion: {displayBlock.mistake.correction}</div>
+                    {displayBlock.mistake.correction && (
+                      <div className="mistake-correction">
+                        Suggestion: {displayBlock.mistake.correction}
+                      </div>
+                    )}
+                    <div className="mistake-actions">
+                      {displayBlock.mistake.correction && (
+                        <button
+                          type="button"
+                          className="mistake-accept"
+                          onClick={() =>
+                            onApplyCorrection?.(displayBlock, displayBlock.mistake)
+                          }
+                        >
+                          Accept fix
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="mistake-ignore"
+                        onClick={() => onDismissMistake?.(displayBlock.id)}
+                      >
+                        Ignore
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
 
               <div className="explanation-actions">
                 <button
-                  className="btn btn-secondary"
+                  type="button"
+                  className="btn btn-secondary btn-sm"
                   onClick={() => onExplainSimpler?.(displayBlock.id)}
-                  disabled={busyLineId === displayBlock.id}
+                  disabled={isBusy}
                 >
-                  Explain simpler
+                  <Sparkles size={15} /> Explain simpler
                 </button>
                 <button
-                  className="btn btn-secondary"
+                  type="button"
+                  className="btn btn-secondary btn-sm"
                   onClick={() => onGiveExample?.(displayBlock.id)}
-                  disabled={busyLineId === displayBlock.id}
+                  disabled={isBusy}
                 >
-                  Give example
+                  <Lightbulb size={15} /> Give example
                 </button>
               </div>
-              {displayBlock.show && displayBlock.show !== 'main' && (
-                <button
-                  className="btn btn-ghost"
-                  style={{ width: '100%', padding: '6px 0', fontSize: 13 }}
-                  onClick={() => onShowOriginal?.(displayBlock.id)}
-                >
-                  Show original explanation
-                </button>
-              )}
             </div>
           ) : (
             <div className="empty-state">
-              <div className="empty-icon">📝</div>
+              <div className="empty-icon">
+                <FileText size={26} />
+              </div>
               <div className="empty-title">No explanation yet</div>
-              <div className="empty-text">Type your note, then tap Save to get explanations.</div>
+              <div className="empty-text">
+                Tap Explain in the editor, or tap any line in Read mode to explain it on demand.
+              </div>
             </div>
           )}
 
-          {/* All blocks in this note */}
           {blocks.length > 1 && (
             <div className="mt-16">
-              <h3 style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
-                All lines in this note
-              </h3>
-              {blocks.map(block => (
-                <button
-                  key={block.id}
-                  onClick={() => onSelectLine?.(block.id)}
-                  style={{
-                    display: 'block',
-                    width: '100%',
-                    padding: 12,
-                    borderRadius: 10,
-                    marginBottom: 8,
-                    border: '1px solid ' + (block.id === selectedLineId ? 'var(--accent)' : 'var(--divider)'),
-                    background: block.id === selectedLineId ? 'var(--bg-elevated)' : 'var(--bg)',
-                    color: 'var(--text)',
-                    textAlign: 'left',
-                    fontFamily: 'inherit',
-                  }}
-                >
-                  <div style={{ fontSize: 14, marginBottom: 4 }}>
-                    {block.text.slice(0, 80)}{block.text.length > 80 ? '…' : ''}
-                  </div>
-                  {block.explanation && (
-                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.4 }}>
-                      {block.explanation.slice(0, 100)}{block.explanation.length > 100 ? '…' : ''}
+              <div className="settings-label" style={{ marginBottom: 8 }}>
+                All explained lines ({blocks.length})
+              </div>
+              {blocks.map(block => {
+                const active = block.id === selectedLineId;
+                const hasUnignoredMistake = Boolean(
+                  block.mistake && !block.mistakeIgnored && !dismissed[block.id]
+                );
+                return (
+                  <button
+                    key={block.id}
+                    type="button"
+                    onClick={() => onSelectLine?.(block.id)}
+                    style={{
+                      display: 'block',
+                      width: '100%',
+                      padding: 12,
+                      borderRadius: 12,
+                      marginBottom: 8,
+                      border: `1px solid ${active ? 'var(--accent)' : 'var(--divider)'}`,
+                      background: active ? 'var(--accent-tint)' : 'var(--panel-card)',
+                      color: 'var(--text)',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 3 }}>
+                      {block.text.slice(0, 85)}
+                      {block.text.length > 85 ? '…' : ''}
                     </div>
-                  )}
-                  {block.mistake && (
-                    <span style={{ fontSize: 11, color: 'var(--mistake)', fontWeight: 500 }}>
-                      ⚠ Possible mistake
-                    </span>
-                  )}
-                </button>
-              ))}
+                    {block.explanation && (
+                      <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.4 }}>
+                        {block.explanation.slice(0, 100)}
+                        {block.explanation.length > 100 ? '…' : ''}
+                      </div>
+                    )}
+                    {hasUnignoredMistake && (
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          marginTop: 4,
+                          fontSize: 11,
+                          color: 'var(--mistake-ink)',
+                          fontWeight: 600,
+                        }}
+                      >
+                        <AlertTriangle size={12} /> Possible mistake
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>

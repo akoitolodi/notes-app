@@ -1,93 +1,311 @@
 /**
- * Exam summary screen — one-page summary, combined flashcards, and practice
- * quiz generated from all notes in a folder.
+ * ExamSummaryScreen — folder-level exam study pack:
+ * - Detects stale cache when notes in the folder have changed since last build
+ * - 4 tabs: Summary (Markdown + KaTeX), Cards (Flip Deck), Quiz (Scored),
+ *   and Predicted Exam Questions (wires up predictExamQuestions!)
+ * - Exports the entire Study Pack as a PDF
+ * - Safe AbortController cleanup on unmount
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import {
+  ChevronLeft,
+  RotateCw,
+  FileDown,
+  AlertTriangle,
+  Sparkles,
+  Eye,
+  EyeOff,
+} from 'lucide-react';
 import { getNotesInFolder, db } from '../store/db';
 import { examSummary } from '../api/examSummary';
+import { predictExamQuestions } from '../lib/aiFeatures';
+import { FlashcardDeck, QuizSection } from './study/StudyWidgets';
+import MarkdownContent from './ui/MarkdownContent';
+import { useDialog } from './ui/DialogProvider';
+
+function PredictedQuestionCard({ item, index }) {
+  const [open, setOpen] = useState(false);
+  const diffColor =
+    item.difficulty === 'hard'
+      ? 'var(--bad)'
+      : item.difficulty === 'easy'
+        ? 'var(--ok)'
+        : 'var(--mistake-ink)';
+  const diffBg =
+    item.difficulty === 'hard'
+      ? 'var(--bad-bg)'
+      : item.difficulty === 'easy'
+        ? 'var(--ok-bg)'
+        : 'var(--mistake-bg)';
+
+  return (
+    <div className="explanation-card">
+      <div className="flex justify-between items-center gap-8" style={{ marginBottom: 8 }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-secondary)' }}>
+          QUESTION {index + 1}
+        </span>
+        {item.difficulty && (
+          <span
+            className="tag-pill"
+            style={{ background: diffBg, color: diffColor, textTransform: 'capitalize' }}
+          >
+            {item.difficulty}
+          </span>
+        )}
+      </div>
+      <div style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.5, marginBottom: 10 }}>
+        {item.question}
+      </div>
+      <button
+        type="button"
+        className="btn btn-secondary btn-sm w-full"
+        onClick={() => setOpen(o => !o)}
+      >
+        {open ? <EyeOff size={15} /> : <Eye size={15} />}
+        {open ? 'Hide model answer' : 'Show model answer'}
+      </button>
+      {open && (
+        <div
+          style={{
+            marginTop: 10,
+            paddingTop: 10,
+            borderTop: '0.5px solid var(--divider)',
+          }}
+        >
+          <MarkdownContent text={item.answer} />
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ExamSummaryScreen({ folder, onBack }) {
+  const { toast } = useDialog();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  const [predicted, setPredicted] = useState([]);
+  const [predictBusy, setPredictBusy] = useState(false);
+  const [isStale, setIsStale] = useState(false);
   const [fromCache, setFromCache] = useState(false);
-  const [tab, setTab] = useState('summary'); // summary | cards | quiz
+  const [tab, setTab] = useState('summary'); // summary | cards | quiz | predicted
+  const [exporting, setExporting] = useState(false);
 
-  const generate = useCallback(async (force = false) => {
-    setLoading(true);
-    setError(null);
-    setResult(null);
-    setFromCache(false);
-    try {
-      // Serve the cached pack instantly unless the user explicitly regenerates
-      if (!force) {
-        const cached = await db.examCache.get(folder.id);
-        if (cached?.result) {
-          setResult(cached.result);
-          setFromCache(true);
-          setLoading(false);
-          return;
+  const abortRef = useRef(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      abortRef.current?.abort();
+    };
+  }, []);
+
+  const getCappedFolderNotes = useCallback(async () => {
+    const notes = await getNotesInFolder(folder.id);
+    const usable = notes.filter(n => (n.body || '').trim().length > 0);
+    // Keep total prompt bounded (~18k chars) so free-tier providers don't hit 413/429
+    const perNoteCap = usable.length > 0 ? Math.max(800, Math.min(2500, Math.floor(18000 / usable.length))) : 2500;
+    const capped = usable.map(n => ({
+      title: n.title || 'Untitled',
+      body: (n.body || '').slice(0, perNoteCap),
+      updatedAt: n.updatedAt || 0,
+    }));
+    const latestEdit = capped.reduce((max, n) => Math.max(max, n.updatedAt), 0);
+    return { capped, latestEdit };
+  }, [folder.id]);
+
+  const generate = useCallback(
+    async (force = false) => {
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
+      setLoading(true);
+      setError(null);
+      if (force) setResult(null);
+      setFromCache(false);
+      setIsStale(false);
+
+      try {
+        const { capped, latestEdit } = await getCappedFolderNotes();
+
+        if (!force) {
+          const cached = await db.examCache.get(folder.id);
+          if (cached?.result && mountedRef.current) {
+            setResult(cached.result);
+            setPredicted(cached.predicted || []);
+            setFromCache(true);
+            setIsStale(latestEdit > (cached.at || 0));
+            setLoading(false);
+            return;
+          }
         }
-      }
-      const notes = await getNotesInFolder(folder.id);
-      const usable = notes.filter(n => (n.body || '').trim().length > 0);
-      if (usable.length === 0) {
-        throw new Error('This folder has no notes with content yet.');
-      }
-      // Keep the prompt small: cap each note's body
-      const capped = usable.map(n => ({
-        title: n.title || 'Untitled',
-        body: (n.body || '').slice(0, 2500),
-      }));
-      const data = await examSummary(folder.name, capped);
-      setResult(data);
-      await db.examCache.put({ folderId: folder.id, result: data, at: Date.now() });
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [folder]);
 
-  useEffect(() => { generate(); }, [generate]);
+        if (capped.length === 0) {
+          throw new Error('This folder has no notes with text content yet.');
+        }
+
+        const data = await examSummary(folder.name, capped, { signal: controller.signal });
+        if (!mountedRef.current) return;
+        setResult(data);
+        setPredicted([]);
+        setIsStale(false);
+        await db.examCache.put({
+          folderId: folder.id,
+          result: data,
+          predicted: [],
+          at: Date.now(),
+        });
+      } catch (err) {
+        if (!mountedRef.current || err?.isCancelled) return;
+        setError(err.message);
+      } finally {
+        if (mountedRef.current) setLoading(false);
+      }
+    },
+    [folder.id, folder.name, getCappedFolderNotes]
+  );
+
+  useEffect(() => {
+    generate(false);
+  }, [generate]);
+
+  const handlePredictExam = async () => {
+    if (predictBusy) return;
+    setPredictBusy(true);
+    try {
+      const { capped } = await getCappedFolderNotes();
+      if (!capped.length) {
+        toast('Add notes to this folder first');
+        return;
+      }
+      const items = await predictExamQuestions({ notes: capped, subject: folder.name, count: 6 });
+      if (!mountedRef.current) return;
+      setPredicted(items);
+      const cached = await db.examCache.get(folder.id);
+      if (cached) {
+        await db.examCache.put({ ...cached, predicted: items });
+      }
+    } catch (err) {
+      toast(`Exam predictor failed: ${err.message}`, { type: 'error' });
+    } finally {
+      if (mountedRef.current) setPredictBusy(false);
+    }
+  };
+
+  const handleExportPDF = async () => {
+    if (!result || exporting) return;
+    setExporting(true);
+    try {
+      const { buildExamSummaryPDF, saveNotePDF } = await import('../lib/pdf');
+      const doc = await buildExamSummaryPDF({
+        folderName: folder.name,
+        summary: result.summary,
+        flashcards: result.flashcards || [],
+        quiz: result.quiz || [],
+        predicted,
+      });
+      const how = await saveNotePDF(doc, `${folder.name}-exam-pack`);
+      toast(how === 'shared' ? 'Study pack PDF ready to share' : 'Study pack PDF downloaded', {
+        type: 'success',
+      });
+    } catch (err) {
+      toast(`PDF export failed: ${err.message}`, { type: 'error' });
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const flashcards = result?.flashcards || [];
   const quiz = result?.quiz || [];
 
   return (
     <div className="screen">
-      <header className="navbar safe-top">
-        <button className="navbar-btn" style={{ width: 'auto', paddingLeft: 0 }} onClick={onBack} aria-label="Back">
-          ‹ Back
+      <header className="navbar">
+        <button
+          type="button"
+          className="navbar-btn navbar-back"
+          onClick={onBack}
+          aria-label="Back"
+        >
+          <ChevronLeft size={20} /> Back
         </button>
-        <span className="navbar-title" style={{ fontSize: 15 }}>Exam Summary</span>
-        <button className="navbar-btn" style={{ width: 'auto' }} onClick={() => generate(true)} disabled={loading} aria-label="Regenerate">
-          ↻
-        </button>
+        <span className="navbar-title">Exam Summary</span>
+        <div className="flex items-center gap-6">
+          {result && (
+            <button
+              type="button"
+              className="navbar-btn"
+              onClick={handleExportPDF}
+              disabled={exporting}
+              aria-label="Export study pack PDF"
+              title="Export study pack PDF"
+            >
+              <FileDown size={19} />
+            </button>
+          )}
+          <button
+            type="button"
+            className="navbar-btn"
+            onClick={() => generate(true)}
+            disabled={loading}
+            aria-label="Rebuild study pack"
+            title="Rebuild study pack"
+          >
+            <RotateCw size={18} />
+          </button>
+        </div>
       </header>
+
       <div className="large-title">{folder.name}</div>
 
-      {fromCache && !loading && (
-        <div className="scan-indicator" style={{ paddingTop: 0 }}>
-          Saved study pack — tap ↻ to rebuild with the latest notes.
+      {isStale && !loading && (
+        <div className="banner-stale">
+          <span className="flex items-center gap-6">
+            <AlertTriangle size={15} /> Notes changed since this pack was built.
+          </span>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={() => generate(true)}
+          >
+            Rebuild
+          </button>
+        </div>
+      )}
+
+      {fromCache && !isStale && !loading && (
+        <div className="scan-indicator" style={{ paddingTop: 2, paddingBottom: 4 }}>
+          Saved study pack — tap refresh anytime to rebuild.
         </div>
       )}
 
       {loading && (
         <div className="scan-indicator">
-          <span className="spinner" /> Building your study pack…
+          <span className="spinner" /> Building your exam study pack…
         </div>
       )}
+
       {error && (
-        <div className="scan-indicator" style={{ color: 'var(--mistake)' }}>{error}</div>
+        <div className="inline-mistake" style={{ margin: '8px var(--gutter)' }}>
+          {error}
+        </div>
       )}
 
       {result && (
         <>
-          <div className="view-switcher" style={{ marginTop: 4 }}>
-            {[['summary', 'Summary'], ['cards', `Cards (${flashcards.length})`], ['quiz', `Quiz (${quiz.length})`]].map(([t, label]) => (
+          <div className="view-switcher">
+            {[
+              ['summary', 'Summary'],
+              ['cards', `Cards (${flashcards.length})`],
+              ['quiz', `Quiz (${quiz.length})`],
+              ['predicted', `Predict${predicted.length ? ` (${predicted.length})` : ''}`],
+            ].map(([t, label]) => (
               <button
                 key={t}
+                type="button"
                 className={`view-switch-btn${tab === t ? ' active' : ''}`}
                 onClick={() => setTab(t)}
               >
@@ -96,89 +314,65 @@ export default function ExamSummaryScreen({ folder, onBack }) {
             ))}
           </div>
 
-          <div className="editor" style={{ paddingTop: 12 }}>
+          <div className="editor">
             {tab === 'summary' && (
-              <div className="explanation-card" style={{ fontSize: 15, lineHeight: 1.6 }}>
-                {result.summary || 'No summary generated.'}
+              <div className="explanation-card">
+                <MarkdownContent text={result.summary || 'No summary generated.'} />
               </div>
             )}
 
-            {tab === 'cards' && (
-              flashcards.length === 0
-                ? <div className="empty-state"><div className="empty-icon">🃏</div><div className="empty-title">No flashcards</div></div>
-                : flashcards.map((c, i) => <Flashcard key={i} card={c} />)
-            )}
+            {tab === 'cards' && <FlashcardDeck cards={flashcards} />}
 
-            {tab === 'quiz' && (
-              quiz.length === 0
-                ? <div className="empty-state"><div className="empty-icon">❓</div><div className="empty-title">No quiz questions</div></div>
-                : quiz.map((q, i) => <QuizItem key={i} item={q} index={i} />)
+            {tab === 'quiz' && <QuizSection quiz={quiz} />}
+
+            {tab === 'predicted' && (
+              <div>
+                {predictBusy ? (
+                  <div className="explanation-card">
+                    <div className="scan-indicator" style={{ padding: '8px 0' }}>
+                      <span className="spinner" /> Predicting likely exam questions…
+                    </div>
+                  </div>
+                ) : predicted.length === 0 ? (
+                  <div className="explanation-card">
+                    <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>
+                      Likely Exam Questions
+                    </div>
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 14 }}>
+                      Analyzes all notes in {folder.name} to predict high-probability exam questions with model answers.
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-primary w-full"
+                      onClick={handlePredictExam}
+                    >
+                      <Sparkles size={16} /> Predict exam questions
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex justify-between items-center" style={{ marginBottom: 10 }}>
+                      <span className="settings-label">
+                        Predicted questions ({predicted.length})
+                      </span>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={handlePredictExam}
+                        disabled={predictBusy}
+                      >
+                        <RotateCw size={13} /> Regenerate
+                      </button>
+                    </div>
+                    {predicted.map((item, idx) => (
+                      <PredictedQuestionCard key={idx} item={item} index={idx} />
+                    ))}
+                  </>
+                )}
+              </div>
             )}
           </div>
         </>
-      )}
-    </div>
-  );
-}
-
-function Flashcard({ card }) {
-  const [flipped, setFlipped] = useState(false);
-  return (
-    <div
-      className="explanation-card"
-      style={{ cursor: 'pointer', minHeight: 110, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}
-      onClick={() => setFlipped(f => !f)}
-    >
-      {flipped ? (
-        <>
-          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>Answer</div>
-          <div style={{ fontSize: 16, lineHeight: 1.5 }}>{card.a || '—'}</div>
-        </>
-      ) : (
-        <>
-          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>Question</div>
-          <div style={{ fontSize: 16, fontWeight: 500, lineHeight: 1.5 }}>{card.q}</div>
-          <div style={{ fontSize: 12, color: 'var(--accent)', marginTop: 10 }}>Tap to flip</div>
-        </>
-      )}
-    </div>
-  );
-}
-
-function QuizItem({ item, index }) {
-  const [picked, setPicked] = useState(null);
-  const correct = picked != null && picked === item.answer;
-
-  return (
-    <div className="explanation-card">
-      <div style={{ fontSize: 15, fontWeight: 500, marginBottom: 12 }}>{index + 1}. {item.question}</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {item.choices.map((choice, i) => {
-          let bg = 'var(--bg-elevated)';
-          let color = 'var(--text)';
-          if (picked != null) {
-            if (i === item.answer) { bg = 'rgba(52,199,89,0.2)'; color = 'var(--ok)'; }
-            else if (i === picked) { bg = 'rgba(255,69,58,0.2)'; color = 'var(--bad)'; }
-          }
-          return (
-            <button
-              key={i}
-              onClick={() => picked == null && setPicked(i)}
-              style={{
-                textAlign: 'left', padding: '10px 14px', borderRadius: 10,
-                border: '1px solid var(--divider)', background: bg, color,
-                fontSize: 14, fontFamily: 'inherit', cursor: picked == null ? 'pointer' : 'default',
-              }}
-            >
-              {String.fromCharCode(65 + i)}. {choice}
-            </button>
-          );
-        })}
-      </div>
-      {picked != null && (
-        <div style={{ marginTop: 10, fontSize: 13, fontWeight: 500, color: correct ? 'var(--ok)' : 'var(--bad)' }}>
-          {correct ? '✓ Correct' : '✗ Not quite'}
-        </div>
       )}
     </div>
   );

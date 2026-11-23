@@ -1,59 +1,159 @@
 /**
- * Appearance settings — theme (auto/light/dark), accent color, note font size.
- * Changes apply instantly via theme.js and persist in localStorage.
+ * SettingsScreen — Appearance, Reading & AI Style, AI Backend (Direct + Termux),
+ * Provider model chips, Key reveal toggles, Backup/Restore JSON, and About.
  */
-import { useState, useEffect } from 'react';
-import { THEME_KEY, ACCENT_KEY, SIZE_KEY, HINT_KEY, ACCENTS, getSettings, applySettings } from '../theme';
-import { getAiMode, getProviderId, getDirectConfig, getKeyForProvider, setKeyForProvider, migrateLegacyKey, getReasonModel, getTavilyKey, PROVIDERS, maskKey, MODE_KEY, PROVIDER_KEY, BASEURL_KEY, MODEL_KEY, REASON_KEY, TAVILY_KEY } from '../lib/aiConfig';
+import { useState, useRef } from 'react';
+import {
+  ChevronLeft,
+  Eye,
+  EyeOff,
+  Plug,
+  Download,
+  Upload,
+  ChevronDown,
+  ChevronUp,
+} from 'lucide-react';
+import {
+  THEME_KEY,
+  ACCENT_KEY,
+  SIZE_KEY,
+  HINT_KEY,
+  ACCENTS,
+  getSettings,
+  applySettings,
+} from '../theme';
+import {
+  getAiMode,
+  getProviderId,
+  getDirectConfig,
+  getKeyForProvider,
+  setKeyForProvider,
+  getReasonModel,
+  getTavilyKey,
+  getExplainStyle,
+  setExplainStyle,
+  getAutoFallback,
+  setAutoFallback,
+  getFallbackProviders,
+  EXPLAIN_STYLES,
+  PROVIDERS,
+  MODE_KEY,
+  PROVIDER_KEY,
+  BASEURL_KEY,
+  MODEL_KEY,
+  REASON_KEY,
+  TAVILY_KEY,
+} from '../lib/aiConfig';
+import { createAbortController, testTermuxConnection } from '../lib/aiCore';
+import { getRawApiBaseOverride, setApiBase } from '../config';
+import { exportBackup, importBackup } from '../store/db';
+import { useDialog } from './ui/DialogProvider';
 
-export default function SettingsScreen({ onBack }) {
+function Segmented({ options, value, onChange }) {
+  return (
+    <div className="view-switcher view-switcher-inline">
+      {options.map(([v, label]) => (
+        <button
+          key={v}
+          type="button"
+          className={`view-switch-btn${value === v ? ' active' : ''}`}
+          onClick={() => onChange(v)}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export default function SettingsScreen({ onBack, onDataImported }) {
+  const { confirm, toast } = useDialog();
   const initial = getSettings();
   const [theme, setTheme] = useState(initial.theme);
   const [accent, setAccent] = useState(initial.accent);
   const [size, setSize] = useState(initial.size);
+  const [explainStyle, setStyleState] = useState(() => getExplainStyle());
   const [showHint, setShowHint] = useState(() => {
-    try { return localStorage.getItem(HINT_KEY) === 'true'; } catch { return false; }
+    try {
+      return localStorage.getItem(HINT_KEY) === 'true';
+    } catch {
+      return false;
+    }
   });
-  const [toast, setToast] = useState(null);
 
-  const set = (key, value, setter) => {
+  const [mode, setMode] = useState(() => getAiMode());
+  const [provider, setProvider] = useState(() => getProviderId());
+  const [key, setKey] = useState(() => getKeyForProvider(getProviderId()));
+  const [baseUrl, setBaseUrl] = useState(() => getDirectConfig().baseUrl);
+  const [model, setModel] = useState(() => getDirectConfig().model);
+  const [reasonModel, setReasonModel] = useState(() => getReasonModel());
+  const [tavilyKey, setTavilyKey] = useState(() => getTavilyKey());
+  const [termuxUrl, setTermuxUrl] = useState(() => getRawApiBaseOverride());
+  const [autoFallback, setAutoFallbackState] = useState(() => getAutoFallback());
+
+  const [showKey, setShowKey] = useState(false);
+  const [showTavily, setShowTavily] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [backupBusy, setBackupBusy] = useState(false);
+
+  const importInputRef = useRef(null);
+
+  const setPref = (lsKey, value, setter) => {
     setter(value);
-    localStorage.setItem(key, value);
+    try {
+      localStorage.setItem(lsKey, value);
+    } catch {
+      // ignore
+    }
     applySettings();
+  };
+
+  const handleStyleChange = val => {
+    setStyleState(val);
+    setExplainStyle(val);
+    toast(`Explanation style: ${EXPLAIN_STYLES.find(([v]) => v === val)?.[1] || val}`);
   };
 
   const handleHintChange = v => {
     setShowHint(v);
-    localStorage.setItem(HINT_KEY, v.toString());
-  };
-
-  const handleModeChange = mode => {
-    set(MODE_KEY, mode, setMode);
-    if (mode === 'direct') {
-      const currentProvider = getProviderId();
-      const preset = PROVIDERS[currentProvider] || PROVIDERS.groq;
-      if (!localStorage.getItem(BASEURL_KEY)) localStorage.setItem(BASEURL_KEY, preset.baseUrl);
-      if (!localStorage.getItem(MODEL_KEY)) localStorage.setItem(MODEL_KEY, preset.defaultModel);
-      // Refresh local state to reflect stored defaults
-      setBaseUrl(localStorage.getItem(BASEURL_KEY) || preset.baseUrl);
-      setModel(localStorage.getItem(MODEL_KEY) || preset.defaultModel);
+    try {
+      localStorage.setItem(HINT_KEY, v.toString());
+    } catch {
+      // ignore
     }
   };
 
+  const handleModeChange = nextMode => {
+    setPref(MODE_KEY, nextMode, setMode);
+    if (nextMode === 'direct') {
+      const pid = getProviderId();
+      const preset = PROVIDERS[pid] || PROVIDERS.groq;
+      if (!localStorage.getItem(BASEURL_KEY)) localStorage.setItem(BASEURL_KEY, preset.baseUrl);
+      if (!localStorage.getItem(MODEL_KEY)) localStorage.setItem(MODEL_KEY, preset.defaultModel);
+      setBaseUrl(localStorage.getItem(BASEURL_KEY) || preset.baseUrl);
+      setModel(localStorage.getItem(MODEL_KEY) || preset.defaultModel);
+      setReasonModel(getReasonModel());
+    }
+  };
+
+  // FIXED: switching provider now resets baseUrl, model, AND reasonModel cleanly!
   const handleProviderChange = providerId => {
     const preset = PROVIDERS[providerId] || PROVIDERS.groq;
-    set(PROVIDER_KEY, providerId, setProvider);
-    localStorage.setItem(BASEURL_KEY, preset.baseUrl);
-    localStorage.setItem(MODEL_KEY, preset.defaultModel);
+    setPref(PROVIDER_KEY, providerId, setProvider);
+    try {
+      localStorage.setItem(BASEURL_KEY, preset.baseUrl);
+      localStorage.setItem(MODEL_KEY, preset.defaultModel);
+      localStorage.setItem(REASON_KEY, preset.reasonModel || '');
+    } catch {
+      // ignore
+    }
     setBaseUrl(preset.baseUrl);
     setModel(preset.defaultModel);
-    // Load THIS provider's saved key — never wipe other providers' keys
+    setReasonModel(preset.reasonModel || preset.defaultModel || '');
     setKey(getKeyForProvider(providerId));
   };
 
-  // IMPORTANT: update React state on every keystroke, otherwise the
-  // controlled input wipes the value and "nothing shows when pasting".
-  // The key is saved per provider, so switching never loses it.
   const handleKeyChange = e => {
     const v = e.target.value;
     setKey(v);
@@ -62,33 +162,53 @@ export default function SettingsScreen({ onBack }) {
 
   const handleBaseUrlChange = e => {
     setBaseUrl(e.target.value);
-    localStorage.setItem(BASEURL_KEY, e.target.value);
+    try {
+      localStorage.setItem(BASEURL_KEY, e.target.value);
+    } catch {
+      // ignore
+    }
   };
 
-  const handleModelChange = e => {
-    setModel(e.target.value);
-    localStorage.setItem(MODEL_KEY, e.target.value);
+  const handleModelChange = val => {
+    setModel(val);
+    try {
+      localStorage.setItem(MODEL_KEY, val);
+    } catch {
+      // ignore
+    }
   };
 
-  const handleReasonModelChange = e => {
-    setReasonModel(e.target.value);
-    localStorage.setItem(REASON_KEY, e.target.value);
+  const handleReasonModelChange = val => {
+    setReasonModel(val);
+    try {
+      localStorage.setItem(REASON_KEY, val);
+    } catch {
+      // ignore
+    }
   };
 
   const handleTavilyChange = e => {
     setTavilyKey(e.target.value);
-    localStorage.setItem(TAVILY_KEY, e.target.value);
+    try {
+      localStorage.setItem(TAVILY_KEY, e.target.value);
+    } catch {
+      // ignore
+    }
   };
 
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const handleTermuxUrlChange = e => {
+    setTermuxUrl(e.target.value);
+    setApiBase(e.target.value, { reload: false });
+  };
 
-  const testConnection = async () => {
-    const bUrl = baseUrl.trim().replace(/\/$/, '');
+  const testDirectConnection = async () => {
+    const bUrl = baseUrl.trim().replace(/\/+$/, '');
     const k = key.trim();
     const m = model.trim();
-    if (!k) { showToast('Enter an API key first'); return; }
-    if (!bUrl || !m) { showToast('Base URL / model missing — check Advanced'); return; }
-    showToast('Testing…');
+    if (!k) return toast('Enter an API key first', { type: 'error' });
+    if (!bUrl || !m) return toast('Base URL or model is missing', { type: 'error' });
+    setTesting(true);
+    const ctrl = createAbortController(15000);
     try {
       const res = await fetch(`${bUrl}/chat/completions`, {
         method: 'POST',
@@ -99,120 +219,214 @@ export default function SettingsScreen({ onBack }) {
           max_tokens: 10,
           temperature: 0,
         }),
-        signal: AbortSignal.timeout(15000),
+        signal: ctrl.signal,
       });
-      if (res.ok) { showToast('✅ Connected!'); }
-      else {
+      if (res.ok) {
+        toast('Connected to AI provider!', { type: 'success' });
+      } else {
         const t = await res.text().catch(() => '');
-        showToast(`❌ ${res.status}: ${t.slice(0, 80)}`);
+        toast(`Error ${res.status}: ${t.slice(0, 90)}`, { type: 'error', duration: 4000 });
       }
     } catch (e) {
-      showToast(`❌ ${e.message}`);
+      toast(`Connection failed: ${e.message}`, { type: 'error', duration: 4000 });
+    } finally {
+      ctrl.cleanup();
+      setTesting(false);
     }
   };
 
-  const [mode, setMode] = useState(() => getAiMode());
-  const [provider, setProvider] = useState(() => getProviderId());
-  // Migrate any legacy single key into the per-provider map, then load
-  migrateLegacyKey();
-  const directConfig = getDirectConfig();
-  const [key, setKey] = useState(() => getKeyForProvider(getProviderId()));
-  const [baseUrl, setBaseUrl] = useState(directConfig.baseUrl);
-  const [model, setModel] = useState(directConfig.model);
-  const [reasonModel, setReasonModel] = useState(() => getReasonModel());
-  const [tavilyKey, setTavilyKey] = useState(() => getTavilyKey());
-
-  const showToast = msg => {
-    setToast(msg);
-    setTimeout(() => setToast(null), 2500);
+  const handleTestTermux = async () => {
+    setTesting(true);
+    try {
+      const info = await testTermuxConnection();
+      toast(
+        info.configured
+          ? `Connected! Model: ${info.model}`
+          : 'Server reachable, but FREELLMAPI_API_KEY is not set in .env',
+        { type: info.configured ? 'success' : 'info', duration: 3500 }
+      );
+    } catch (err) {
+      toast(err.message, { type: 'error', duration: 3500 });
+    } finally {
+      setTesting(false);
+    }
   };
 
-  const Segmented = ({ options, value, onChange }) => (
-    <div className="view-switcher" style={{ margin: '8px 0 0' }}>
-      {options.map(([v, label]) => (
-        <button
-          key={v}
-          className={`view-switch-btn${value === v ? ' active' : ''}`}
-          onClick={() => onChange(v)}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
-  );
+  // Backup Export (JSON)
+  const handleExportBackup = async () => {
+    if (backupBusy) return;
+    setBackupBusy(true);
+    try {
+      const data = await exportBackup();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ai-class-notes-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast(`Exported ${data.notes.length} notes & ${data.folders.length} folders`, {
+        type: 'success',
+      });
+    } catch (err) {
+      toast(`Backup failed: ${err.message}`, { type: 'error' });
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const handleImportFile = async e => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setBackupBusy(true);
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const replace = await confirm({
+        title: 'Import backup',
+        message: `Found ${parsed?.notes?.length || 0} notes in "${file.name}". Merge with your existing notes, or replace everything?`,
+        confirmLabel: 'Merge safely',
+        cancelLabel: 'Cancel',
+      });
+      if (!replace) return;
+      const stats = await importBackup(parsed, { mode: 'merge' });
+      toast(`Imported ${stats.notesAdded} notes`, { type: 'success' });
+      onDataImported?.();
+    } catch (err) {
+      toast(`Import failed: ${err.message}`, { type: 'error' });
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const preset = PROVIDERS[provider] || PROVIDERS.groq;
 
   return (
     <div className="screen">
-      <header className="navbar safe-top">
-        <button className="navbar-btn" style={{ width: 'auto', paddingLeft: 0 }} onClick={onBack} aria-label="Back to folders">
-          ‹ Folders
+      <header className="navbar">
+        <button
+          type="button"
+          className="navbar-btn navbar-back"
+          onClick={onBack}
+          aria-label="Back to folders"
+        >
+          <ChevronLeft size={20} /> Folders
         </button>
-        <span className="navbar-title" style={{ fontSize: 15 }}>Settings</span>
-        <span style={{ width: 44 }} />
+        <span className="navbar-title">Settings</span>
+        <span style={{ width: 64 }} />
       </header>
+
       <div className="large-title">Settings</div>
 
-      <div className="list-group" style={{ padding: '14px 16px' }}>
+      {/* Appearance & Reading */}
+      <div className="list-group settings-group">
         <div className="settings-label">Appearance</div>
         <Segmented
-          options={[['auto', 'Auto'], ['light', 'Light'], ['dark', 'Dark']]}
+          options={[
+            ['auto', 'Auto'],
+            ['light', 'Light'],
+            ['dark', 'Dark'],
+          ]}
           value={theme}
-          onChange={v => set(THEME_KEY, v, setTheme)}
+          onChange={v => setPref(THEME_KEY, v, setTheme)}
         />
 
-        <div className="settings-label" style={{ marginTop: 18 }}>Accent color</div>
+        <div className="settings-label mt-16">Accent color</div>
         <div className="accent-row">
-          {Object.entries(ACCENTS).map(([key, a]) => (
+          {Object.entries(ACCENTS).map(([id, a]) => (
             <button
-              key={key}
-              className={`accent-swatch${accent === key ? ' active' : ''}`}
+              key={id}
+              type="button"
+              className={`accent-swatch${accent === id ? ' active' : ''}`}
               style={{ background: a.c }}
               aria-label={a.label}
-              aria-pressed={accent === key}
-              onClick={() => set(ACCENT_KEY, key, setAccent)}
+              aria-pressed={accent === id}
+              onClick={() => setPref(ACCENT_KEY, id, setAccent)}
             />
           ))}
         </div>
 
-        <div className="settings-label" style={{ marginTop: 18 }}>Note text size</div>
+        <div className="settings-label mt-16">Note text size</div>
         <Segmented
-          options={[['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']]}
+          options={[
+            ['small', 'Small'],
+            ['medium', 'Medium'],
+            ['large', 'Large'],
+          ]}
           value={size}
-          onChange={v => set(SIZE_KEY, v, setSize)}
+          onChange={v => setPref(SIZE_KEY, v, setSize)}
         />
 
-        <div className="settings-label" style={{ marginTop: 18 }}>Reading</div>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 12, paddingTop: 12, cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={showHint}
-            onChange={e => handleHintChange(e.target.checked)}
-          />
-          <span style={{ fontSize: 15, color: 'var(--text)' }}>Show AI hint under lines</span>
+        <div className="settings-label mt-16">AI Explanation Style</div>
+        <Segmented
+          options={EXPLAIN_STYLES}
+          value={explainStyle}
+          onChange={handleStyleChange}
+        />
+
+        <label className="ios-switch-row mt-12">
+          <span className="ios-switch-label">Show AI hint preview under lines</span>
+          <span className="ios-switch">
+            <input
+              type="checkbox"
+              checked={showHint}
+              onChange={e => handleHintChange(e.target.checked)}
+            />
+            <span className="ios-switch-track" />
+          </span>
         </label>
       </div>
 
-      {/* AI Backend — own group, clean structure */}
-      <div className="list-group" style={{ padding: '14px 16px' }}>
+      {/* AI Backend */}
+      <div className="list-group settings-group">
         <div className="settings-label">AI Backend</div>
         <Segmented
-          options={[['termux', 'Termux'], ['direct', 'Direct API']]}
+          options={[
+            ['termux', 'Termux / Local'],
+            ['direct', 'Direct API'],
+          ]}
           value={mode}
           onChange={handleModeChange}
         />
-        <div className="settings-tip" style={{ marginTop: 8 }}>
+        <div className="settings-tip">
           {mode === 'termux'
-            ? 'Uses the free local Termux server. Start it with the "notes" command.'
-            : 'Calls your chosen AI provider straight from this device — no Termux needed.'}
+            ? 'Relays AI requests through your local Express/Termux backend.'
+            : 'Calls your chosen AI provider straight from this device — no backend server needed.'}
         </div>
+
+        {mode === 'termux' && (
+          <>
+            <div className="settings-label mt-16">Server URL override (optional)</div>
+            <input
+              type="url"
+              className="ai-input"
+              value={termuxUrl}
+              onChange={handleTermuxUrlChange}
+              placeholder="Default: same origin (web) or http://127.0.0.1:8080 (APK)"
+              spellCheck="false"
+            />
+            <button
+              type="button"
+              className="btn btn-primary w-full mt-12"
+              disabled={testing}
+              onClick={handleTestTermux}
+            >
+              <Plug size={16} /> {testing ? 'Checking…' : 'Test Backend Connection'}
+            </button>
+          </>
+        )}
 
         {mode === 'direct' && (
           <>
-            <div className="settings-label" style={{ marginTop: 16 }}>Provider</div>
+            <div className="settings-label mt-16">Provider</div>
             <div className="provider-grid">
               {Object.entries(PROVIDERS).map(([id, p]) => (
                 <button
                   key={id}
+                  type="button"
                   className={`provider-chip${provider === id ? ' active' : ''}`}
                   onClick={() => handleProviderChange(id)}
                 >
@@ -222,104 +436,212 @@ export default function SettingsScreen({ onBack }) {
               ))}
             </div>
 
-            <div className="settings-label" style={{ marginTop: 16 }}>API key</div>
-            <input
-              type="password"
-              className="ai-input"
-              value={key}
-              onChange={handleKeyChange}
-              placeholder="Paste your API key"
-              autoComplete="off"
-              spellCheck="false"
-            />
-            {key && (
-              <div className="settings-tip" style={{ marginTop: 6 }}>
-                Key saved for {PROVIDERS[provider]?.name} — stored only on this device.
-              </div>
-            )}
-            {PROVIDERS[provider]?.keyUrl && (
-              <div className="settings-tip" style={{ marginTop: 6 }}>
-                Free key: <a href={PROVIDERS[provider].keyUrl} target="_blank" rel="noopener" style={{ color: 'var(--accent)' }}>{PROVIDERS[provider].keyUrl.replace('https://', '')}</a>
+            <div className="settings-label mt-16">API key ({preset.name})</div>
+            <div className="ai-input-wrap">
+              <input
+                type={showKey ? 'text' : 'password'}
+                className="ai-input"
+                value={key}
+                onChange={handleKeyChange}
+                placeholder="Paste your API key"
+                autoComplete="off"
+                spellCheck="false"
+              />
+              <button
+                type="button"
+                className="input-reveal-btn"
+                onClick={() => setShowKey(s => !s)}
+                aria-label={showKey ? 'Hide API key' : 'Show API key'}
+              >
+                {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+            {preset.keyUrl && (
+              <div className="settings-tip">
+                Get a key:{' '}
+                <a href={preset.keyUrl} target="_blank" rel="noopener noreferrer">
+                  {preset.keyUrl.replace('https://', '')}
+                </a>
               </div>
             )}
 
-            <button className="btn btn-primary" onClick={testConnection} style={{ width: '100%', marginTop: 14 }}>
-              🔍 Test Connection
-            </button>
-
+            {/* Quick-pick Model Chips */}
+            {preset.models.length > 0 && (
+              <>
+                <div className="settings-label mt-16">Model</div>
+                <div className="model-chips">
+                  {preset.models.map(m => (
+                    <button
+                      key={m}
+                      type="button"
+                      className={`model-chip${model === m ? ' active' : ''}`}
+                      onClick={() => handleModelChange(m)}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
 
             <button
-              className="btn btn-ghost"
-              style={{ width: '100%', marginTop: 8, fontSize: 13 }}
+              type="button"
+              className="btn btn-primary w-full mt-12"
+              disabled={testing}
+              onClick={testDirectConnection}
+            >
+              <Plug size={16} /> {testing ? 'Testing…' : 'Test Connection'}
+            </button>
+
+            <label className="ios-switch-row mt-12">
+              <span className="ios-switch-label" style={{ fontSize: 14 }}>
+                Auto-fallback on rate limits (429)
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+                  {(() => {
+                    const count = getFallbackProviders().length;
+                    return count > 0
+                      ? `${count} backup provider key${count === 1 ? '' : 's'} ready if ${preset.name} hits free-tier limits.`
+                      : 'Save keys for 2+ free providers (e.g. NVIDIA, Kilo, Gemini, Groq) to auto-failover.';
+                  })()}
+                </div>
+              </span>
+              <span className="ios-switch">
+                <input
+                  type="checkbox"
+                  checked={autoFallback}
+                  onChange={e => {
+                    setAutoFallbackState(e.target.checked);
+                    setAutoFallback(e.target.checked);
+                  }}
+                />
+                <span className="ios-switch-track" />
+              </span>
+            </label>
+
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm w-full mt-8"
               onClick={() => setShowAdvanced(s => !s)}
             >
-              {showAdvanced ? 'Hide advanced' : 'Advanced (base URL, model)'}
+              {showAdvanced ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+              {showAdvanced ? 'Hide advanced settings' : 'Advanced (Custom URL, Model, Deep Think)'}
             </button>
 
             {showAdvanced && (
               <>
-                <div className="settings-label" style={{ marginTop: 12 }}>Base URL</div>
+                <div className="settings-label mt-12">Base URL</div>
                 <input
                   type="url"
                   className="ai-input"
                   value={baseUrl}
                   onChange={handleBaseUrlChange}
-                  placeholder="OpenAI-compatible endpoint"
+                  placeholder="https://api.example.com/v1"
                   spellCheck="false"
                 />
-                <div className="settings-label" style={{ marginTop: 12 }}>Model</div>
+
+                <div className="settings-label mt-12">Custom Model ID</div>
                 <input
                   type="text"
                   className="ai-input"
                   value={model}
-                  onChange={handleModelChange}
+                  onChange={e => handleModelChange(e.target.value)}
                   placeholder="Model ID"
                   spellCheck="false"
                 />
-                <div className="settings-label" style={{ marginTop: 12 }}>🧠 Reasoning model (Deep Think)</div>
+
+                <div className="settings-label mt-12">Reasoning model (Deep Think)</div>
                 <input
                   type="text"
                   className="ai-input"
                   value={reasonModel}
-                  onChange={handleReasonModelChange}
-                  placeholder="e.g. deepseek-r1-distill-llama-70b"
+                  onChange={e => handleReasonModelChange(e.target.value)}
+                  placeholder="e.g. deepseek/deepseek-r1:free"
                   spellCheck="false"
                 />
-                <div className="settings-tip" style={{ marginTop: 6 }}>
-                  Defaults: {PROVIDERS[provider]?.name} → <strong>{PROVIDERS[provider]?.defaultModel || '—'}</strong> · reasoning → <strong>{PROVIDERS[provider]?.reasonModel || '—'}</strong>
+                <div className="settings-tip">
+                  Preset defaults: <strong>{preset.defaultModel || '—'}</strong> · Deep Think:{' '}
+                  <strong>{preset.reasonModel || '—'}</strong>
                 </div>
               </>
             )}
           </>
         )}
 
-        {/* Web search key — works in BOTH modes (chat 🌐 toggle) */}
-        <div className="settings-label" style={{ marginTop: 18 }}>🌐 Web search (optional)</div>
-        <input
-          type="password"
-          className="ai-input"
-          value={tavilyKey}
-          onChange={handleTavilyChange}
-          placeholder="Paste Tavily API key"
-          autoComplete="off"
-          spellCheck="false"
-        />
-        <div className="settings-tip" style={{ marginTop: 6 }}>
-          Lets the chat's 🌐 Web toggle search the internet. Free key (1,000 searches/mo): <a href="https://app.tavily.com" target="_blank" rel="noopener" style={{ color: 'var(--accent)' }}>app.tavily.com</a>
+        {/* Tavily Web Search Key */}
+        <div className="settings-label mt-16">Web search (optional)</div>
+        <div className="ai-input-wrap">
+          <input
+            type={showTavily ? 'text' : 'password'}
+            className="ai-input"
+            value={tavilyKey}
+            onChange={handleTavilyChange}
+            placeholder="Paste Tavily API key"
+            autoComplete="off"
+            spellCheck="false"
+          />
+          <button
+            type="button"
+            className="input-reveal-btn"
+            onClick={() => setShowTavily(s => !s)}
+            aria-label={showTavily ? 'Hide Tavily key' : 'Show Tavily key'}
+          >
+            {showTavily ? <EyeOff size={16} /> : <Eye size={16} />}
+          </button>
         </div>
-      </div>
-
-      <div className="list-group" style={{ padding: '14px 16px' }}>
-        <div className="settings-label">Tips</div>
         <div className="settings-tip">
-          • Type <strong>- [ ] task</strong> for a checklist you can tick in read mode.<br />
-          • Add <strong>#tags</strong> anywhere — tap one in a note list to filter.<br />
-          • Long-press a note or folder for more actions.<br />
-          • Use the share icon in a note to export a PDF.
+          <strong>Research mode</strong> already searches Wikipedia & OpenAlex academic papers for free with no key. Add an optional Tavily key (1,000 free searches/mo) to layer on live general web results:{' '}
+          <a href="https://app.tavily.com" target="_blank" rel="noopener noreferrer">
+            app.tavily.com
+          </a>
         </div>
       </div>
 
-      {toast && <div className="toast">{toast}</div>}
+      {/* Data Backup & Restore */}
+      <div className="list-group settings-group">
+        <div className="settings-label">Backup & Restore</div>
+        <div className="settings-tip">
+          All notes live offline on this device. Export a JSON backup regularly so you can restore or move to another device anytime.
+        </div>
+        <div className="flex gap-8 mt-12">
+          <button
+            type="button"
+            className="btn btn-secondary flex-1"
+            disabled={backupBusy}
+            onClick={handleExportBackup}
+          >
+            <Download size={16} /> Export JSON
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary flex-1"
+            disabled={backupBusy}
+            onClick={() => importInputRef.current?.click()}
+          >
+            <Upload size={16} /> Import JSON
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept="application/json,.json"
+            style={{ display: 'none' }}
+            onChange={handleImportFile}
+          />
+        </div>
+      </div>
+
+      {/* Tips & Version */}
+      <div className="list-group settings-group">
+        <div className="settings-label">Quick Tips</div>
+        <div className="settings-tip">
+          • Use <strong># Heading</strong>, <strong>**bold**</strong>, <strong>- [ ] task</strong>, and <strong>$E = mc^2$</strong> math.<br />
+          • Tap any line in Read mode to inspect or fetch its AI explanation on demand.<br />
+          • Tap an attached photo to zoom, run OCR, or ask AI to explain diagrams.<br />
+          • Press <strong>Ctrl+S</strong> to save immediately or <strong>Ctrl+Shift+S</strong> to save & explain.
+        </div>
+        <div className="settings-tip" style={{ marginTop: 10, opacity: 0.7 }}>
+          AI Class Notes v1.3.0
+        </div>
+      </div>
     </div>
   );
 }

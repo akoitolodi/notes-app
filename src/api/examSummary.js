@@ -1,27 +1,34 @@
 /**
  * Frontend API client — /api/exam-summary.
- * Routes based on the AI backend mode (Settings → AI Backend).
  */
-import { API_BASE } from '../config';
-import { getAiMode } from '../lib/aiConfig';
+import { getApiBase } from '../config';
+import { getAiMode, getExplainStyle } from '../lib/aiConfig';
 import { examSummary as directExamSummary } from '../lib/aiDirect';
 
-export async function examSummary(subject, notes) {
+export async function examSummary(subject, notes, { style = null, signal = null } = {}) {
+  const activeStyle = style || getExplainStyle();
   if (getAiMode() === 'direct') {
-    return directExamSummary({ subject, notes });
+    return directExamSummary({ subject, notes, style: activeStyle, signal });
   }
 
+  const apiBase = getApiBase();
   let res;
   try {
-    res = await fetch(`${API_BASE}/api/exam-summary`, {
+    res = await fetch(`${apiBase}/api/exam-summary`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ subject, notes }),
+      body: JSON.stringify({ subject, notes, style: activeStyle }),
+      signal,
     });
-  } catch {
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      const cancelled = new Error('Cancelled');
+      cancelled.isCancelled = true;
+      throw cancelled;
+    }
     throw new Error(
-      `Can't reach the AI backend${API_BASE ? ` at ${API_BASE}` : ''}. ` +
-      'If you are using the phone app, start the Termux server: node server.js'
+      `Can't reach the AI backend${apiBase ? ` at ${apiBase}` : ''}. ` +
+        'Start the Termux server (node server.js) or switch to Direct API in Settings.'
     );
   }
 

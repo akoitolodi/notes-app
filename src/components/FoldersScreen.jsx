@@ -1,224 +1,494 @@
 /**
- * Folders screen — iOS Notes style. One folder per subject with note counts.
- * New folder via + button; long-press (or edit mode) to rename/delete.
+ * Folders screen — iOS Notes style with Smart Views (All Notes, Pinned, Tags),
+ * subject folders, quick New Note FAB, debounced global search with match
+ * highlighting, and Recently Deleted at the bottom.
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { db, getFoldersWithCounts, createFolder, deleteFolder, renameFolder, searchNotes, getTrashCount } from '../store/db';
+import {
+  Search,
+  Settings,
+  FolderPlus,
+  Folder,
+  FileText,
+  Pin,
+  Trash2,
+  GraduationCap,
+  ChevronRight,
+  MoreHorizontal,
+  X,
+  SquarePen,
+  Hash,
+} from 'lucide-react';
+import {
+  db,
+  getHomeSummary,
+  createFolder,
+  deleteFolder,
+  renameFolder,
+  searchNotes,
+  createNote,
+} from '../store/db';
+import { useDialog } from './ui/DialogProvider';
 
-export default function FoldersScreen({ onOpenFolder, onOpenExam, onOpenNote, onOpenTrash, onOpenSettings }) {
-  const [folders, setFolders] = useState([]);
-  const [showNewFolder, setShowNewFolder] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [editingId, setEditingId] = useState(null);
-  const pressTimer = useRef(null);
-  // Global search (all folders)
+function highlightMatch(text, query) {
+  const s = String(text || '');
+  const q = String(query || '').trim();
+  if (!q) return s;
+  const idx = s.toLowerCase().indexOf(q.toLowerCase());
+  if (idx === -1) return s;
+  return (
+    <>
+      {s.slice(0, idx)}
+      <mark className="search-highlight">{s.slice(idx, idx + q.length)}</mark>
+      {s.slice(idx + q.length)}
+    </>
+  );
+}
+
+export default function FoldersScreen({
+  refreshKey = 0,
+  onOpenFolder,
+  onOpenExam,
+  onOpenNote,
+  onOpenTrash,
+  onOpenSettings,
+}) {
+  const { confirm, prompt, toast } = useDialog();
+  const [summary, setSummary] = useState({
+    folders: [],
+    totalNotes: 0,
+    pinnedCount: 0,
+    trashCount: 0,
+    tags: [],
+  });
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [folderMap, setFolderMap] = useState({});
-  const [trashCount, setTrashCount] = useState(0);
+  const [menuFolder, setMenuFolder] = useState(null);
 
-  // Long-press (500ms) opens the rename/delete actions — double-click
-  // doesn't exist on touch screens.
-  const startLongPress = id => {
-    cancelLongPress();
-    pressTimer.current = setTimeout(() => setEditingId(id), 500);
-  };
+  const pressTimer = useRef(null);
+  const longPressedRef = useRef(false);
+
   const cancelLongPress = () => {
-    if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; }
+    if (pressTimer.current) {
+      clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
   };
+
+  const startLongPress = folder => {
+    cancelLongPress();
+    longPressedRef.current = false;
+    pressTimer.current = setTimeout(() => {
+      longPressedRef.current = true;
+      setMenuFolder(folder);
+    }, 500);
+  };
+
   useEffect(() => () => cancelLongPress(), []);
 
   const refresh = useCallback(async () => {
-    setFolders(await getFoldersWithCounts());
-    setTrashCount(await getTrashCount());
+    setSummary(await getHomeSummary());
   }, []);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    refresh();
+  }, [refresh, refreshKey]);
 
-  // Global search across every folder
+  // Debounced global search across all folders (title, body, AI explanations & terms)
   useEffect(() => {
     let live = true;
-    if (searching && query.trim()) {
-      searchNotes(query, null).then(async r => {
+    if (!searching || !query.trim()) {
+      setResults([]);
+      return undefined;
+    }
+    const t = setTimeout(() => {
+      searchNotes(query, null, 'edited').then(async r => {
         if (!live) return;
         const fm = {};
-        (await db.folders.toArray()).forEach(f => { fm[f.id] = f.name; });
+        (await db.folders.toArray()).forEach(f => {
+          fm[f.id] = f.name;
+        });
         setFolderMap(fm);
         setResults(r);
       });
-    } else {
-      setResults([]);
-    }
-    return () => { live = false; };
+    }, 150);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
   }, [query, searching]);
 
-  const handleCreate = async () => {
-    if (!newName.trim()) return;
-    await createFolder(newName);
-    setNewName('');
-    setShowNewFolder(false);
+  const toggleSearch = () => {
+    setSearching(prev => {
+      if (prev) {
+        setQuery('');
+        setResults([]);
+      }
+      return !prev;
+    });
+  };
+
+  const handleNewFolder = async () => {
+    const name = await prompt({
+      title: 'New folder',
+      placeholder: 'e.g. Biology, Calculus, History',
+      confirmLabel: 'Create',
+    });
+    if (!name) return;
+    await createFolder(name);
+    toast(`Created "${name}"`);
     refresh();
   };
 
-  const handleDelete = async (e, id) => {
-    e.stopPropagation();
-    if (!confirm('Delete this folder and all its notes?')) return;
-    await deleteFolder(id);
-    refresh();
-  };
-
-  const handleRename = async (e, id) => {
-    e.stopPropagation();
-    const name = prompt('Rename folder');
-    if (name && name.trim()) {
-      await renameFolder(id, name);
+  const handleRename = async folder => {
+    setMenuFolder(null);
+    const name = await prompt({
+      title: 'Rename folder',
+      defaultValue: folder.name,
+      placeholder: 'Folder name',
+      confirmLabel: 'Rename',
+    });
+    if (name && name !== folder.name) {
+      await renameFolder(folder.id, name);
+      toast(`Renamed to "${name}"`);
       refresh();
     }
-    setEditingId(null);
   };
 
+  const handleDelete = async folder => {
+    setMenuFolder(null);
+    const ok = await confirm({
+      title: `Delete "${folder.name}"?`,
+      message:
+        folder.noteCount > 0
+          ? `Its ${folder.noteCount} note${folder.noteCount === 1 ? '' : 's'} will be moved to Recently Deleted for 30 days.`
+          : 'This empty folder will be removed.',
+      confirmLabel: 'Delete folder',
+      destructive: true,
+    });
+    if (!ok) return;
+    await deleteFolder(folder.id);
+    toast(
+      folder.noteCount > 0
+        ? `Folder deleted — notes moved to Trash`
+        : 'Folder deleted'
+    );
+    refresh();
+  };
+
+  const handleQuickNewNote = async () => {
+    const defaultFolder =
+      summary.folders.find(f => f.name === 'General') || summary.folders[0];
+    const created = await createNote(defaultFolder?.id);
+    onOpenNote(created, defaultFolder || { id: '__all__', name: 'All Notes' });
+  };
+
+  const { folders, totalNotes, pinnedCount, trashCount, tags } = summary;
+
   return (
-    <div className="screen" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
-      <header className="navbar safe-top">
-        <span style={{ width: 44 }} />
-        <span className="navbar-title">Folders</span>
-        <div className="flex items-center">
-          <button className="navbar-btn" aria-label="Search all notes" onClick={() => setSearching(s => !s)}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
-            </svg>
+    <div className="screen list-pad-bottom">
+      <header className="navbar">
+        <span className="navbar-title" style={{ opacity: 0 }}>Folders</span>
+        <div className="flex items-center gap-6">
+          <button
+            className={`navbar-btn${searching ? ' navbar-btn-active' : ''}`}
+            aria-label="Search all notes"
+            onClick={toggleSearch}
+          >
+            <Search size={19} />
           </button>
           <button className="navbar-btn" aria-label="Settings" onClick={onOpenSettings}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" />
-            </svg>
+            <Settings size={19} />
           </button>
-          <button className="navbar-btn" aria-label="New folder" onClick={() => setShowNewFolder(true)}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
+          <button className="navbar-btn" aria-label="New folder" onClick={handleNewFolder}>
+            <FolderPlus size={20} />
           </button>
         </div>
       </header>
+
       <div className="large-title">Folders</div>
 
       {searching && (
         <div className="search-bar">
-          <span className="search-icon">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
-            </svg>
-          </span>
-          <input
-            className="search-input"
-            autoFocus
-            placeholder="Search all notes"
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-          />
+          <div className="search-input-wrap">
+            <span className="search-icon">
+              <Search size={16} />
+            </span>
+            <input
+              className="search-input"
+              autoFocus
+              placeholder="Search titles, text & AI explanations"
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+            />
+            {query && (
+              <button
+                className="search-clear"
+                aria-label="Clear search"
+                onClick={() => setQuery('')}
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={toggleSearch}>
+            Cancel
+          </button>
         </div>
       )}
 
       {searching && query.trim() && (
         <div className="list-group">
-          {results.length === 0 && (
-            <div className="list-item"><span className="list-item-subtitle">No matching notes.</span></div>
+          {results.length === 0 ? (
+            <div className="list-item list-item-static">
+              <span className="list-item-subtitle">No matching notes found.</span>
+            </div>
+          ) : (
+            results.map(n => (
+              <button
+                key={n.id}
+                type="button"
+                className="list-item"
+                onClick={() =>
+                  onOpenNote(
+                    n,
+                    folderMap[n.folderId]
+                      ? { id: n.folderId, name: folderMap[n.folderId] }
+                      : { id: '__all__', name: 'All Notes' }
+                  )
+                }
+              >
+                <div className="list-item-body">
+                  <div className="list-item-title">
+                    {highlightMatch(n.title || 'New Note', query)}
+                  </div>
+                  <div className="list-item-subtitle">
+                    {highlightMatch(
+                      (n.body || 'No additional text').replace(/\n/g, ' ').slice(0, 70),
+                      query
+                    )}
+                  </div>
+                </div>
+                <span className="list-item-meta">
+                  {folderMap[n.folderId] || 'Note'}
+                  <ChevronRight size={16} className="list-item-chevron" />
+                </span>
+              </button>
+            ))
           )}
-          {results.map(n => (
-            <div
-              key={n.id}
-              className="list-item"
-              style={{ cursor: 'pointer' }}
-              onClick={() => onOpenNote(n, { id: n.folderId, name: folderMap[n.folderId] })}
-            >
-              <div className="flex-1" style={{ minWidth: 0 }}>
-                <div className="list-item-title" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {n.title || 'New Note'}
-                </div>
-                <div className="list-item-subtitle" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                  {(n.body || 'No additional text').replace(/\n/g, ' ').slice(0, 50)}
-                </div>
-              </div>
-              <span className="list-item-chevron" style={{ marginLeft: 8, fontSize: 13 }}>
-                {folderMap[n.folderId] || ''}
-              </span>
-            </div>
-          ))}
         </div>
       )}
 
-      {showNewFolder && (
-        <div className="list-group" style={{ padding: 12 }}>
-          <input
-            className="search-input"
-            style={{ paddingLeft: 16 }}
-            autoFocus
-            placeholder="Folder name (e.g. Biology)"
-            value={newName}
-            onChange={e => setNewName(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleCreate()}
-          />
-          <div className="flex gap-8 mt-8">
-            <button className="btn btn-primary flex-1" onClick={handleCreate} disabled={!newName.trim()}>Create</button>
-            <button className="btn btn-secondary" onClick={() => { setShowNewFolder(false); setNewName(''); }}>Cancel</button>
-          </div>
-        </div>
-      )}
-
+      {/* Smart Collections */}
       <div className="list-group">
-        <div className="list-item" style={{ cursor: 'pointer' }} onClick={onOpenTrash}>
-          <span style={{ marginRight: 12, fontSize: 22 }}>🗑</span>
-          <div className="flex-1">
-            <div className="list-item-title">Recently Deleted</div>
-            <div className="list-item-subtitle">Kept 30 days</div>
+        <button
+          type="button"
+          className="list-item"
+          onClick={() => onOpenFolder({ id: '__all__', name: 'All Notes', isSmart: true })}
+        >
+          <span className="list-item-icon">
+            <FileText size={17} />
+          </span>
+          <div className="list-item-body">
+            <div className="list-item-title">All Notes</div>
           </div>
-          {trashCount > 0 && <span className="list-item-chevron">{trashCount}</span>}
-        </div>
-      </div>
+          <span className="list-item-meta">
+            <span>{totalNotes}</span>
+            <ChevronRight size={17} className="list-item-chevron" />
+          </span>
+        </button>
 
-      <div className="list-group">
-        {folders.length === 0 && (
-          <div className="list-item"><span className="list-item-subtitle">No folders yet — tap + to add one.</span></div>
-        )}
-        {folders.map(folder => (
-          <div
-            key={folder.id}
+        {pinnedCount > 0 && (
+          <button
+            type="button"
             className="list-item"
-            style={{ cursor: 'pointer' }}
-            onClick={() => onOpenFolder(folder)}
-            onTouchStart={() => startLongPress(folder.id)}
-            onTouchEnd={cancelLongPress}
-            onTouchMove={cancelLongPress}
-            onDoubleClick={() => setEditingId(folder.id)}
+            onClick={() => onOpenFolder({ id: '__pinned__', name: 'Pinned', isSmart: true })}
           >
-            <span style={{ marginRight: 12, fontSize: 22 }}>📁</span>
-            <div className="flex-1" onDoubleClick={() => setEditingId(folder.id)}>
-              <div className="list-item-title">{folder.name}</div>
-              <div className="list-item-subtitle">{folder.noteCount} note{folder.noteCount === 1 ? '' : 's'}</div>
+            <span className="list-item-icon">
+              <Pin size={17} />
+            </span>
+            <div className="list-item-body">
+              <div className="list-item-title">Pinned</div>
             </div>
-            {editingId === folder.id ? (
-              <>
-                <button className="btn btn-ghost" style={{ padding: '6px 10px', fontSize: 14 }} onClick={e => handleRename(e, folder.id)}>Rename</button>
-                <button className="btn btn-ghost" style={{ padding: '6px 10px', fontSize: 14, color: 'var(--bad)' }} onClick={e => handleDelete(e, folder.id)}>Delete</button>
-              </>
-            ) : (
-              <div className="flex items-center gap-8">
-                <button
-                  className="btn btn-ghost"
-                  style={{ padding: '6px 10px', fontSize: 13 }}
-                  onClick={e => { e.stopPropagation(); onOpenExam?.(folder); }}
-                  title="Exam summary"
-                >
-                  📝 Exam
-                </button>
-                <span className="list-item-chevron">›</span>
-              </div>
-            )}
-          </div>
-        ))}
+            <span className="list-item-meta">
+              <span>{pinnedCount}</span>
+              <ChevronRight size={17} className="list-item-chevron" />
+            </span>
+          </button>
+        )}
       </div>
+
+      {/* Subject Folders */}
+      <div className="section-heading">Subjects</div>
+      <div className="list-group">
+        {folders.length === 0 ? (
+          <div className="list-item list-item-static">
+            <span className="list-item-subtitle">No folders yet — tap the + icon to add one.</span>
+          </div>
+        ) : (
+          folders.map(folder => (
+            <div
+              key={folder.id}
+              className="list-item"
+              role="button"
+              tabIndex={0}
+              onClick={() => {
+                if (longPressedRef.current) {
+                  longPressedRef.current = false;
+                  return;
+                }
+                onOpenFolder(folder);
+              }}
+              onKeyDown={e => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onOpenFolder(folder);
+                }
+              }}
+              onTouchStart={() => startLongPress(folder)}
+              onTouchEnd={cancelLongPress}
+              onTouchMove={cancelLongPress}
+              onContextMenu={e => {
+                e.preventDefault();
+                setMenuFolder(folder);
+              }}
+            >
+              <span className="list-item-icon">
+                <Folder size={17} />
+              </span>
+              <div className="list-item-body">
+                <div className="list-item-title">{folder.name}</div>
+                <div className="list-item-subtitle">
+                  {folder.noteCount} note{folder.noteCount === 1 ? '' : 's'}
+                </div>
+              </div>
+              <div className="list-item-meta">
+                {folder.noteCount > 0 && (
+                  <button
+                    type="button"
+                    className="row-action-chip"
+                    onClick={e => {
+                      e.stopPropagation();
+                      onOpenExam?.(folder);
+                    }}
+                    title="Exam summary"
+                  >
+                    <GraduationCap size={14} /> Exam
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="row-icon-btn"
+                  aria-label={`More actions for ${folder.name}`}
+                  onClick={e => {
+                    e.stopPropagation();
+                    setMenuFolder(folder);
+                  }}
+                >
+                  <MoreHorizontal size={17} />
+                </button>
+                <ChevronRight size={17} className="list-item-chevron" />
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Tags */}
+      {tags.length > 0 && (
+        <>
+          <div className="section-heading">Tags</div>
+          <div className="tag-bar">
+            {tags.slice(0, 14).map(t => (
+              <button
+                key={t.name}
+                type="button"
+                className="tag-pill"
+                onClick={() =>
+                  onOpenFolder({ id: `__tag:${t.name}`, name: `#${t.name}`, isSmart: true })
+                }
+              >
+                <Hash size={12} />
+                {t.name}
+                <span style={{ opacity: 0.65 }}>{t.count}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* Recently Deleted — positioned at bottom like iOS Notes */}
+      <div className="list-group" style={{ marginTop: 12 }}>
+        <button type="button" className="list-item" onClick={onOpenTrash}>
+          <span className="list-item-icon danger">
+            <Trash2 size={17} />
+          </span>
+          <div className="list-item-body">
+            <div className="list-item-title">Recently Deleted</div>
+            <div className="list-item-subtitle">Kept for 30 days</div>
+          </div>
+          <span className="list-item-meta">
+            {trashCount > 0 && <span>{trashCount}</span>}
+            <ChevronRight size={17} className="list-item-chevron" />
+          </span>
+        </button>
+      </div>
+
+      {/* Folder action sheet */}
+      {menuFolder && (
+        <div className="export-overlay" onClick={() => setMenuFolder(null)}>
+          <div className="export-sheet" onClick={e => e.stopPropagation()}>
+            <div className="export-title">{menuFolder.name}</div>
+            {menuFolder.noteCount > 0 && (
+              <button
+                type="button"
+                className="export-btn"
+                onClick={() => {
+                  const f = menuFolder;
+                  setMenuFolder(null);
+                  onOpenExam?.(f);
+                }}
+              >
+                <GraduationCap size={18} /> Exam Summary
+              </button>
+            )}
+            <button
+              type="button"
+              className="export-btn"
+              onClick={() => handleRename(menuFolder)}
+            >
+              <Folder size={18} /> Rename folder
+            </button>
+            <button
+              type="button"
+              className="export-btn danger"
+              onClick={() => handleDelete(menuFolder)}
+            >
+              <Trash2 size={18} /> Delete folder
+            </button>
+            <button
+              type="button"
+              className="export-btn cancel"
+              onClick={() => setMenuFolder(null)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Quick New Note FAB */}
+      <button
+        type="button"
+        className="fab"
+        onClick={handleQuickNewNote}
+        aria-label="New note"
+        title="New note"
+      >
+        <SquarePen size={22} />
+      </button>
     </div>
   );
 }

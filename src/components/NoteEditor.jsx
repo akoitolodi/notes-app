@@ -1,401 +1,851 @@
 /**
- * Note editor — iOS Notes style, with the full explanation layer (Phase 3).
- *
- * Modes:
- *   edit — title + textarea + Save (the core loop)
- *   read — rendered lines with explanations, panel view (tap line → slide-up panel)
- *
- * "Explain simpler" / "Give example" re-scan a single line via /api/scan-line.
- * Panel view is the only view mode (inline/swipe removed in v1.2.0).
- * Full-note annotation overlay: pen, highlighter, eraser, arrow, line, text.
- * 12-color palette + custom color picker, 3 stroke sizes per tool.
+ * NoteEditor — modular orchestrator for Edit Mode, Read Mode, AI explanations,
+ * Chat, Annotations (with Undo/Redo/Clear), Images, Export/PDF, and Note actions.
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { Capacitor } from '@capacitor/core';
+import {
+  ChevronLeft,
+  MessageSquare,
+  GraduationCap,
+  Pencil,
+  MoreHorizontal,
+  Folder,
+  ChevronRight,
+  Sparkles,
+  RotateCw,
+  Link2,
+  PenTool,
+  Share2,
+  Pin,
+  PinOff,
+  Copy,
+  FolderInput,
+  Trash2,
+  FileDown,
+  Printer,
+  ClipboardCopy,
+  FileText,
+} from 'lucide-react';
 import { scanNote } from '../api/scan';
 import { scanLine } from '../api/scanLine';
-import { updateNote, moveNote, getNote } from '../store/db';
-import StrokeLayer, { PALETTE, TOOLS, SIZES, SIZE_LABEL } from './StrokeLayer';
+import {
+  db,
+  createNote,
+  updateNote,
+  moveNote,
+  getNote,
+  togglePin,
+  duplicateNote,
+  deleteNote,
+  noteHasContent,
+  saveImageAttachment,
+  deleteImageAttachment,
+  resolveImageDataUrl,
+  diffAndRemapBlocks,
+} from '../store/db';
+import StrokeLayer, { renderStrokesToCanvas } from './StrokeLayer';
 import ImageStrip, { pickImage, compressImage } from './ImageManager';
-import { buildNotePDF, saveNotePDF } from '../lib/pdf';
-import { Capacitor } from '@capacitor/core';
 import ChatSheet from './ChatSheet';
 import { summarizeNote, ocrImage, findRelatedNotes } from '../lib/aiFeatures';
 import SlideUpPanel from './SlideUpPanel';
 import FolderPickerSheet from './FolderPickerSheet';
-import {
-  renderLineText,
-  MistakeBox,
-  NoteLine as NoteLineComponent,
-} from './InlineComponents';
+import { NoteLine as NoteLineComponent } from './InlineComponents';
+import EditModeView from './editor/EditModeView';
+import AnnotateBar from './editor/AnnotateBar';
+import MarkdownContent from './ui/MarkdownContent';
+import { useDialog } from './ui/DialogProvider';
+import { isDarkTheme, HINT_KEY } from '../theme';
 
-const HINT_KEY = 'aicn:showHint';
+function normalizeDrawings(d) {
+  if (Array.isArray(d)) return { refWidth: 0, strokes: d };
+  if (d && Array.isArray(d.strokes)) return d;
+  return { refWidth: 0, strokes: [] };
+}
 
-export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList, onOpenNote }) {
-  const [mode, setMode] = useState(() => {
-    const isNew = !(note?.title || '').trim() && !(note?.body || '').trim();
-    return isNew ? 'edit' : 'read';
-  });
+export default function NoteEditor({
+  note,
+  folderName,
+  onOpenStudy,
+  onBackToList,
+  onOpenNote,
+  onNoteMoved,
+  onNoteDeleted,
+  onNoteChanged,
+  onRegisterBack,
+}) {
+  const { confirm, toast } = useDialog();
+
+  const [mode, setMode] = useState(() => (noteHasContent(note) ? 'read' : 'edit'));
   const [title, setTitle] = useState(note?.title || '');
   const [body, setBody] = useState(note?.body || '');
-  const [subject, setSubject] = useState(note?.subject || 'General');
+  const [subject, setSubject] = useState(
+    note?.subject && note.subject !== 'General'
+      ? note.subject
+      : folderName && !['All Notes', 'Pinned'].includes(folderName) && !folderName.startsWith('#')
+        ? folderName
+        : note?.subject || 'General'
+  );
+  const [folderId, setFolderId] = useState(note?.folderId);
+  const [folderLabel, setFolderLabel] = useState(folderName || '');
+  const [pinned, setPinned] = useState(Boolean(note?.pinned));
   const [blocks, setBlocks] = useState(note?.blocks || []);
   const [flashcards, setFlashcards] = useState(note?.flashcards || []);
   const [quiz, setQuiz] = useState(note?.quiz || []);
+  const [chatMsgs, setChatMsgs] = useState(note?.chat || []);
+  const [images, setImages] = useState(note?.images || []);
+  const [drawings, setDrawings] = useState(() => normalizeDrawings(note?.drawings));
+
+  // Stroke undo/redo history
+  const [strokeUndo, setStrokeUndo] = useState([]);
+  const [strokeRedo, setStrokeRedo] = useState([]);
+
+  // Save / scan state
+  const [saveState, setSaveState] = useState('saved'); // saved | saving | dirty
   const [isScanning, setIsScanning] = useState(false);
   const [scanError, setScanError] = useState(null);
+  const scanAbortRef = useRef(null);
+
+  // Panels & modals
   const [panelOpen, setPanelOpen] = useState(false);
   const [selectedLineId, setSelectedLineId] = useState(null);
-  const [expandedInline, setExpandedInline] = useState({});
   const [busyLine, setBusyLine] = useState(null);
   const [dismissed, setDismissed] = useState(() => {
     const map = {};
-    (note?.blocks || []).forEach(b => { if (b.mistakeIgnored) map[b.id] = true; });
+    (note?.blocks || []).forEach(b => {
+      if (b.mistakeIgnored) map[b.id] = true;
+    });
     return map;
   });
+  const [moreOpen, setMoreOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [printPayload, setPrintPayload] = useState(null);
-  const [toast, setToast] = useState(null);
   const [moveOpen, setMoveOpen] = useState(false);
-  const [folderLabel, setFolderLabel] = useState(folderName || '');
-  const [images, setImages] = useState(note?.images || []);
-  // Drawings doc: { refWidth, strokes }. Legacy beta.1 format was a plain
-  // array of strokes — migrate it here so old notes keep working.
-  const [drawings, setDrawings] = useState(() => {
-    const d = note?.drawings;
-    if (Array.isArray(d)) return { refWidth: 0, strokes: d };
-    if (d && Array.isArray(d.strokes)) return d;
-    return { refWidth: 0, strokes: [] };
-  });
-
-  // ---------- AI additions (chat, summary, OCR, related notes) ----------
   const [chatOpen, setChatOpen] = useState(false);
+
+  // AI features state
   const [summary, setSummary] = useState(note?.summary || '');
   const [summarizing, setSummarizing] = useState(false);
   const [ocrBusy, setOcrBusy] = useState(false);
-  const [related, setRelated] = useState(null); // null | [] | [{note, reason}]
+  const [related, setRelated] = useState(null);
   const [relatedOpen, setRelatedOpen] = useState(false);
   const [relatedBusy, setRelatedBusy] = useState(false);
 
-  const handleSummarize = useCallback(async (force = false) => {
-    if (summarizing) return;
-    if (summary && !force) return;
-    if (!body.trim()) { showToast('Write the note first'); return; }
-    setSummarizing(true);
-    try {
-      const s = await summarizeNote({ note: body, subject, style: 'default' });
-      setSummary(s);
-      await updateNote(note.id, { summary: s });
-    } catch (err) {
-      showToast(`Summary failed: ${err.message}`);
-    } finally {
-      setSummarizing(false);
-    }
-  }, [body, subject, summary, note, summarizing]);
-
-  const handleOcrScan = useCallback(async () => {
-    if (ocrBusy) return;
-    setOcrBusy(true);
-    try {
-      const raw = await pickImage('camera');
-      if (!raw) { setOcrBusy(false); return; }
-      showToast('Reading the photo…');
-      const dataUrl = await compressImage(raw);
-      const text = await ocrImage({ imageDataUrl: dataUrl, subject });
-      if (text && text.trim()) {
-        const newBody = (body ? body + '\n' : '') + text.trim();
-        setBody(newBody);
-        savedRef.current = { ...savedRef.current, body: newBody };
-        await updateNote(note.id, { body: newBody });
-        showToast('Text added to note ✅');
-      } else {
-        showToast('No text found in the photo');
-      }
-    } catch (err) {
-      showToast(`Scan failed: ${err.message}`);
-    } finally {
-      setOcrBusy(false);
-    }
-  }, [ocrBusy, body, subject, note]);
-
-  const handleRelated = useCallback(async () => {
-    if (relatedBusy) return;
-    setRelatedOpen(true);
-    if (related) return; // already fetched this session
-    setRelatedBusy(true);
-    try {
-      const others = (await import('../store/db')).db;
-      const all = await others.notes.where('folderId').equals(note.folderId).toArray();
-      const usable = all.filter(n => n.id !== note.id && !n.trashed && (n.body || '').trim());
-      if (usable.length === 0) { setRelated([]); setRelatedBusy(false); return; }
-      const links = await findRelatedNotes({
-        currentNote: { title, body },
-        otherNotes: usable.map(n => ({ id: n.id, title: n.title, body: n.body })),
-      });
-      setRelated(links.map(l => ({ ...l.note, reason: l.reason })));
-    } catch (err) {
-      showToast(`Related notes failed: ${err.message}`);
-      setRelatedOpen(false);
-    } finally {
-      setRelatedBusy(false);
-    }
-  }, [related, relatedBusy, note, title, body]);
-  const [showHint, setShowHint] = useState(() => {
-    try { return localStorage.getItem(HINT_KEY) === 'true'; } catch { return false; }
-  });
-
-  // Undo/redo history for the note body
-  const undoRef = useRef({ stack: [note?.body || ''], index: 0, timer: null });
-  const restoringRef = useRef(false);
-
-  const textareaRef = useRef(null);
-  const savedRef = useRef({ title: note?.title || '', body: note?.body || '' });
-  const initialNoteId = useRef(note?.id);
-
-  // Annotation state — used in READ mode only (full-page overlay)
+  // Draw mode state — defaults to adaptive ink (#ffffff in Dark, #000000 in Light)
   const [drawMode, setDrawMode] = useState(false);
   const [tool, setTool] = useState('pen');
-  const [color, setColor] = useState('#000000');
+  const [color, setColor] = useState(() => (isDarkTheme() ? '#ffffff' : '#000000'));
   const [size, setSize] = useState('medium');
 
-  // Re-init when a *different* note is opened
+  const [showHint] = useState(() => {
+    try {
+      return localStorage.getItem(HINT_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  // Text undo/redo stack (tracks { title, body })
+  const undoRef = useRef({
+    stack: [{ title: note?.title || '', body: note?.body || '' }],
+    index: 0,
+    timer: null,
+  });
+  const [undoMeta, setUndoMeta] = useState({ canUndo: false, canRedo: false });
+  const textareaRef = useRef(null);
+  const savedRef = useRef({
+    title: note?.title || '',
+    body: note?.body || '',
+    subject: note?.subject || 'General',
+  });
+  const autoSaveTimer = useRef(null);
+
+  const syncUndoMeta = useCallback(() => {
+    const h = undoRef.current;
+    setUndoMeta({ canUndo: h.index > 0, canRedo: h.index < h.stack.length - 1 });
+  }, []);
+
+  const commitHistoryNow = useCallback(
+    (nextTitle, nextBody) => {
+      const h = undoRef.current;
+      if (h.timer) {
+        clearTimeout(h.timer);
+        h.timer = null;
+      }
+      const cur = h.stack[h.index];
+      if (cur && cur.title === nextTitle && cur.body === nextBody) return;
+      h.stack = h.stack.slice(0, h.index + 1).concat({ title: nextTitle, body: nextBody });
+      if (h.stack.length > 100) h.stack.shift();
+      h.index = h.stack.length - 1;
+      syncUndoMeta();
+    },
+    [syncUndoMeta]
+  );
+
+  const scheduleHistory = useCallback(
+    (nextTitle, nextBody) => {
+      const h = undoRef.current;
+      if (h.timer) clearTimeout(h.timer);
+      h.timer = setTimeout(() => {
+        commitHistoryNow(nextTitle, nextBody);
+      }, 350);
+    },
+    [commitHistoryNow]
+  );
+
+  const handleTitleChange = val => {
+    setTitle(val);
+    setSaveState('dirty');
+    scheduleHistory(val, body);
+  };
+
+  const handleBodyChange = val => {
+    setBody(val);
+    setSaveState('dirty');
+    scheduleHistory(title, val);
+  };
+
+  const handleSubjectChange = val => {
+    setSubject(val);
+    setSaveState('dirty');
+  };
+
+  const undo = useCallback(() => {
+    // Flush any pending unsaved keystroke first so undo never drops recent work
+    commitHistoryNow(title, body);
+    const h = undoRef.current;
+    if (h.index > 0) {
+      h.index -= 1;
+      const snap = h.stack[h.index];
+      setTitle(snap.title);
+      setBody(snap.body);
+      setSaveState('dirty');
+      syncUndoMeta();
+    }
+  }, [title, body, commitHistoryNow, syncUndoMeta]);
+
+  const redo = useCallback(() => {
+    const h = undoRef.current;
+    if (h.index < h.stack.length - 1) {
+      h.index += 1;
+      const snap = h.stack[h.index];
+      setTitle(snap.title);
+      setBody(snap.body);
+      setSaveState('dirty');
+      syncUndoMeta();
+    }
+  }, [syncUndoMeta]);
+
+  // Debounced auto-save in Edit mode (protects against crashes / tab kills)
   useEffect(() => {
-    if (note?.id === initialNoteId.current) return;
-    setTitle(note?.title || '');
-    setBody(note?.body || '');
-    setSubject(note?.subject || 'General');
-    setBlocks(note?.blocks || []);
-    setImages(note?.images || []);
-    const d = note?.drawings;
-    setDrawings(Array.isArray(d) ? { refWidth: 0, strokes: d }
-      : (d && Array.isArray(d.strokes)) ? d : { refWidth: 0, strokes: [] });
-    setDrawMode(false);
-    setSummary(note?.summary || '');
-    setRelated(null);
-    setFlashcards(note?.flashcards || []);
-    setQuiz(note?.quiz || []);
-    savedRef.current = { title: note?.title || '', body: note?.body || '' };
-    setScanError(null);
-    setMode('read');
-  }, [note?.id]);
+    if (mode !== 'edit') return undefined;
+    const dirty =
+      title !== savedRef.current.title ||
+      body !== savedRef.current.body ||
+      subject !== savedRef.current.subject;
+    if (!dirty) return undefined;
 
-  // Auto-grow textarea
+    setSaveState('dirty');
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    autoSaveTimer.current = setTimeout(async () => {
+      setSaveState('saving');
+      try {
+        // Keep existing explanations remapped onto moved lines during edits
+        const { remappedBlocks } = diffAndRemapBlocks(blocks, savedRef.current.body, body);
+        await updateNote(note.id, { title, body, subject, blocks: remappedBlocks });
+        savedRef.current = { title, body, subject };
+        setBlocks(remappedBlocks);
+        setSaveState('saved');
+        onNoteChanged?.({ title, body, subject, blocks: remappedBlocks });
+      } catch {
+        setSaveState('dirty');
+      }
+    }, 700);
+
+    return () => {
+      if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    };
+  }, [mode, title, body, subject, note.id, blocks, onNoteChanged]);
+
+  // Cleanup abort controllers & timers on unmount
   useEffect(() => {
-    const el = textareaRef.current;
-    if (el && mode === 'edit') {
-      el.style.height = 'auto';
-      el.style.height = `${Math.max(300, el.scrollHeight)}px`;
-    }
-  }, [body, mode]);
+    return () => {
+      if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+      if (undoRef.current.timer) clearTimeout(undoRef.current.timer);
+      scanAbortRef.current?.abort();
+    };
+  }, []);
 
-  // Persist hint preference
+  // Register Back button interception for Android hardware back / browser popstate
   useEffect(() => {
-    localStorage.setItem(HINT_KEY, showHint.toString());
-  }, [showHint]);
-
-  const handleSave = useCallback(async ({ rescan = true } = {}) => {
-    const noteIsEmpty = !body.trim() && !title.trim();
-    if (noteIsEmpty) {
-      await updateNote(note.id, { title, body, subject });
-      savedRef.current = { title, body };
-      setMode('read');
-      return;
-    }
-
-    const oldLines = savedRef.current.body.split('\n');
-    const newLines = body.split('\n');
-    const changedLines = [];
-    for (let i = 0; i < Math.max(oldLines.length, newLines.length); i++) {
-      if (oldLines[i] !== newLines[i]) changedLines.push(i + 1);
-    }
-
-    if (rescan === false || (changedLines.length === 0 && blocks.length > 0)) {
-      await updateNote(note.id, { title, body, subject });
-      savedRef.current = { title, body };
-      setMode('read');
-      return;
-    }
-
-    const covered = new Set();
-    blocks.forEach(b => {
-      const m = /^line-(\d+)$/.exec(b.id);
-      const n = m ? parseInt(m[1], 10) : -1;
-      if (n > 0 && n <= newLines.length && b.text === newLines[n - 1]) covered.add(n);
+    if (!onRegisterBack) return undefined;
+    onRegisterBack(() => {
+      if (chatOpen) {
+        setChatOpen(false);
+        return true;
+      }
+      if (panelOpen) {
+        setPanelOpen(false);
+        return true;
+      }
+      if (moreOpen) {
+        setMoreOpen(false);
+        return true;
+      }
+      if (exportOpen) {
+        setExportOpen(false);
+        return true;
+      }
+      if (moveOpen) {
+        setMoveOpen(false);
+        return true;
+      }
+      if (relatedOpen) {
+        setRelatedOpen(false);
+        return true;
+      }
+      if (drawMode) {
+        setDrawMode(false);
+        return true;
+      }
+      return false;
     });
-    const linesToScan = [...new Set([...changedLines])].filter(n => !covered.has(n));
+    return () => onRegisterBack(null);
+  }, [onRegisterBack, chatOpen, panelOpen, moreOpen, exportOpen, moveOpen, relatedOpen, drawMode]);
+
+  // Persist current text immediately
+  const persistCurrentText = useCallback(async () => {
+    if (autoSaveTimer.current) {
+      clearTimeout(autoSaveTimer.current);
+      autoSaveTimer.current = null;
+    }
+    const { remappedBlocks } = diffAndRemapBlocks(blocks, savedRef.current.body, body);
+    await updateNote(note.id, { title, body, subject, blocks: remappedBlocks, images, drawings });
+    savedRef.current = { title, body, subject };
+    setBlocks(remappedBlocks);
+    setSaveState('saved');
+    onNoteChanged?.({ title, body, subject, blocks: remappedBlocks, images, drawings });
+    return remappedBlocks;
+  }, [note.id, title, body, subject, blocks, images, drawings, onNoteChanged]);
+
+  const handleBackFromEdit = useCallback(async () => {
+    await persistCurrentText();
+    onBackToList?.();
+  }, [persistCurrentText, onBackToList]);
+
+  const handleSaveOnly = useCallback(async () => {
+    await persistCurrentText();
+    setMode('read');
+  }, [persistCurrentText]);
+
+  const handleSaveAndExplain = useCallback(async () => {
+    if (!body.trim() && !title.trim()) {
+      await persistCurrentText();
+      setMode('read');
+      return;
+    }
+
+    const { remappedBlocks, linesToScan } = diffAndRemapBlocks(blocks, savedRef.current.body, body);
+
+    if (linesToScan.length === 0 && remappedBlocks.length > 0) {
+      await persistCurrentText();
+      setMode('read');
+      toast('All lines are already explained');
+      return;
+    }
+
+    scanAbortRef.current?.abort();
+    const controller = new AbortController();
+    scanAbortRef.current = controller;
 
     setIsScanning(true);
     setScanError(null);
     try {
-      const result = await scanNote(body, subject, linesToScan);
-      savedRef.current = { title, body };
-      const fresh = result.blocks || [];
+      const result = await scanNote(body, subject, linesToScan, { signal: controller.signal });
+      const freshBlocks = result.blocks || [];
+      const scannedSet = new Set(linesToScan);
 
-      const merged = blocks
+      const merged = remappedBlocks
         .filter(b => {
           const m = /^line-(\d+)$/.exec(b.id);
           const n = m ? parseInt(m[1], 10) : -1;
-          return !linesToScan.includes(n) && b.text === newLines[n - 1];
+          return !scannedSet.has(n);
         })
-        .concat(fresh)
+        .concat(freshBlocks)
         .sort((a, b) => {
           const na = parseInt((/^line-(\d+)$/.exec(a.id) || [])[1] || 9999, 10);
           const nb = parseInt((/^line-(\d+)$/.exec(b.id) || [])[1] || 9999, 10);
           return na - nb;
         });
 
+      const nextCards = result.flashcards?.length ? result.flashcards : flashcards;
+      const nextQuiz = result.quiz?.length ? result.quiz : quiz;
+
       setBlocks(merged);
-      setFlashcards(result.flashcards?.length ? result.flashcards : flashcards);
-      setQuiz(result.quiz?.length ? result.quiz : quiz);
+      setFlashcards(nextCards);
+      setQuiz(nextQuiz);
+      savedRef.current = { title, body, subject };
       await updateNote(note.id, {
-        title, body, subject,
-        blocks: merged, images, drawings,
-        flashcards: result.flashcards?.length ? result.flashcards : flashcards,
-        quiz: result.quiz?.length ? result.quiz : quiz,
+        title,
+        body,
+        subject,
+        blocks: merged,
+        images,
+        drawings,
+        flashcards: nextCards,
+        quiz: nextQuiz,
+        lastScanAt: Date.now(),
       });
+      setSaveState('saved');
+      onNoteChanged?.();
       setMode('read');
     } catch (err) {
-      setScanError(err.message);
-      try {
-        await updateNote(note.id, { title, body, subject, images, drawings });
-      } catch {/* keep error visible */}
+      if (err?.isCancelled) {
+        toast('AI scan cancelled — note saved');
+        await persistCurrentText();
+      } else {
+        setScanError(err.message);
+        try {
+          await persistCurrentText();
+        } catch {
+          // keep error visible
+        }
+      }
     } finally {
       setIsScanning(false);
     }
-  }, [title, body, subject, note, blocks, flashcards, quiz, images, drawings]);
+  }, [
+    body,
+    title,
+    subject,
+    note.id,
+    blocks,
+    flashcards,
+    quiz,
+    images,
+    drawings,
+    persistCurrentText,
+    onNoteChanged,
+    toast,
+  ]);
 
-  const handleLineRequest = useCallback(async (lineId, request) => {
-    const block = blocks.find(b => b.id === lineId);
-    if (!block || busyLine) return;
-    setBusyLine(lineId);
-    try {
-      const { explanation } = await scanLine(body, block.text, request);
-      const field = request === 'simpler' ? 'simpler' : 'example';
-      const updated = blocks.map(b =>
-        b.id === lineId ? { ...b, [field]: explanation, show: field } : b
-      );
-      setBlocks(updated);
-      setExpandedInline(prev => ({ ...prev, [lineId]: field }));
-      await updateNote(note.id, { blocks: updated });
-    } catch (err) {
-      setScanError(err.message);
-    } finally {
-      setBusyLine(null);
-    }
-  }, [blocks, body, note, busyLine]);
+  // Per-line re-scan (Simpler / Example)
+  const handleLineRequest = useCallback(
+    async (lineId, request) => {
+      const block = blocks.find(b => b.id === lineId);
+      if (!block || busyLine) return;
+      setBusyLine(lineId);
+      try {
+        const { explanation } = await scanLine(body, block.text, request);
+        const field = request === 'simpler' ? 'simpler' : 'example';
+        setBlocks(prev => {
+          const updated = prev.map(b =>
+            b.id === lineId ? { ...b, [field]: explanation, show: field } : b
+          );
+          updateNote(note.id, { blocks: updated }).catch(() => {});
+          return updated;
+        });
+      } catch (err) {
+        toast(`Re-scan failed: ${err.message}`, { type: 'error' });
+      } finally {
+        setBusyLine(null);
+      }
+    },
+    [blocks, body, note.id, busyLine, toast]
+  );
 
-  /** Tap ANY line: open its explanation — fetching it on demand if missing. */
-  const handleLineTap = useCallback(async (block, lineIdx) => {
-    const lineText = (body.split('\n')[lineIdx] || '').trim();
-    // Empty / punctuation-only lines have nothing to explain
-    if (!lineText || !/[a-zA-Z0-9\u00C0-\uFFFF]/.test(lineText)) return;
-    setPanelOpen(true);
-    if (block) {
-      setSelectedLineId(block.id);
-      return;
-    }
-    // No explanation yet → create a placeholder and fetch it now
-    const id = `line-${lineIdx + 1}`;
-    const placeholder = { id, text: lineText, explanation: '', terms: [], mistake: null };
-    setBlocks(prev => [...prev, placeholder]);
-    setSelectedLineId(id);
-    setBusyLine(id);
+  /** Tap ANY line in Read Mode: show explanation or fetch on demand (retryable if failed). */
+  const handleLineTap = useCallback(
+    async (block, lineIdx) => {
+      const lineText = (body.split('\n')[lineIdx] || '').trim();
+      if (!lineText || !/[a-zA-Z0-9\u00C0-\uFFFF]/.test(lineText)) return;
+      setPanelOpen(true);
+
+      // Open immediately if block has a real explanation
+      if (block && !block._failed) {
+        setSelectedLineId(block.id);
+        return;
+      }
+
+      if (busyLine) {
+        toast('Finishing current line explanation…');
+        return;
+      }
+
+      const id = `line-${lineIdx + 1}`;
+      const placeholder = { id, text: lineText, explanation: '', terms: [], mistake: null, _failed: false };
+      setBlocks(prev => [...prev.filter(b => b.id !== id), placeholder]);
+      setSelectedLineId(id);
+      setBusyLine(id);
+
+      try {
+        const result = await scanNote(body, subject, [lineIdx + 1]);
+        const fresh = (result.blocks || []).find(b => b.id === id);
+        if (fresh) {
+          setBlocks(prev => {
+            const lineNo = b => parseInt(String(b.id).replace('line-', ''), 10) || 0;
+            const updated = [...prev.filter(b => b.id !== id), fresh].sort(
+              (a, b) => lineNo(a) - lineNo(b)
+            );
+            updateNote(note.id, { blocks: updated }).catch(() => {});
+            return updated;
+          });
+        } else {
+          setBlocks(prev =>
+            prev.map(b =>
+              b.id === id
+                ? { ...b, explanation: 'The AI had no extra explanation for this line.', _failed: true }
+                : b
+            )
+          );
+        }
+      } catch (err) {
+        setBlocks(prev =>
+          prev.map(b =>
+            b.id === id
+              ? { ...b, explanation: `Failed: ${err.message}`, _failed: true }
+              : b
+          )
+        );
+      } finally {
+        setBusyLine(null);
+      }
+    },
+    [body, subject, note.id, busyLine, toast]
+  );
+
+  const handleShowOriginal = useCallback(
+    async lineId => {
+      setBlocks(prev => {
+        const updated = prev.map(b => (b.id === lineId ? { ...b, show: 'main' } : b));
+        updateNote(note.id, { blocks: updated }).catch(() => {});
+        return updated;
+      });
+    },
+    [note.id]
+  );
+
+  const dismissMistake = useCallback(
+    async lineId => {
+      setDismissed(prev => ({ ...prev, [lineId]: true }));
+      setBlocks(prev => {
+        const updated = prev.map(b => (b.id === lineId ? { ...b, mistakeIgnored: true } : b));
+        updateNote(note.id, { blocks: updated }).catch(() => {});
+        return updated;
+      });
+    },
+    [note.id]
+  );
+
+  // FIXED: updates BOTH block.text AND savedRef.current.body so explanation stays attached!
+  const applyCorrection = useCallback(
+    async (block, mistake) => {
+      if (!mistake?.correction) return;
+      const lineMatch = /^line-(\d+)$/.exec(block.id);
+      if (!lineMatch) return;
+      const lineIndex = parseInt(lineMatch[1], 10) - 1;
+      const newLines = body.split('\n');
+      if (lineIndex < 0 || lineIndex >= newLines.length) return;
+      newLines[lineIndex] = mistake.correction;
+      const newBody = newLines.join('\n');
+
+      setBody(newBody);
+      savedRef.current = { ...savedRef.current, body: newBody };
+      setDismissed(prev => ({ ...prev, [block.id]: true }));
+
+      setBlocks(prev => {
+        const updated = prev.map(b =>
+          b.id === block.id ? { ...b, text: mistake.correction, mistake: null } : b
+        );
+        updateNote(note.id, { body: newBody, blocks: updated }).catch(() => {});
+        return updated;
+      });
+      toast('Correction applied', { type: 'success' });
+      onNoteChanged?.();
+    },
+    [body, note.id, onNoteChanged, toast]
+  );
+
+  // Streaming TL;DR Summary
+  const handleSummarize = useCallback(
+    async (force = false) => {
+      if (summarizing) return;
+      if (summary && !force) return;
+      if (!body.trim()) {
+        toast('Write some notes first');
+        return;
+      }
+      setSummarizing(true);
+      if (force) setSummary('');
+      try {
+        const s = await summarizeNote({
+          note: body,
+          subject,
+          onToken: partial => setSummary(partial),
+        });
+        setSummary(s);
+        await updateNote(note.id, { summary: s });
+      } catch (err) {
+        toast(`Summary failed: ${err.message}`, { type: 'error' });
+      } finally {
+        setSummarizing(false);
+      }
+    },
+    [summarizing, summary, body, subject, note.id, toast]
+  );
+
+  // OCR from Camera
+  const handleOcrScan = useCallback(async () => {
+    if (ocrBusy) return;
+    setOcrBusy(true);
     try {
-      const result = await scanNote(body, subject, [lineIdx + 1]);
-      const fresh = (result.blocks || []).find(b => b.id === id);
-      if (fresh) {
-        setBlocks(prev => prev.map(b => (b.id === id ? fresh : b)));
-        // Persist the new block alongside existing ones
-        const lineNo = b => parseInt(String(b.id).replace('line-', ''), 10) || 0;
-        const updated = [...blocks.filter(b => b.id !== id), fresh].sort((a, b) => lineNo(a) - lineNo(b));
-        await updateNote(note.id, { blocks: updated });
+      const picked = await pickImage('camera');
+      if (!picked?.dataUrl) return;
+      toast('Reading text from photo…');
+      const dataUrl = picked.alreadyCompressed
+        ? picked.dataUrl
+        : await compressImage(picked.dataUrl);
+      const text = await ocrImage({ imageDataUrl: dataUrl, subject });
+      if (text && text.trim()) {
+        const newBody = (body ? body + '\n' : '') + text.trim();
+        setBody(newBody);
+        savedRef.current = { ...savedRef.current, body: newBody };
+        await updateNote(note.id, { body: newBody });
+        toast('Text added to note', { type: 'success' });
+        onNoteChanged?.();
       } else {
-        // AI skipped the line — show that honestly
-        setBlocks(prev => prev.map(b => (b.id === id ? { ...b, explanation: 'The AI could not explain this line. Try rephrasing it.' } : b)));
+        toast('No text found in the photo');
       }
     } catch (err) {
-      setBlocks(prev => prev.map(b => (b.id === id ? { ...b, explanation: `Failed: ${err.message}` } : b)));
+      toast(`OCR failed: ${err.message}`, { type: 'error' });
     } finally {
-      setBusyLine(null);
+      setOcrBusy(false);
     }
-  }, [blocks, body, subject, note, busyLine]);
+  }, [ocrBusy, body, subject, note.id, onNoteChanged, toast]);
 
-  const handleShowOriginal = useCallback(async lineId => {
-    const updated = blocks.map(b => (b.id === lineId ? { ...b, show: 'main' } : b));
-    setBlocks(updated);
-    setExpandedInline(prev => ({ ...prev, [lineId]: 'main' }));
-    await updateNote(note.id, { blocks: updated });
-  }, [blocks, note]);
+  const appendTextToNote = useCallback(
+    async extraText => {
+      const trimmed = String(extraText || '').trim();
+      if (!trimmed) return;
+      const newBody = (body ? body + '\n\n' : '') + trimmed;
+      setBody(newBody);
+      savedRef.current = { ...savedRef.current, body: newBody };
+      await updateNote(note.id, { body: newBody });
+      onNoteChanged?.();
+    },
+    [body, note.id, onNoteChanged]
+  );
 
-  const dismissMistake = useCallback(async lineId => {
-    setDismissed(prev => ({ ...prev, [lineId]: true }));
-    const updated = blocks.map(b => b.id === lineId ? { ...b, mistakeIgnored: true } : b);
-    setBlocks(updated);
-    await updateNote(note.id, { blocks: updated });
-  }, [blocks, note]);
+  // Related Notes
+  const handleRelated = useCallback(async () => {
+    if (relatedBusy) return;
+    setRelatedOpen(true);
+    if (related) return;
+    setRelatedBusy(true);
+    try {
+      const all = await db.notes.where('folderId').equals(folderId).toArray();
+      const usable = all.filter(n => n.id !== note.id && !n.trashed && (n.body || '').trim());
+      if (usable.length === 0) {
+        setRelated([]);
+        return;
+      }
+      const links = await findRelatedNotes({
+        currentNote: { title, body },
+        otherNotes: usable.map(n => ({ id: n.id, title: n.title, body: n.body })),
+      });
+      setRelated(links.map(l => ({ ...l.note, reason: l.reason })));
+    } catch (err) {
+      toast(`Related notes failed: ${err.message}`, { type: 'error' });
+      setRelatedOpen(false);
+    } finally {
+      setRelatedBusy(false);
+    }
+  }, [related, relatedBusy, folderId, note.id, title, body, toast]);
 
-  const applyCorrection = useCallback(async (block, mistake) => {
-    if (!mistake?.correction) return;
-    const lineMatch = /^line-(\d+)$/.exec(block.id);
-    if (!lineMatch) return;
-    const lineIndex = parseInt(lineMatch[1], 10) - 1;
-    const newLines = body.split('\n');
-    if (lineIndex < 0 || lineIndex >= newLines.length) return;
-    newLines[lineIndex] = mistake.correction;
-    const newBody = newLines.join('\n');
-    setBody(newBody);
-    const updated = blocks.map(b => b.id === block.id ? { ...b, mistake: null } : b);
-    setBlocks(updated);
-    await updateNote(note.id, { body: newBody, blocks: updated });
-    setDismissed(prev => ({ ...prev, [block.id]: true }));
-  }, [body, blocks, note]);
+  // Checklist toggle
+  const CHECK_RE = /^(\s*-\s\[)( |x|X)(\]\s*)(.*)$/;
+  const toggleChecklist = useCallback(
+    async lineIdx => {
+      const ls = body.split('\n');
+      const m = CHECK_RE.exec(ls[lineIdx]);
+      if (!m) return;
+      ls[lineIdx] = `${m[1]}${m[2] === ' ' ? 'x' : ' '}${m[3]}${m[4]}`;
+      const newBody = ls.join('\n');
+      setBody(newBody);
+      savedRef.current = { ...savedRef.current, body: newBody };
+      await updateNote(note.id, { body: newBody });
+      onNoteChanged?.();
+    },
+    [body, note.id, onNoteChanged]
+  );
 
-  const noteText = `${title || 'New Note'}\n\n${body}`;
+  // Images (Dexie v4 Blob attachments)
+  const addImage = useCallback(
+    async dataUrl => {
+      const entry = await saveImageAttachment(note.id, dataUrl);
+      setImages(prev => {
+        const next = [...prev, entry];
+        updateNote(note.id, { images: next }).catch(() => {});
+        return next;
+      });
+      onNoteChanged?.();
+    },
+    [note.id, onNoteChanged]
+  );
 
-  const copyToClipboard = async text => {
-    try { await navigator.clipboard.writeText(text); return true; }
-    catch {
+  const removeImage = useCallback(
+    async imgId => {
+      await deleteImageAttachment(imgId);
+      setImages(prev => {
+        const next = prev.filter(i => i.id !== imgId);
+        updateNote(note.id, { images: next }).catch(() => {});
+        return next;
+      });
+      onNoteChanged?.();
+    },
+    [note.id, onNoteChanged]
+  );
+
+  // Drawings with Undo / Redo / Clear All
+  const updateDrawings = useCallback(
+    async nextDoc => {
+      setStrokeUndo(prev => [...prev.slice(-40), drawings]);
+      setStrokeRedo([]);
+      setDrawings(nextDoc);
       try {
-        const ta = document.createElement('textarea');
-        ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
-        document.body.appendChild(ta); ta.select();
-        const ok = document.execCommand('copy');
-        document.body.removeChild(ta); return ok;
-      } catch { return false; }
+        await updateNote(note.id, { drawings: nextDoc });
+        onNoteChanged?.();
+      } catch {
+        // local state kept
+      }
+    },
+    [drawings, note.id, onNoteChanged]
+  );
+
+  const handleStrokeUndo = useCallback(async () => {
+    if (strokeUndo.length === 0) return;
+    const prevDoc = strokeUndo[strokeUndo.length - 1];
+    setStrokeUndo(u => u.slice(0, -1));
+    setStrokeRedo(r => [...r, drawings]);
+    setDrawings(prevDoc);
+    await updateNote(note.id, { drawings: prevDoc });
+  }, [strokeUndo, drawings, note.id]);
+
+  const handleStrokeRedo = useCallback(async () => {
+    if (strokeRedo.length === 0) return;
+    const nextDoc = strokeRedo[strokeRedo.length - 1];
+    setStrokeRedo(r => r.slice(0, -1));
+    setStrokeUndo(u => [...u, drawings]);
+    setDrawings(nextDoc);
+    await updateNote(note.id, { drawings: nextDoc });
+  }, [strokeRedo, drawings, note.id]);
+
+  const handleStrokeClear = useCallback(async () => {
+    if (!drawings.strokes.length) return;
+    const ok = await confirm({
+      title: 'Clear all drawings?',
+      message: 'All annotations on this note will be erased.',
+      confirmLabel: 'Clear drawings',
+      destructive: true,
+    });
+    if (!ok) return;
+    await updateDrawings({ refWidth: drawings.refWidth || 0, strokes: [] });
+  }, [drawings, confirm, updateDrawings]);
+
+  // Note menu actions (Pin, Move, Duplicate, Delete)
+  const handleTogglePin = async () => {
+    setMoreOpen(false);
+    await togglePin(note.id);
+    setPinned(p => !p);
+    toast(pinned ? 'Note unpinned' : 'Note pinned');
+    onNoteChanged?.();
+  };
+
+  const handleDuplicate = async () => {
+    setMoreOpen(false);
+    const dup = await duplicateNote(note.id);
+    if (dup) {
+      toast('Note duplicated');
+      onNoteChanged?.();
+      onOpenNote?.(dup);
     }
   };
 
-  const showToast = useCallback(msg => { setToast(msg); setTimeout(() => setToast(null), 2200); }, []);
+  const handleMove = async f => {
+    setMoveOpen(false);
+    await moveNote(note.id, f.id);
+    setFolderId(f.id);
+    setFolderLabel(f.name);
+    setRelated(null);
+    onNoteMoved?.(f);
+    toast(`Moved to ${f.name}`);
+  };
+
+  const handleDeleteNote = async () => {
+    setMoreOpen(false);
+    const ok = await confirm({
+      title: `Delete "${title || 'New Note'}"?`,
+      message: 'It will stay in Recently Deleted for 30 days.',
+      confirmLabel: 'Move to Trash',
+      destructive: true,
+    });
+    if (!ok) return;
+    await deleteNote(note.id);
+    toast('Moved to Recently Deleted');
+    onNoteDeleted?.();
+  };
+
+  // Share, Copy, PDF & Print
+  const noteText = `${title || 'New Note'}\n\n${body}`;
+
+  const copyToClipboard = async text => {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return ok;
+      } catch {
+        return false;
+      }
+    }
+  };
 
   const handleShareText = async () => {
     setExportOpen(false);
     if (navigator.share) {
-      try { await navigator.share({ title: title || 'New Note', text: noteText }); return; }
-      catch (e) { if (e?.name === 'AbortError') return; }
+      try {
+        await navigator.share({ title: title || 'New Note', text: noteText });
+        return;
+      } catch (e) {
+        if (e?.name === 'AbortError') return;
+      }
     }
     const ok = await copyToClipboard(noteText);
-    showToast(ok ? 'Copied to clipboard' : 'Sharing not available here');
+    toast(ok ? 'Copied to clipboard' : 'Sharing not available here');
   };
 
   const handleCopyText = async () => {
     setExportOpen(false);
     const ok = await copyToClipboard(noteText);
-    showToast(ok ? 'Copied to clipboard' : 'Copy failed');
+    toast(ok ? 'Copied to clipboard' : 'Copy failed');
   };
-
-  const handlePrintPdf = withExpl => {
-    setExportOpen(false);
-    setPrintPayload({ title: title || 'New Note', body, withExpl });
-  };
-
-  // ---------- Real PDF export (works in the APK — no print dialog) ----------
-  const [exporting, setExporting] = useState(false);
-  const isNative = Capacitor.isNativePlatform?.();
 
   const handleExportPDF = async withExpl => {
     setExportOpen(false);
     setExporting(true);
     try {
+      const { buildNotePDF, saveNotePDF } = await import('../lib/pdf');
       const doc = await buildNotePDF({
         title: title || 'New Note',
         body,
@@ -405,189 +855,136 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
         withExplanations: withExpl,
       });
       const how = await saveNotePDF(doc, title || 'note');
-      showToast(how === 'shared'
-        ? 'PDF ready — pick where to save or send it'
-        : 'PDF downloaded');
+      toast(
+        how === 'shared' ? 'PDF ready — pick where to save or send it' : 'PDF downloaded',
+        { type: 'success' }
+      );
     } catch (err) {
-      showToast(`PDF failed: ${err.message}`);
+      toast(`PDF failed: ${err.message}`, { type: 'error' });
     } finally {
       setExporting(false);
     }
   };
 
-  const handleMove = async f => {
-    setMoveOpen(false);
-    await moveNote(note.id, f.id);
-    setFolderLabel(f.name);
-    showToast(`Moved to ${f.name}`);
+  const handlePrintPdf = async withExpl => {
+    setExportOpen(false);
+    const resolvedImgs = [];
+    for (const img of images) {
+      const url = await resolveImageDataUrl(img);
+      if (url) resolvedImgs.push({ id: img.id, dataUrl: url });
+    }
+    const drawingPreview = renderStrokesToCanvas(drawings, 620, { dark: false });
+    setPrintPayload({
+      title: title || 'New Note',
+      body,
+      withExpl,
+      images: resolvedImgs,
+      drawingUrl: drawingPreview?.dataUrl || null,
+    });
   };
 
-  const pushHistory = value => {
-    const h = undoRef.current;
-    if (h.timer) clearTimeout(h.timer);
-    h.timer = setTimeout(() => {
-      if (h.stack[h.index] === value) return;
-      h.stack = h.stack.slice(0, h.index + 1).concat(value);
-      if (h.stack.length > 100) h.stack.shift();
-      h.index = h.stack.length - 1;
-    }, 400);
-  };
-
-  const undo = () => {
-    const h = undoRef.current;
-    if (h.index > 0) { h.index -= 1; restoringRef.current = true; setBody(h.stack[h.index]); }
-  };
-
-  const redo = () => {
-    const h = undoRef.current;
-    if (h.index < h.stack.length - 1) { h.index += 1; restoringRef.current = true; setBody(h.stack[h.index]); }
-  };
-
-  const handleBodyChange = e => {
-    const v = e.target.value;
-    setBody(v);
-    if (restoringRef.current) restoringRef.current = false;
-    else pushHistory(v);
-  };
-
-  const CHECK_RE = /^(\s*-\s\[)( |x|X)(\]\s*)(.*)$/;
-
-  const toggleChecklist = useCallback(async lineIdx => {
-    const ls = body.split('\n');
-    const m = CHECK_RE.exec(ls[lineIdx]);
-    if (!m) return;
-    ls[lineIdx] = `${m[1]}${m[2] === ' ' ? 'x' : ' '}${m[3]}${m[4]}`;
-    const newBody = ls.join('\n');
-    setBody(newBody);
-    savedRef.current = { ...savedRef.current, body: newBody };
-    await updateNote(note.id, { body: newBody });
-  }, [body, note]);
-
-  const addImage = useCallback(async dataUrl => {
-    const img = { id: `img-${Date.now()}`, dataUrl };
-    const next = [...images, img];
-    setImages(next);
-    await updateNote(note.id, { images: next });
-  }, [images, note]);
-
-  const removeImage = useCallback(async imgId => {
-    const next = images.filter(i => i.id !== imgId);
-    setImages(next);
-    await updateNote(note.id, { images: next });
-  }, [images, note]);
-
-  const updateDrawings = useCallback(async doc => {
-    setDrawings(doc);
-    try { await updateNote(note.id, { drawings: doc }); }
-    catch { /* keep local state; strokes persist on next save */ }
-  }, [note]);
-
-  // Print dialog
   useEffect(() => {
-    if (!printPayload) return;
+    if (!printPayload) return undefined;
     const t = setTimeout(() => {
-      try { window.print(); } catch { showToast('Printing not supported here'); }
+      try {
+        window.print();
+      } catch {
+        toast('Printing not supported here');
+      }
       setPrintPayload(null);
-    }, 150);
+    }, 180);
     return () => clearTimeout(t);
-  }, [printPayload, showToast]);
+  }, [printPayload, toast]);
 
+  const isNative = Capacitor.isNativePlatform?.();
   const explBlocks = blocks.filter(b => b.explanation || b.simpler || b.example);
 
-  const printPortal = (printPayload && typeof document !== 'undefined' && document.body)
-    ? createPortal(
-        <div className="print-root">
-          <h1 className="print-title">{printPayload.title}</h1>
-          <div className="print-meta">
-            {new Date().toLocaleDateString([], { year: 'numeric', month: 'long', day: 'numeric' })}
-          </div>
-
-          {/* Images in PDF */}
-          {images.length > 0 && (
-            <div className="print-images">
-              {images.map(img => (
-                <img key={img.id} src={img.dataUrl} alt="note image" style={{ maxWidth: '45%', margin: 4, borderRadius: 4 }} />
+  const printPortal =
+    printPayload && typeof document !== 'undefined' && document.body
+      ? createPortal(
+          <div className="print-root">
+            <h1 className="print-title">{printPayload.title}</h1>
+            <div className="print-meta">
+              {new Date().toLocaleDateString([], {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+              })}
+            </div>
+            {printPayload.images.length > 0 && (
+              <div className="print-images">
+                {printPayload.images.map(img => (
+                  <img key={img.id} src={img.dataUrl} alt="Note attachment" />
+                ))}
+              </div>
+            )}
+            <div className="print-body">
+              {printPayload.body.split('\n').map((l, i) => (
+                <p key={i} className="print-line">
+                  {l || '\u00A0'}
+                </p>
               ))}
             </div>
-          )}
+            {printPayload.drawingUrl && (
+              <div className="print-drawing">
+                <img src={printPayload.drawingUrl} alt="Annotations" />
+              </div>
+            )}
+            {printPayload.withExpl && explBlocks.length > 0 && (
+              <>
+                <h2 className="print-h2">AI Explanations</h2>
+                {explBlocks.map(b => (
+                  <div key={b.id} className="print-block">
+                    <p className="print-line-text">{b.text}</p>
+                    <p className="print-expl">
+                      {b.show === 'simpler' && b.simpler
+                        ? b.simpler
+                        : b.show === 'example' && b.example
+                          ? b.example
+                          : b.explanation}
+                    </p>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>,
+          document.body
+        )
+      : null;
 
-          {/* Drawings in PDF (StrokeLayer read-only) */}
-          {drawings?.strokes?.length > 0 && (
-            <div className="print-drawing" style={{ marginBottom: 16 }}>
-              <StrokeLayer drawing={drawings} editable={false} />
-            </div>
-          )}
-
-          <div className="print-body">
-            {printPayload.body.split('\n').map((l, i) => (
-              <p key={i} className="print-line">{l || '\u00A0'}</p>
-            ))}
-          </div>
-          {printPayload.withExpl && explBlocks.length > 0 && (
-            <>
-              <h2 className="print-h2">Explanations</h2>
-              {explBlocks.map(b => (
-                <div key={b.id} className="print-block">
-                  <p className="print-line-text">{b.text}</p>
-                  <p className="print-expl">
-                    {b.show === 'simpler' && b.simpler ? b.simpler
-                    : b.show === 'example' && b.example ? b.example
-                    : b.explanation}
-                  </p>
-                </div>
-              ))}
-            </>
-          )}
-        </div>,
-        document.body
-      )
-    : null;
-
-  // ---------- Edit mode ----------
+  // ---------- Edit Mode ----------
   if (mode === 'edit') {
     return (
-      <div className="screen">
-        <header className="navbar safe-top">
-          <button className="navbar-btn" style={{ width: 'auto', paddingLeft: 0 }}
-            onClick={() => {
-              const dirty = title !== savedRef.current.title || body !== savedRef.current.body;
-              if (dirty) { updateNote(note.id, { title, body, subject }); savedRef.current = { title, body }; }
-              setMode('read');
-            }} aria-label="Back to notes list">
-            ‹ Notes
-          </button>
-          <span className="navbar-title" style={{ fontSize: 15 }}>Edit</span>
-          <div className="flex items-center">
-            <button className="navbar-btn" onClick={undo} aria-label="Undo" style={{ fontSize: 20 }}>↺</button>
-            <button className="navbar-btn" onClick={redo} aria-label="Redo" style={{ fontSize: 20 }}>↻</button>
-            <button className="btn btn-primary" onClick={handleSave} disabled={isScanning} style={{ padding: '6px 14px', fontSize: 15 }}>
-              {isScanning ? (<><span className="spinner" style={{ width: 14, height: 14 }} /> Scanning…</>) : 'Save'}
-            </button>
-          </div>
-        </header>
-
-        <div className="editor safe-bottom">
-          {scanError && <div className="scan-indicator" style={{ color: 'var(--mistake)' }}>{scanError}</div>}
-          <input type="text" className="editor-title" placeholder="Title" value={title} onChange={e => setTitle(e.target.value)} aria-label="Note title" />
-          <input type="text" className="editor-subject" placeholder="Subject (e.g. Biology)" value={subject} onChange={e => setSubject(e.target.value)} aria-label="Subject" />
-
-          {/* Compact attachment row */}
-          <div className="attachment-row">
-            <button className="attach-btn" aria-label="Take photo" onClick={async () => { const raw = await pickImage('camera'); if (raw) addImage(await compressImage(raw)); }}>📷<span className="attach-btn-label">Photo</span></button>
-            <button className="attach-btn" aria-label="Choose from library" onClick={async () => { const raw = await pickImage('library'); if (raw) addImage(await compressImage(raw)); }}>🖼<span className="attach-btn-label">Gallery</span></button>
-            <button className="attach-btn" aria-label="Scan text from photo (OCR)" disabled={ocrBusy} onClick={handleOcrScan}>{ocrBusy ? '⏳' : '📝'}<span className="attach-btn-label">{ocrBusy ? 'Reading…' : 'Scan text'}</span></button>
-          </div>
-
-          {/* Image strip (only shows existing) */}
-          <ImageStrip images={images} onAdd={addImage} onRemove={removeImage} showAdd={false} />
-
-          <textarea ref={textareaRef} className="editor-body" placeholder="Start typing your notes…  (- [ ] makes a checklist, #tag marks topics)" value={body} onChange={handleBodyChange} aria-label="Note body" autoFocus />
-        </div>
-      </div>
+      <EditModeView
+        title={title}
+        onTitleChange={handleTitleChange}
+        subject={subject}
+        onSubjectChange={handleSubjectChange}
+        body={body}
+        onBodyChange={handleBodyChange}
+        textareaRef={textareaRef}
+        images={images}
+        onAddImage={addImage}
+        onRemoveImage={removeImage}
+        onAppendText={appendTextToNote}
+        onOcrScan={handleOcrScan}
+        ocrBusy={ocrBusy}
+        isScanning={isScanning}
+        onCancelScan={() => scanAbortRef.current?.abort()}
+        scanError={scanError}
+        saveState={saveState}
+        canUndo={undoMeta.canUndo}
+        canRedo={undoMeta.canRedo}
+        onUndo={undo}
+        onRedo={redo}
+        onBackToList={handleBackFromEdit}
+        onSaveOnly={handleSaveOnly}
+        onSaveAndExplain={handleSaveAndExplain}
+      />
     );
   }
 
-  // ---------- Read mode ----------
+  // ---------- Read Mode ----------
   const lines = body.split('\n');
   const blockByLine = {};
   blocks.forEach(b => {
@@ -596,205 +993,433 @@ export default function NoteEditor({ note, folderName, onOpenStudy, onBackToList
     const n = parseInt(m[1], 10) - 1;
     if (n >= 0 && n < lines.length && b.text === lines[n]) blockByLine[n] = b;
   });
-  const hasStudy = flashcards.length + quiz.length > 0;
 
-  const lineHasExpl = i => { const b = blockByLine[i]; return b && (b.explanation || b.simpler || b.example); };
+  const lineHasExpl = i => {
+    const b = blockByLine[i];
+    return Boolean(b && !b._failed && (b.explanation || b.simpler || b.example));
+  };
   const lineMistake = i => blockByLine[i]?.mistake || null;
-
-  const notePage = (
-    <div className={`editor safe-bottom${drawMode ? ' draw-padding' : ''}`}>
-      {/* Full-note wrapper: relative so the annotation overlay covers EVERYTHING */}
-      <div className="note-page-wrap">
-        <div className="read-title">{title || 'New Note'}</div>
-        <button className="folder-chip" onClick={() => setMoveOpen(true)} aria-label="Move to folder">
-          📁 {folderLabel || 'Folder'} <span className="folder-chip-chevron">›</span>
-        </button>
-
-        {/* AI summary card */}
-        {(summary || summarizing) && (
-          <div className="summary-card">
-            <div className="summary-head">
-              <span className="summary-label">✨ Summary</span>
-              {!summarizing && (
-                <button className="summary-regen" onClick={() => handleSummarize(true)} aria-label="Regenerate summary">↻</button>
-              )}
-            </div>
-            {summarizing ? (
-              <div className="scan-indicator" style={{ padding: '4px 0' }}><span className="spinner" style={{ width: 14, height: 14 }} /> Summarizing…</div>
-            ) : (
-              <div className="summary-text">{summary}</div>
-            )}
-          </div>
-        )}
-
-        {/* Images */}
-        {images.length > 0 && <ImageStrip images={images} readOnly />}
-
-        {/* Summarize trigger when no summary yet */}
-        {!summary && !summarizing && body.trim() && (
-          <button className="summarize-chip" onClick={() => handleSummarize(false)}>
-            ✨ Summarize this note
-          </button>
-        )}
-
-        <div className="note-lines">
-          {lines.map((_, i) => (
-            <NoteLineComponent
-              key={i} i={i} lines={lines} blockByLine={blockByLine}
-              lineHasExpl={lineHasExpl} lineMistake={lineMistake}
-              onLineTap={handleLineTap}
-              onToggleChecklist={toggleChecklist}
-              onLineRequest={handleLineRequest}
-              showOriginal={handleShowOriginal}
-              applyCorrection={applyCorrection}
-              dismissMistake={dismissMistake}
-              busyLine={busyLine}
-              dismissed={dismissed}
-              showHint={showHint}
-            />
-          ))}
-        </div>
-
-        {/* Related notes */}
-        <button className="related-trigger" onClick={handleRelated} disabled={relatedBusy}>
-          {relatedBusy ? '⏳ Looking…' : '🔗 Find related notes'}
-        </button>
-
-        {/* Full-page annotation overlay — covers the ENTIRE note content.
-            Editable only in draw mode; otherwise display-only and tappable-through. */}
-        {(drawMode || drawings.strokes.length > 0) && (
-          <StrokeLayer
-            drawing={drawings}
-            editable={drawMode}
-            tool={tool}
-            color={color}
-            size={size}
-            onChange={updateDrawings}
-          />
-        )}
-      </div>
-    </div>
-  );
+  const wordCount = body.trim() ? body.trim().split(/\s+/).length : 0;
 
   return (
-    <div className="screen">
-      <header className="navbar safe-top">
-        <button className="navbar-btn" style={{ width: 'auto', paddingLeft: 0 }} onClick={onBackToList} aria-label="Back to notes list">‹ Notes</button>
-        <span className="navbar-title" style={{ fontSize: 15, opacity: 0 }}>{'\u00A0'}</span>
-        <div className="flex items-center gap-8">
-          <button className="navbar-btn" onClick={() => setChatOpen(true)} aria-label="Chat with this note">💬</button>
-          <button className={`navbar-btn${drawMode ? ' navbar-btn-active' : ''}`} onClick={() => { setDrawMode(m => { if (!m) setPanelOpen(false); return !m; }); }} aria-label="Annotate note">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 19l7-7 3 3-7 7-3-3z" /><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z" /><path d="M2 2l7.586 7.586" /><circle cx="11" cy="11" r="2" />
-            </svg>
+    <div className="screen screen-paper">
+      {/* Sleek decluttered Read header — fits cleanly on 360px phones */}
+      <header className="navbar">
+        <button
+          type="button"
+          className="navbar-btn navbar-back"
+          onClick={onBackToList}
+          aria-label="Back to notes list"
+        >
+          <ChevronLeft size={20} /> Notes
+        </button>
+
+        <div className="flex items-center gap-6">
+          <button
+            type="button"
+            className="navbar-btn"
+            onClick={() => setChatOpen(true)}
+            aria-label="Chat with this note"
+            title="Ask AI about this note"
+          >
+            <MessageSquare size={19} />
           </button>
-          <button className="navbar-btn" onClick={() => setExportOpen(true)} aria-label="Share or export">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 3v12" /><path d="m8 7 4-4 4 4" /><path d="M5 12v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8" />
-            </svg>
+          <button
+            type="button"
+            className="navbar-btn"
+            onClick={onOpenStudy}
+            aria-label="Study mode"
+            title="Study mode (Cards, Quiz, Blanks, Practice)"
+          >
+            <GraduationCap size={20} />
           </button>
-          <button className="navbar-btn" onClick={() => setMode('edit')} aria-label="Edit note">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
+          <button
+            type="button"
+            className={`navbar-btn${drawMode ? ' navbar-btn-active' : ''}`}
+            onClick={() => {
+              setDrawMode(m => {
+                if (!m) setPanelOpen(false);
+                return !m;
+              });
+            }}
+            aria-label="Annotate note"
+            title="Annotate / Draw"
+          >
+            <PenTool size={18} />
           </button>
-          {hasStudy && <button className="navbar-btn" onClick={onOpenStudy} aria-label="Study">📚</button>}
+          <button
+            type="button"
+            className="navbar-btn"
+            onClick={() => setMode('edit')}
+            aria-label="Edit note"
+            title="Edit note"
+          >
+            <Pencil size={18} />
+          </button>
+          <button
+            type="button"
+            className="navbar-btn"
+            onClick={() => setMoreOpen(true)}
+            aria-label="More options"
+            title="More actions"
+          >
+            <MoreHorizontal size={20} />
+          </button>
         </div>
       </header>
 
-      {scanError && <div className="scan-indicator" style={{ color: 'var(--mistake)' }}>{scanError}</div>}
-
-      {notePage}
-
-      {/* Annotation toolbar — fixed at bottom, only in draw mode */}
-      {drawMode && (
-        <div className="annotate-bar">
-          <div className="tool-group">
-            {TOOLS.map(([t, icon, label]) => (
-              <button key={t} className={`tool-btn${tool === t ? ' active' : ''}`} onClick={() => setTool(t)} aria-label={label}>
-                {icon}
-              </button>
-            ))}
-          </div>
-          <div className="tool-group">
-            {SIZES.map(s => (
-              <button key={s} className={`size-btn${size === s ? ' active' : ''}`} onClick={() => setSize(s)} aria-label={`Size ${SIZE_LABEL[s]}`}>{SIZE_LABEL[s]}</button>
-            ))}
-          </div>
-          <div className="tool-group">
-            {PALETTE.map(c => (
-              <button key={c} className={`color-swatch${color === c ? ' active' : ''}`} style={{ background: c }} onClick={() => setColor(c)} aria-label={`Color ${c}`} />
-            ))}
-            <input type="color" value={color} onChange={e => setColor(e.target.value)} title="Custom color" className="color-input" />
-          </div>
-          <span className="annotate-hint">2 fingers = scroll</span>
-          <button className="draw-close" onClick={() => setDrawMode(false)} aria-label="Done">Done</button>
+      {scanError && (
+        <div className="inline-mistake" style={{ margin: '8px var(--gutter) 0' }}>
+          {scanError}
         </div>
       )}
 
+      <div className={`editor${drawMode ? ' draw-padding' : ''}`}>
+        <div className="note-page-wrap">
+          <div className="read-title">{title || 'New Note'}</div>
+          <div className="read-meta-row">
+            <button
+              type="button"
+              className="folder-chip"
+              onClick={() => setMoveOpen(true)}
+              aria-label="Move to folder"
+            >
+              <Folder size={13} />
+              {folderLabel || 'Folder'}
+              <ChevronRight size={13} />
+            </button>
+            <span className="meta-pill">
+              {wordCount} {wordCount === 1 ? 'word' : 'words'}
+              {subject && subject !== folderLabel ? ` · ${subject}` : ''}
+            </span>
+          </div>
+
+          {/* AI Summary card */}
+          {(summary || summarizing) && (
+            <div className="summary-card">
+              <div className="summary-head">
+                <span className="summary-label">
+                  <Sparkles size={13} /> AI Summary
+                </span>
+                {!summarizing && (
+                  <button
+                    type="button"
+                    className="summary-regen"
+                    onClick={() => handleSummarize(true)}
+                    aria-label="Regenerate summary"
+                    title="Regenerate summary"
+                  >
+                    <RotateCw size={14} />
+                  </button>
+                )}
+              </div>
+              {summarizing && !summary ? (
+                <div className="scan-indicator" style={{ padding: '4px 0' }}>
+                  <span className="spinner" style={{ width: 14, height: 14 }} /> Summarizing…
+                </div>
+              ) : (
+                <MarkdownContent text={summary} />
+              )}
+            </div>
+          )}
+
+          {!summary && !summarizing && body.trim() && (
+            <button
+              type="button"
+              className="summarize-chip"
+              onClick={() => handleSummarize(false)}
+            >
+              <Sparkles size={14} /> Summarize this note
+            </button>
+          )}
+
+          {/* Images strip (tap to zoom, Explain Photo, or OCR!) */}
+          {images.length > 0 && (
+            <ImageStrip
+              images={images}
+              readOnly
+              noteContext={body}
+              subject={subject}
+              onAppendText={appendTextToNote}
+            />
+          )}
+
+          {/* Note Lines */}
+          <div className="note-lines">
+            {lines.map((_, i) => (
+              <NoteLineComponent
+                key={i}
+                i={i}
+                lines={lines}
+                blockByLine={blockByLine}
+                lineHasExpl={lineHasExpl}
+                lineMistake={lineMistake}
+                onLineTap={handleLineTap}
+                onToggleChecklist={toggleChecklist}
+                applyCorrection={applyCorrection}
+                dismissMistake={dismissMistake}
+                dismissed={dismissed}
+                showHint={showHint}
+              />
+            ))}
+          </div>
+
+          {body.trim() && (
+            <button
+              type="button"
+              className="related-trigger"
+              onClick={handleRelated}
+              disabled={relatedBusy}
+            >
+              {relatedBusy ? (
+                <>
+                  <span className="spinner" style={{ width: 14, height: 14 }} /> Finding related notes…
+                </>
+              ) : (
+                <>
+                  <Link2 size={16} /> Find related notes
+                </>
+              )}
+            </button>
+          )}
+
+          {(drawMode || drawings.strokes.length > 0) && (
+            <StrokeLayer
+              drawing={drawings}
+              editable={drawMode}
+              tool={tool}
+              color={color}
+              size={size}
+              onChange={updateDrawings}
+            />
+          )}
+        </div>
+      </div>
+
+      {drawMode && (
+        <AnnotateBar
+          tool={tool}
+          onTool={setTool}
+          size={size}
+          onSize={setSize}
+          color={color}
+          onColor={setColor}
+          canUndo={strokeUndo.length > 0}
+          canRedo={strokeRedo.length > 0}
+          hasStrokes={drawings.strokes.length > 0}
+          onUndo={handleStrokeUndo}
+          onRedo={handleStrokeRedo}
+          onClear={handleStrokeClear}
+          onDone={() => setDrawMode(false)}
+        />
+      )}
+
       <SlideUpPanel
-        open={panelOpen} onClose={() => setPanelOpen(false)}
-        blocks={blocks} selectedLineId={selectedLineId}
+        open={panelOpen}
+        onClose={() => setPanelOpen(false)}
+        blocks={blocks}
+        selectedLineId={selectedLineId}
         onSelectLine={setSelectedLineId}
         onExplainSimpler={id => handleLineRequest(id, 'simpler')}
         onGiveExample={id => handleLineRequest(id, 'example')}
         onShowOriginal={handleShowOriginal}
+        onApplyCorrection={applyCorrection}
+        onDismissMistake={dismissMistake}
+        dismissed={dismissed}
         busyLineId={busyLine}
       />
 
+      {/* More Actions Sheet */}
+      {moreOpen && (
+        <div className="export-overlay" onClick={() => setMoreOpen(false)}>
+          <div className="export-sheet" onClick={e => e.stopPropagation()}>
+            <div className="export-title">{title || 'Note Options'}</div>
+            <button
+              type="button"
+              className="export-btn"
+              onClick={() => {
+                setMoreOpen(false);
+                setExportOpen(true);
+              }}
+            >
+              <Share2 size={18} /> Share & Export PDF
+            </button>
+            <button
+              type="button"
+              className="export-btn"
+              onClick={() => {
+                setMoreOpen(false);
+                handleSaveAndExplain();
+              }}
+            >
+              <Sparkles size={18} /> Re-scan with AI
+            </button>
+            <button type="button" className="export-btn" onClick={handleTogglePin}>
+              {pinned ? <PinOff size={18} /> : <Pin size={18} />}
+              {pinned ? 'Unpin note' : 'Pin note'}
+            </button>
+            <button
+              type="button"
+              className="export-btn"
+              onClick={() => {
+                setMoreOpen(false);
+                setMoveOpen(true);
+              }}
+            >
+              <FolderInput size={18} /> Move to folder…
+            </button>
+            <button type="button" className="export-btn" onClick={handleDuplicate}>
+              <Copy size={18} /> Duplicate note
+            </button>
+            <button type="button" className="export-btn danger" onClick={handleDeleteNote}>
+              <Trash2 size={18} /> Delete note
+            </button>
+            <button
+              type="button"
+              className="export-btn cancel"
+              onClick={() => setMoreOpen(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Share & Export Sheet */}
       {exportOpen && (
         <div className="export-overlay" onClick={() => setExportOpen(false)}>
           <div className="export-sheet" onClick={e => e.stopPropagation()}>
             <div className="export-title">Share & Export</div>
-            <button className="export-btn" onClick={handleShareText}>📤 Share note as text</button>
-            <button className="export-btn" onClick={handleCopyText}>📋 Copy note text</button>
-            <button className="export-btn" disabled={exporting} onClick={() => handleExportPDF(false)}>
-              {exporting ? '⏳ Building PDF…' : '📄 Export PDF'}
+            <button type="button" className="export-btn" onClick={handleShareText}>
+              <Share2 size={18} /> Share note as text
+            </button>
+            <button type="button" className="export-btn" onClick={handleCopyText}>
+              <ClipboardCopy size={18} /> Copy note text
+            </button>
+            <button
+              type="button"
+              className="export-btn"
+              disabled={exporting}
+              onClick={() => handleExportPDF(false)}
+            >
+              <FileDown size={18} /> {exporting ? 'Building PDF…' : 'Export PDF'}
             </button>
             {explBlocks.length > 0 && (
-              <button className="export-btn" disabled={exporting} onClick={() => handleExportPDF(true)}>
-                {exporting ? '⏳ Building PDF…' : '📄 PDF with explanations'}
+              <button
+                type="button"
+                className="export-btn"
+                disabled={exporting}
+                onClick={() => handleExportPDF(true)}
+              >
+                <FileDown size={18} />{' '}
+                {exporting ? 'Building PDF…' : 'Export PDF with AI explanations'}
               </button>
             )}
             {!isNative && (
-              <button className="export-btn" onClick={() => handlePrintPdf(false)}>🖨 Print / system PDF</button>
+              <button
+                type="button"
+                className="export-btn"
+                onClick={() => handlePrintPdf(false)}
+              >
+                <Printer size={18} /> Print / system PDF
+              </button>
             )}
-            <button className="export-btn cancel" onClick={() => setExportOpen(false)}>Cancel</button>
+            <button
+              type="button"
+              className="export-btn cancel"
+              onClick={() => setExportOpen(false)}
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}
 
-      {moveOpen && <FolderPickerSheet currentId={note.folderId} onPick={handleMove} onClose={() => setMoveOpen(false)} />}
+      {moveOpen && (
+        <FolderPickerSheet
+          currentId={folderId}
+          onPick={handleMove}
+          onClose={() => setMoveOpen(false)}
+        />
+      )}
 
       {relatedOpen && (
         <div className="export-overlay" onClick={() => setRelatedOpen(false)}>
-          <div className="export-sheet" onClick={e => e.stopPropagation()} style={{ maxHeight: '75vh', overflowY: 'auto' }}>
+          <div className="export-sheet" onClick={e => e.stopPropagation()}>
             <div className="export-title">Related notes</div>
-            {related === null && <div className="scan-indicator"><span className="spinner" /> Looking…</div>}
-            {related && related.length === 0 && (
-              <div className="empty-state" style={{ padding: 20 }}><div className="empty-text">No related notes found in this folder.</div></div>
+            {related === null && (
+              <div className="scan-indicator">
+                <span className="spinner" /> Looking through this folder…
+              </div>
             )}
-            {related && related.map(r => (
-              <button key={r.id} className="export-btn" onClick={async () => { setRelatedOpen(false); const full = await getNote(r.id); if (full) onOpenNote?.(full); }}>
-                📄 {r.title || 'New Note'}
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>{r.reason}</div>
-              </button>
-            ))}
-            <button className="export-btn cancel" onClick={() => setRelatedOpen(false)}>Close</button>
+            {related && related.length === 0 && (
+              <div className="empty-state" style={{ padding: 20 }}>
+                <div className="empty-text">No closely related notes found in this folder.</div>
+              </div>
+            )}
+            {related &&
+              related.map(r => (
+                <button
+                  key={r.id}
+                  type="button"
+                  className="export-btn"
+                  style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 3 }}
+                  onClick={async () => {
+                    setRelatedOpen(false);
+                    const full = await getNote(r.id);
+                    if (full) onOpenNote?.(full);
+                  }}
+                >
+                  <span className="flex items-center gap-6" style={{ fontWeight: 600 }}>
+                    <FileText size={16} /> {r.title || 'New Note'}
+                  </span>
+                  <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{r.reason}</span>
+                </button>
+              ))}
+            <button
+              type="button"
+              className="export-btn cancel"
+              onClick={() => setRelatedOpen(false)}
+            >
+              Close
+            </button>
           </div>
         </div>
       )}
 
+      {/* FIXED: passes live chatMsgs React state so closing & reopening Chat never loses messages */}
       {chatOpen && (
         <ChatSheet
-          note={{ ...note, body, title, chat: note.chat }}
+          note={{ ...note, body, title, subject, chat: chatMsgs }}
           subject={subject}
           onClose={() => setChatOpen(false)}
+          onAppendToNote={text => {
+            appendTextToNote(text);
+            toast('Added to note', { type: 'success' });
+          }}
+          onCreateNoteFromChat={async (questionTitle, content, sources = []) => {
+            const citationsBlock = sources?.length
+              ? '\n\n## Sources\n' +
+                sources.map(s => `- [${s.index}] [${s.title}](${s.url})`).join('\n')
+              : '';
+            const created = await createNote(
+              folderId,
+              String(questionTitle || 'Research Note').slice(0, 64),
+              `${content}${citationsBlock}`,
+              subject
+            );
+            setChatOpen(false);
+            toast('Saved as a new note', { type: 'success' });
+            onNoteChanged?.();
+            onOpenNote?.(created);
+          }}
           onSave={async msgs => {
+            setChatMsgs(msgs);
             await updateNote(note.id, { chat: msgs });
           }}
         />
       )}
 
-      {toast && <div className="toast">{toast}</div>}
       {printPortal}
     </div>
   );

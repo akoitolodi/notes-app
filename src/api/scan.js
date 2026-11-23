@@ -1,29 +1,35 @@
 /**
  * Frontend API client — /api/scan.
- * Routes based on the AI backend mode (Settings → AI Backend):
- *   - 'termux' (default): POST to the local Termux server
- *   - 'direct': run the AI engine in-app against the chosen provider
+ * Routes cleanly to Direct API or Termux/Vercel backend with current explanation style.
  */
-import { API_BASE } from '../config';
-import { getAiMode } from '../lib/aiConfig';
+import { getApiBase } from '../config';
+import { getAiMode, getExplainStyle } from '../lib/aiConfig';
 import { scanNote as directScanNote } from '../lib/aiDirect';
 
-export async function scanNote(note, subject, changedLines) {
+export async function scanNote(note, subject, changedLines, { style = null, signal = null } = {}) {
+  const activeStyle = style || getExplainStyle();
   if (getAiMode() === 'direct') {
-    return directScanNote({ note, subject, changedLines });
+    return directScanNote({ note, subject, changedLines, style: activeStyle, signal });
   }
 
+  const apiBase = getApiBase();
   let res;
   try {
-    res = await fetch(`${API_BASE}/api/scan`, {
+    res = await fetch(`${apiBase}/api/scan`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ note, subject, changedLines }),
+      body: JSON.stringify({ note, subject, changedLines, style: activeStyle }),
+      signal,
     });
-  } catch {
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      const cancelled = new Error('Cancelled');
+      cancelled.isCancelled = true;
+      throw cancelled;
+    }
     throw new Error(
-      `Can't reach the AI backend${API_BASE ? ` at ${API_BASE}` : ''}. ` +
-      'If you are using the phone app, start the Termux server: node server.js'
+      `Can't reach the AI backend${apiBase ? ` at ${apiBase}` : ''}. ` +
+        'Start the Termux server (node server.js) or switch to Direct API in Settings.'
     );
   }
 

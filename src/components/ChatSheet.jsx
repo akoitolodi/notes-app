@@ -1,134 +1,250 @@
 /**
- * ChatSheet — chat with your note. Full-screen overlay with a message list
- * and an input bar. Messages persist on the note (note.chat) so the
- * conversation survives closing the note.
+ * ChatSheet — streaming AI tutor & research assistant grounded in the current
+ * note AND sibling notes from the same subject folder (Cross-Note Local RAG).
  *
- * v3 changes:
- *  - AI answers are rendered as formatted text (bold, lists, headings, code)
- *    instead of showing raw **markdown** symbols.
- *  - Errors are NOT saved as chat messages (they used to be stored and then
- *    sent back to the model as if the AI had said them). They show in a
- *    banner with a Retry button and a plain-language reason.
- *  - "Clear chat" button.
+ * Modes:
+ * - Quick (default): 1 single LLM call (free-tier friendly!) + local cross-note RAG
+ * - Deep Think: 2-pass Solve → Skeptical Verify with collapsible reasoning drawer
+ * - Research: Zero-key multi-step Wikipedia + OpenAlex papers (+ optional Tavily)
+ * - Socratic: Guides with probing questions instead of spoon-feeding answers
  */
 import { useState, useRef, useEffect } from 'react';
+import {
+  ArrowLeft,
+  Brain,
+  BookOpen,
+  Compass,
+  Send,
+  Square,
+  Copy,
+  Plus,
+  FilePlus2,
+  ExternalLink,
+  MessageSquare,
+  Trash2,
+  ShieldCheck,
+  ChevronDown,
+  ChevronUp,
+  Link2,
+} from 'lucide-react';
 import { chatWithNote } from '../lib/aiFeatures';
-import { getTavilyKey } from '../lib/aiConfig';
+import { db } from '../store/db';
+import MarkdownContent from './ui/MarkdownContent';
+import { useDialog } from './ui/DialogProvider';
 
-/** Turn a raw error into one sentence the user can act on. */
+const STARTER_PROMPTS = [
+  'Explain the main idea simply',
+  'What assumptions or gaps are in these notes?',
+  'Quiz me with 3 reasoning questions',
+  'Research recent evidence on this topic',
+];
+
 function friendlyError(err) {
   const m = String(err?.message || err || '');
-  if (/429|rate.?limit|quota|too many/i.test(m)) return 'The AI is out of free requests for the moment. Wait a minute, then tap Retry.';
-  if (/401|403|unauthori[sz]ed|invalid.*key|api key/i.test(m)) return 'The AI key was rejected. Check your key in Settings → AI backend.';
-  if (/404|410|model/i.test(m) && /retired|not found|does not exist|unknown/i.test(m)) return 'The selected AI model is no longer available. Pick another one in Settings → AI backend.';
-  if (/can.?t reach|failed to fetch|network|load failed/i.test(m)) return "Can't reach the AI. Check your internet, or that the Termux server is running.";
-  if (/timeout|timed out|aborted/i.test(m)) return 'The AI took too long to answer. Tap Retry.';
-  if (/5\d\d/.test(m)) return 'The AI service had a problem on its side. Tap Retry in a moment.';
-  return 'Something went wrong. Tap Retry.';
+  if (/429|rate.?limit|quota|too many/i.test(m)) {
+    return 'Rate limit hit on the free tier. Wait a moment, tap Retry, or add a backup provider key in Settings.';
+  }
+  if (/401|403|unauthori[sz]ed|invalid.*key|api key/i.test(m)) {
+    return 'The API key was rejected. Check your key in Settings → AI Backend.';
+  }
+  if (/404|410|model/i.test(m) && /retired|not found|does not exist|unknown/i.test(m)) {
+    return 'This AI model is no longer available. Pick another model in Settings → AI Backend.';
+  }
+  if (/can.?t reach|failed to fetch|network|load failed/i.test(m)) {
+    return "Can't reach the AI. Check your internet, or that the Termux server is running.";
+  }
+  if (/timeout|timed out|aborted/i.test(m)) {
+    return 'The AI took too long to respond. Tap Retry.';
+  }
+  if (/5\d\d/.test(m)) {
+    return 'The AI service had a temporary issue. Tap Retry in a moment.';
+  }
+  return m || 'Something went wrong. Tap Retry.';
 }
 
-/** Older versions saved "⚠ error" bubbles into the note. Drop them (and the question they belonged to). */
 function cleanHistory(chat) {
   const out = [];
   for (const m of chat || []) {
     if (m.role === 'assistant' && /^⚠/.test(m.content || '')) {
       if (out.length && out[out.length - 1].role === 'user') out.pop();
-    } else out.push(m);
+    } else if (m && (m.role === 'user' || m.role === 'assistant')) {
+      out.push(m);
+    }
   }
   return out;
 }
 
-/** **bold**, *italic*, `code` — everything else stays plain text (no HTML injection). */
-function renderInline(text, keyBase) {
-  return String(text).split(/(\*\*[^*]+\*\*|`[^`]+`|\*[^*\s][^*]*\*)/g).map((part, i) => {
-    if (/^\*\*[^*]+\*\*$/.test(part)) return <strong key={keyBase + i}>{part.slice(2, -2)}</strong>;
-    if (/^\*[^*\s][^*]*\*$/.test(part)) return <em key={keyBase + i}>{part.slice(1, -1)}</em>;
-    if (/^`[^`]+`$/.test(part)) return <code key={keyBase + i} className="chat-code">{part.slice(1, -1)}</code>;
-    return part;
-  });
+function ReasoningDrawer({ reasoning, verified }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="reasoning-wrap">
+      <button
+        type="button"
+        className="reasoning-toggle"
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+      >
+        <span className="flex items-center gap-6">
+          <ShieldCheck size={14} style={{ color: 'var(--ok)' }} />
+          <span>{verified ? 'Logic verified · View reasoning' : 'View reasoning'}</span>
+        </span>
+        {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+      </button>
+      {open && (
+        <div className="reasoning-body">
+          <MarkdownContent text={reasoning} />
+        </div>
+      )}
+    </div>
+  );
 }
 
-/** Small, safe markdown renderer: paragraphs, #headings, - bullets, 1. lists, ``` code. */
-function Markdown({ text }) {
-  const lines = String(text || '').replace(/\r/g, '').split('\n');
-  const out = [];
-  let i = 0;
-  let k = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-    if (/^```/.test(line)) {
-      const code = [];
-      i++;
-      while (i < lines.length && !/^```/.test(lines[i])) code.push(lines[i++]);
-      i++;
-      out.push(<pre key={k++} className="chat-pre">{code.join('\n')}</pre>);
-    } else if (/^#{1,4}\s+/.test(line)) {
-      out.push(<div key={k++} className="chat-h">{renderInline(line.replace(/^#{1,4}\s+/, ''), `h${k}`)}</div>);
-      i++;
-    } else if (/^\s*[-*•]\s+/.test(line)) {
-      const items = [];
-      while (i < lines.length && /^\s*[-*•]\s+/.test(lines[i])) items.push(lines[i++].replace(/^\s*[-*•]\s+/, ''));
-      out.push(<ul key={k++} className="chat-list">{items.map((t, j) => <li key={j}>{renderInline(t, `u${k}${j}`)}</li>)}</ul>);
-    } else if (/^\s*\d+[.)]\s+/.test(line)) {
-      const items = [];
-      while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) items.push(lines[i++].replace(/^\s*\d+[.)]\s+/, ''));
-      out.push(<ol key={k++} className="chat-list">{items.map((t, j) => <li key={j}>{renderInline(t, `o${k}${j}`)}</li>)}</ol>);
-    } else if (!line.trim()) {
-      i++;
-    } else {
-      const para = [];
-      while (
-        i < lines.length && lines[i].trim() &&
-        !/^```/.test(lines[i]) && !/^#{1,4}\s+/.test(lines[i]) &&
-        !/^\s*[-*•]\s+/.test(lines[i]) && !/^\s*\d+[.)]\s+/.test(lines[i])
-      ) para.push(lines[i++]);
-      out.push(
-        <p key={k++} className="chat-p">
-          {para.map((t, j) => <span key={j}>{j > 0 && <br />}{renderInline(t, `p${k}${j}`)}</span>)}
-        </p>
-      );
-    }
-  }
-  return <>{out}</>;
-}
-
-export default function ChatSheet({ note, subject, style, onClose, onSave }) {
-  const [messages, setMessages] = useState(() => cleanHistory(note?.chat));   // confirmed conversation only
-  const [pending, setPending] = useState(null);                  // question being answered (or that failed)
+export default function ChatSheet({
+  note,
+  subject,
+  style,
+  onClose,
+  onSave,
+  onAppendToNote,
+  onCreateNoteFromChat,
+}) {
+  const { confirm, toast } = useDialog();
+  const [messages, setMessages] = useState(() => cleanHistory(note?.chat));
+  const [siblingNotes, setSiblingNotes] = useState([]);
+  const [pending, setPending] = useState(null);
+  const [streamingText, setStreamingText] = useState('');
+  const [statusLabel, setStatusLabel] = useState('');
   const [error, setError] = useState(null);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [deepOn, setDeepOn] = useState(false);
-  const [webOn, setWebOn] = useState(false);
-  const hasTavily = !!getTavilyKey();
+  const [researchOn, setResearchOn] = useState(false);
+  const [socraticOn, setSocraticOn] = useState(false);
+
   const listRef = useRef(null);
+  const inputRef = useRef(null);
+  const abortRef = useRef(null);
+
+  // Load sibling notes in this folder once for instant offline Cross-Note Local RAG
+  useEffect(() => {
+    if (typeof note?.folderId !== 'number') return undefined;
+    let live = true;
+    db.notes
+      .where('folderId')
+      .equals(note.folderId)
+      .toArray()
+      .then(list => {
+        if (live) setSiblingNotes(list.filter(n => n.id !== note.id && !n.trashed));
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [note?.folderId, note?.id]);
 
   useEffect(() => {
     listRef.current?.scrollTo?.({ top: listRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages, busy, pending, error]);
+  }, [messages, busy, pending, streamingText, statusLabel, error]);
 
-  const ask = async q => {
-    if (!q || busy) return;
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(130, Math.max(44, el.scrollHeight))}px`;
+  }, [input]);
+
+  useEffect(() => {
+    const onKey = e => {
+      if (e.key === 'Escape') onClose?.();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      abortRef.current?.abort();
+    };
+  }, [onClose]);
+
+  const stopGeneration = () => {
+    abortRef.current?.abort();
+  };
+
+  const ask = async (q, overrideOpts = {}) => {
+    const question = String(q || '').trim();
+    if (!question || busy) return;
+
+    const useDeep = overrideOpts.deep ?? deepOn;
+    const useResearch = overrideOpts.research ?? researchOn;
+    const useSocratic = overrideOpts.socratic ?? socraticOn;
+
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     setError(null);
-    setPending(q);
+    setPending(question);
+    setStreamingText('');
+    setStatusLabel(
+      useResearch
+        ? 'Planning research queries…'
+        : useDeep
+          ? 'Solving step-by-step…'
+          : useSocratic
+            ? 'Preparing guiding question…'
+            : 'Thinking…'
+    );
     setBusy(true);
+
     try {
-      const reply = await chatWithNote({
+      const res = await chatWithNote({
         note: note.body,
         title: note.title,
         subject: note.subject || subject,
+        siblingNotes,
         history: messages,
-        question: q,
+        question,
         style,
-        deep: deepOn,
-        web: webOn && hasTavily,
+        deep: useDeep,
+        research: useResearch,
+        socratic: useSocratic,
+        signal: controller.signal,
+        onStatus: label => setStatusLabel(label),
+        onFallback: providerName => toast(`Rate limit hit — switched to ${providerName}`),
+        onToken: partial => setStreamingText(partial),
       });
-      const done = [...messages, { role: 'user', content: q }, { role: 'assistant', content: reply }];
+
+      const assistantMsg = {
+        role: 'assistant',
+        content: res.text,
+        ...(res.reasoning ? { reasoning: res.reasoning, verified: res.verified } : {}),
+        ...(res.sources?.length ? { sources: res.sources } : {}),
+        ...(res.relatedNotes?.length ? { relatedNotes: res.relatedNotes } : {}),
+      };
+      const done = [...messages, { role: 'user', content: question }, assistantMsg];
       setMessages(done);
       setPending(null);
+      setStreamingText('');
+      setStatusLabel('');
       onSave?.(done);
+      if (res.truncated) {
+        toast('Note is very long — answer used the first 8,000 characters');
+      }
     } catch (err) {
-      setError(friendlyError(err));
+      if (err?.isCancelled) {
+        if (streamingText.trim()) {
+          const done = [
+            ...messages,
+            { role: 'user', content: question },
+            { role: 'assistant', content: `${streamingText.trim()}\n\n_(stopped)_` },
+          ];
+          setMessages(done);
+          onSave?.(done);
+        }
+        setPending(null);
+        setStreamingText('');
+        setStatusLabel('');
+      } else {
+        setError(friendlyError(err));
+      }
     } finally {
       setBusy(false);
     }
@@ -141,90 +257,280 @@ export default function ChatSheet({ note, subject, style, onClose, onSave }) {
     ask(q);
   };
 
-  const clearChat = () => {
+  const clearChat = async () => {
     if (busy) return;
-    if (!window.confirm('Clear this conversation?')) return;
+    const ok = await confirm({
+      title: 'Clear conversation?',
+      message: 'All chat messages for this note will be removed.',
+      confirmLabel: 'Clear chat',
+      destructive: true,
+    });
+    if (!ok) return;
     setMessages([]);
     setPending(null);
+    setStreamingText('');
     setError(null);
     onSave?.([]);
+  };
+
+  const copyText = async text => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('Copied answer');
+    } catch {
+      toast('Could not copy', { type: 'error' });
+    }
   };
 
   const empty = messages.length === 0 && !pending;
 
   return (
-    <div className="chat-overlay">
+    <div className="chat-overlay" role="dialog" aria-modal="true" aria-label="Chat with note">
       <header className="chat-header">
-        <button className="chat-close" onClick={onClose} aria-label="Close chat">←</button>
+        <button type="button" className="navbar-btn" onClick={onClose} aria-label="Close chat">
+          <ArrowLeft size={20} />
+        </button>
         <div className="chat-head-text">
-          <div className="chat-title">Ask about this note</div>
-          <div className="chat-sub">{note?.title || 'Untitled'}</div>
+          <div className="chat-title">AI Tutor & Research</div>
+          <div className="chat-sub">
+            {note?.title || 'Untitled'}
+            {siblingNotes.length > 0 ? ` · ${siblingNotes.length} folder notes linked` : ''}
+          </div>
         </div>
         {messages.length > 0 && (
-          <button className="chat-clear" onClick={clearChat} disabled={busy}>Clear</button>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={clearChat}
+            disabled={busy}
+          >
+            <Trash2 size={14} /> Clear
+          </button>
         )}
       </header>
 
       <div className="chat-messages" ref={listRef}>
         {empty && (
-          <div className="chat-empty">
-            <div className="empty-icon">💬</div>
-            <div className="empty-title">Ask anything about this note</div>
-            <div className="empty-text">"Explain the main idea" · "Quiz me on this" · "Why does X happen?"</div>
+          <div className="empty-state">
+            <div className="empty-icon">
+              <MessageSquare size={26} />
+            </div>
+            <div className="empty-title">Think deeper & research your notes</div>
+            <div className="empty-text">
+              Automatically connects related notes in this folder. Use <strong>Deep Think</strong> for 2-pass verified logic, <strong>Research</strong> for Wikipedia & academic papers, or <strong>Socratic</strong> to practice reasoning.
+            </div>
+            <div className="chat-starters">
+              {STARTER_PROMPTS.map(promptText => (
+                <button
+                  key={promptText}
+                  type="button"
+                  className="chat-starter-btn"
+                  onClick={() => {
+                    const isRes = promptText.toLowerCase().startsWith('research');
+                    if (isRes) setResearchOn(true);
+                    ask(promptText, isRes ? { research: true } : {});
+                  }}
+                >
+                  {promptText}
+                </button>
+              ))}
+            </div>
           </div>
         )}
+
         {messages.map((m, i) => (
           <div key={i} className={`chat-msg ${m.role}`}>
-            {m.role === 'assistant' ? <Markdown text={m.content} /> : m.content}
+            {m.role === 'assistant' ? (
+              <>
+                {m.reasoning && (
+                  <ReasoningDrawer reasoning={m.reasoning} verified={m.verified} />
+                )}
+
+                <MarkdownContent text={m.content} sources={m.sources || null} />
+
+                {m.relatedNotes && m.relatedNotes.length > 0 && (
+                  <div className="connected-notes-row">
+                    <Link2 size={12} />
+                    <span>Connected notes: {m.relatedNotes.join(', ')}</span>
+                  </div>
+                )}
+
+                {m.sources && m.sources.length > 0 && (
+                  <div className="chat-sources">
+                    {m.sources.map(src => (
+                      <a
+                        key={src.index}
+                        href={src.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="chat-source-link"
+                        title={src.title}
+                      >
+                        <span className={`source-kind-badge kind-${src.kind || 'web'}`}>
+                          {src.kind === 'paper'
+                            ? `Paper${src.year ? ` ${src.year}` : ''}`
+                            : src.kind === 'wiki'
+                              ? 'Wiki'
+                              : 'Web'}
+                        </span>
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          [{src.index}] {src.title}
+                        </span>
+                        <ExternalLink size={11} style={{ flexShrink: 0 }} />
+                      </a>
+                    ))}
+                  </div>
+                )}
+
+                <div className="chat-msg-actions">
+                  <button
+                    type="button"
+                    className="chat-msg-action"
+                    onClick={() => copyText(m.content)}
+                  >
+                    <Copy size={12} /> Copy
+                  </button>
+                  {onAppendToNote && (
+                    <button
+                      type="button"
+                      className="chat-msg-action"
+                      onClick={() => onAppendToNote(m.content)}
+                    >
+                      <Plus size={13} /> Add to note
+                    </button>
+                  )}
+                  {onCreateNoteFromChat && (
+                    <button
+                      type="button"
+                      className="chat-msg-action"
+                      onClick={() => {
+                        const prevUser = messages[i - 1]?.content || 'Research Note';
+                        onCreateNoteFromChat(prevUser, m.content, m.sources);
+                      }}
+                    >
+                      <FilePlus2 size={13} /> Save as note
+                    </button>
+                  )}
+                </div>
+              </>
+            ) : (
+              m.content
+            )}
           </div>
         ))}
+
         {pending && <div className="chat-msg user">{pending}</div>}
+
         {busy && (
-          <div className="chat-msg assistant chat-busy"><span className="spinner" style={{ width: 14, height: 14 }} /> {deepOn ? 'Deep thinking…' : 'Thinking…'}</div>
+          <div className="chat-msg assistant">
+            {streamingText ? (
+              <MarkdownContent text={streamingText} />
+            ) : (
+              <div className="flex items-center gap-8">
+                <span className="spinner" style={{ width: 14, height: 14 }} />
+                <span>{statusLabel || 'Thinking…'}</span>
+              </div>
+            )}
+          </div>
         )}
+
         {error && !busy && (
           <div className="chat-error" role="alert">
             <span>{error}</span>
-            <button className="chat-retry" onClick={() => ask(pending)}>Retry</button>
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={() => ask(pending)}
+            >
+              Retry
+            </button>
           </div>
         )}
       </div>
 
       <div className="chat-toggles">
         <button
+          type="button"
           className={`chat-chip${deepOn ? ' active' : ''}`}
-          onClick={() => setDeepOn(d => !d)}
+          onClick={() => {
+            setDeepOn(d => {
+              if (!d) setSocraticOn(false);
+              return !d;
+            });
+          }}
           aria-pressed={deepOn}
-          title="Slower but thinks step by step with a reasoning model"
+          title="2-pass Solve → Skeptical Verify for stronger logic & math"
         >
-          🧠 Deep Think
+          <Brain size={14} /> Deep Think
         </button>
         <button
-          className={`chat-chip${webOn ? ' active' : ''}`}
-          onClick={() => {
-            if (!hasTavily) return;
-            setWebOn(w => !w);
-          }}
-          aria-pressed={webOn}
-          disabled={!hasTavily}
-          title={hasTavily ? 'Search the web for context' : 'Needs a free Tavily key — Settings → AI Backend → Web search'}
+          type="button"
+          className={`chat-chip${researchOn ? ' active' : ''}`}
+          onClick={() => setResearchOn(r => !r)}
+          aria-pressed={researchOn}
+          title="Searches Wikipedia, OpenAlex academic papers & optional Tavily web"
         >
-          🌐 Web
+          <BookOpen size={14} /> Research
+        </button>
+        <button
+          type="button"
+          className={`chat-chip${socraticOn ? ' active' : ''}`}
+          onClick={() => {
+            setSocraticOn(s => {
+              if (!s) setDeepOn(false);
+              return !s;
+            });
+          }}
+          aria-pressed={socraticOn}
+          title="Guides you with probing questions to build critical thinking"
+        >
+          <Compass size={14} /> Socratic
         </button>
       </div>
 
       <div className="chat-input-bar">
-        <input
+        <textarea
+          ref={inputRef}
+          rows={1}
           className="chat-input"
           value={input}
           onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && !e.shiftKey && send()}
-          placeholder="Ask a question…"
+          onKeyDown={e => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              send();
+            }
+          }}
+          placeholder={
+            socraticOn
+              ? 'Share your reasoning or ask for a hint…'
+              : researchOn
+                ? 'Enter a topic or question to research…'
+                : 'Ask a question… (Shift+Enter for new line)'
+          }
           autoFocus
         />
-        <button className="chat-send" onClick={send} disabled={busy || !input.trim()} aria-label="Send">
-          ➤
-        </button>
+        {busy ? (
+          <button
+            type="button"
+            className="chat-send stop"
+            onClick={stopGeneration}
+            aria-label="Stop generating"
+            title="Stop generating"
+          >
+            <Square size={16} fill="currentColor" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="chat-send"
+            onClick={send}
+            disabled={!input.trim()}
+            aria-label="Send message"
+          >
+            <Send size={17} />
+          </button>
+        )}
       </div>
     </div>
   );

@@ -1,8 +1,8 @@
 /**
- * Bottom sheet for picking a folder (move note). Shared by the note editor
- * and the notes list long-press actions. Reuses the export-sheet styles.
+ * Bottom sheet for picking a folder (move note). Shared by NoteEditor & NotesListScreen.
  */
 import { useState, useEffect } from 'react';
+import { Folder, Check } from 'lucide-react';
 import { getFoldersWithCounts } from '../store/db';
 
 export default function FolderPickerSheet({ currentId, onPick, onClose }) {
@@ -10,26 +10,45 @@ export default function FolderPickerSheet({ currentId, onPick, onClose }) {
 
   useEffect(() => {
     let live = true;
-    getFoldersWithCounts().then(f => live && setFolders(f));
-    return () => { live = false; };
+    getFoldersWithCounts().then(f => {
+      if (live) setFolders(f);
+    });
+    return () => {
+      live = false;
+    };
   }, []);
+
+  useEffect(() => {
+    const onKey = e => {
+      if (e.key === 'Escape') onClose?.();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   return (
     <div className="export-overlay" onClick={onClose}>
-      <div className="export-sheet" onClick={e => e.stopPropagation()}>
+      <div className="export-sheet" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Move to folder">
         <div className="export-title">Move to folder</div>
-        {folders.map(f => (
-          <button
-            key={f.id}
-            className="export-btn"
-            style={f.id === currentId ? { opacity: 0.45 } : null}
-            disabled={f.id === currentId}
-            onClick={() => onPick(f)}
-          >
-            📁 {f.name}{f.id === currentId ? ' — current' : ''}
-          </button>
-        ))}
-        <button className="export-btn cancel" onClick={onClose}>Cancel</button>
+        {folders.map(f => {
+          const isCurrent = f.id === currentId;
+          return (
+            <button
+              key={f.id}
+              type="button"
+              className="export-btn"
+              disabled={isCurrent}
+              onClick={() => onPick(f)}
+            >
+              <Folder size={18} />
+              <span className="flex-1">{f.name}</span>
+              {isCurrent && <Check size={16} style={{ color: 'var(--accent-ink)' }} />}
+            </button>
+          );
+        })}
+        <button type="button" className="export-btn cancel" onClick={onClose}>
+          Cancel
+        </button>
       </div>
     </div>
   );

@@ -1,25 +1,26 @@
 /**
- * AI backend configuration — mode + provider presets + API key storage.
- *
- * SECURITY MODEL:
- * - The API key lives ONLY in localStorage of the app's private sandbox
- *   (on Android, app storage is isolated per-app and unreachable by others).
- * - The key is sent ONLY as an Authorization header to the provider's own
- *   HTTPS endpoint — never in URLs, never in logs, never in error text.
- * - Never committed to git (runtime user input only).
+ * AI backend configuration — mode, provider presets, API keys, explanation style.
  */
-export const MODE_KEY = 'aicn:aiMode';       // 'termux' | 'direct'
-export const PROVIDER_KEY = 'aicn:aiProvider'; // preset id
-export const AIKEY_KEY = 'aicn:aiKey';       // LEGACY single key (migrated to per-provider map)
-export const KEYS_KEY = 'aicn:aiKeys';       // JSON map { providerId: key } — per-provider storage
-export const BASEURL_KEY = 'aicn:aiBaseUrl'; // custom base URL override
-export const MODEL_KEY = 'aicn:aiModel';     // custom model override
-export const REASON_KEY = 'aicn:aiReasonModel'; // reasoning model for 🧠 Deep Think
-export const TAVILY_KEY = 'aicn:tavilyKey';  // Tavily API key for 🌐 web search
+export const MODE_KEY = 'aicn:aiMode';          // 'termux' | 'direct'
+export const PROVIDER_KEY = 'aicn:aiProvider';  // preset id
+export const AIKEY_KEY = 'aicn:aiKey';          // legacy single key (migrated to map)
+export const KEYS_KEY = 'aicn:aiKeys';          // JSON map { providerId: key }
+export const BASEURL_KEY = 'aicn:aiBaseUrl';    // base URL override
+export const MODEL_KEY = 'aicn:aiModel';        // model override
+export const REASON_KEY = 'aicn:aiReasonModel'; // reasoning model for Deep Think
+export const TAVILY_KEY = 'aicn:tavilyKey';     // Tavily API key for web search
+export const STYLE_KEY = 'aicn:explainStyle';   // 'default' | 'simple' | 'exam-prep' | 'detailed'
+export const FALLBACK_KEY = 'aicn:autoFallback'; // boolean string ('true' default)
+
+export const EXPLAIN_STYLES = [
+  ['simple', 'Simple'],
+  ['default', 'Balanced'],
+  ['exam-prep', 'Exam Prep'],
+  ['detailed', 'Detailed'],
+];
 
 /**
  * Provider presets. baseUrl must be an OpenAI-compatible chat/completions root.
- * free: has a free tier. keyUrl: where the user creates the key.
  */
 export const PROVIDERS = {
   groq: {
@@ -28,8 +29,14 @@ export const PROVIDERS = {
     free: true,
     baseUrl: 'https://api.groq.com/openai/v1',
     defaultModel: 'llama-3.3-70b-versatile',
-    reasonModel: 'deepseek-r1-distill-llama-70b',
-    models: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant', 'openai/gpt-oss-120b', 'openai/gpt-oss-20b'],
+    reasonModel: 'qwen/qwen3-32b',
+    models: [
+      'llama-3.3-70b-versatile',
+      'llama-3.1-8b-instant',
+      'qwen/qwen3-32b',
+      'openai/gpt-oss-120b',
+      'openai/gpt-oss-20b',
+    ],
     keyUrl: 'https://console.groq.com/keys',
   },
   gemini: {
@@ -37,9 +44,9 @@ export const PROVIDERS = {
     badge: 'Free tier',
     free: true,
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-    defaultModel: 'gemini-2.0-flash',
-    reasonModel: 'gemini-2.5-flash',
-    models: ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-2.5-pro'],
+    defaultModel: 'gemini-2.5-flash',
+    reasonModel: 'gemini-2.5-pro',
+    models: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite'],
     keyUrl: 'https://aistudio.google.com/apikey',
   },
   openrouter: {
@@ -55,6 +62,7 @@ export const PROVIDERS = {
       'nvidia/nemotron-3-ultra-550b-a55b:free',
       'inclusionai/ling-3.2-flash:free',
       'baidu/ernie-5.5-flash-preview:free',
+      'deepseek/deepseek-r1:free',
     ],
     keyUrl: 'https://openrouter.ai/keys',
   },
@@ -63,9 +71,9 @@ export const PROVIDERS = {
     badge: 'Paid',
     free: false,
     baseUrl: 'https://api.openai.com/v1',
-    defaultModel: 'gpt-4o-mini',
+    defaultModel: 'gpt-4.1-mini',
     reasonModel: 'o4-mini',
-    models: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1-mini'],
+    models: ['gpt-4.1-mini', 'gpt-4o-mini', 'gpt-4.1', 'o4-mini'],
     keyUrl: 'https://platform.openai.com/api-keys',
   },
   cerebras: {
@@ -75,7 +83,7 @@ export const PROVIDERS = {
     baseUrl: 'https://api.cerebras.ai/v1',
     defaultModel: 'llama-3.3-70b',
     reasonModel: 'qwen-3-32b',
-    models: ['llama-3.3-70b', 'llama3.1-8b'],
+    models: ['llama-3.3-70b', 'qwen-3-32b', 'llama3.1-8b'],
     keyUrl: 'https://cloud.cerebras.ai',
   },
   mistral: {
@@ -85,7 +93,7 @@ export const PROVIDERS = {
     baseUrl: 'https://api.mistral.ai/v1',
     defaultModel: 'mistral-small-latest',
     reasonModel: 'magistral-medium-latest',
-    models: ['mistral-small-latest', 'mistral-large-latest', 'open-mistral-nemo'],
+    models: ['mistral-small-latest', 'mistral-large-latest', 'magistral-medium-latest'],
     keyUrl: 'https://console.mistral.ai/api-keys',
   },
   nvidia: {
@@ -137,39 +145,51 @@ export const PROVIDERS = {
 };
 
 export function getAiMode() {
-  try { return localStorage.getItem(MODE_KEY) || 'termux'; } catch { return 'termux'; }
+  try {
+    return localStorage.getItem(MODE_KEY) || 'termux';
+  } catch {
+    return 'termux';
+  }
 }
 
 export function getProviderId() {
-  try { return localStorage.getItem(PROVIDER_KEY) || 'groq'; } catch { return 'groq'; }
+  try {
+    return localStorage.getItem(PROVIDER_KEY) || 'groq';
+  } catch {
+    return 'groq';
+  }
 }
 
-/** Full effective config for direct mode. Key is secret — handle with care. */
-export function getDirectConfig() {
-  migrateLegacyKey();
-  const pid = getProviderId();
-  const preset = PROVIDERS[pid] || PROVIDERS.groq;
-  let baseUrl = preset.baseUrl;
-  let model = preset.defaultModel;
-  try { baseUrl = localStorage.getItem(BASEURL_KEY) || preset.baseUrl; } catch { /* default */ }
-  try { model = localStorage.getItem(MODEL_KEY) || preset.defaultModel; } catch { /* default */ }
-  const key = getKeyForProvider(pid).trim();
-  return { providerId: pid, preset, baseUrl: (baseUrl || '').trim(), model: (model || '').trim(), key };
+export function getExplainStyle() {
+  try {
+    return localStorage.getItem(STYLE_KEY) || 'default';
+  } catch {
+    return 'default';
+  }
 }
 
-// ---------- Per-provider key storage ----------
-// Keys are kept in a map { providerId: key } so switching providers never
-// loses what you pasted. Same security envelope as before: app-private
-// localStorage, sent only as an Authorization header to that provider.
+export function setExplainStyle(style) {
+  try {
+    localStorage.setItem(STYLE_KEY, style || 'default');
+  } catch {
+    // non-fatal
+  }
+}
 
 function getKeysMap() {
   try {
     return JSON.parse(localStorage.getItem(KEYS_KEY) || '{}') || {};
-  } catch { return {}; }
+  } catch {
+    return {};
+  }
 }
 
-/** One-time migration: legacy single key → map under the active provider. */
+let legacyMigrated = false;
+
+/** One-time migration: legacy single key → per-provider map. */
 export function migrateLegacyKey() {
+  if (legacyMigrated) return;
+  legacyMigrated = true;
   try {
     const legacy = localStorage.getItem(AIKEY_KEY);
     if (legacy) {
@@ -179,7 +199,9 @@ export function migrateLegacyKey() {
       localStorage.setItem(KEYS_KEY, JSON.stringify(map));
       localStorage.removeItem(AIKEY_KEY);
     }
-  } catch { /* non-fatal */ }
+  } catch {
+    // non-fatal
+  }
 }
 
 export function setKeyForProvider(pid, key) {
@@ -188,28 +210,110 @@ export function setKeyForProvider(pid, key) {
     if (key && key.trim()) map[pid] = key.trim();
     else delete map[pid];
     localStorage.setItem(KEYS_KEY, JSON.stringify(map));
-  } catch { /* non-fatal */ }
+  } catch {
+    // non-fatal
+  }
 }
 
 export function getKeyForProvider(pid) {
+  migrateLegacyKey();
   return getKeysMap()[pid] || '';
 }
 
-/** Reasoning model for 🧠 Deep Think: override > preset.reasonModel > main model. */
+/** Full effective config for direct mode. Always strips trailing slashes from baseUrl. */
+export function getDirectConfig() {
+  migrateLegacyKey();
+  const pid = getProviderId();
+  const preset = PROVIDERS[pid] || PROVIDERS.groq;
+  let baseUrl = preset.baseUrl;
+  let model = preset.defaultModel;
+  try {
+    baseUrl = localStorage.getItem(BASEURL_KEY) || preset.baseUrl;
+  } catch {
+    // default
+  }
+  try {
+    model = localStorage.getItem(MODEL_KEY) || preset.defaultModel;
+  } catch {
+    // default
+  }
+  const key = getKeyForProvider(pid).trim();
+  return {
+    providerId: pid,
+    preset,
+    baseUrl: (baseUrl || '').trim().replace(/\/+$/, ''),
+    model: (model || '').trim(),
+    key,
+  };
+}
+
+/** Reasoning model for Deep Think: override > preset.reasonModel > preset.defaultModel. */
 export function getReasonModel() {
   const pid = getProviderId();
   const preset = PROVIDERS[pid] || PROVIDERS.groq;
   let override = '';
-  try { override = (localStorage.getItem(REASON_KEY) || '').trim(); } catch { /* default */ }
+  try {
+    override = (localStorage.getItem(REASON_KEY) || '').trim();
+  } catch {
+    // default
+  }
   return override || preset.reasonModel || preset.defaultModel || '';
 }
 
-/** Tavily key for 🌐 web search (free: app.tavily.com). */
+/** Tavily key for web search (free tier: app.tavily.com). */
 export function getTavilyKey() {
-  try { return (localStorage.getItem(TAVILY_KEY) || '').trim(); } catch { return ''; }
+  try {
+    return (localStorage.getItem(TAVILY_KEY) || '').trim();
+  } catch {
+    return '';
+  }
 }
 
-/** Masked key for display only — never log or send the full key. */
+/** Auto-failover to another saved free provider on 429/503 (defaults to true). */
+export function getAutoFallback() {
+  try {
+    const val = localStorage.getItem(FALLBACK_KEY);
+    return val === null ? true : val === 'true';
+  } catch {
+    return true;
+  }
+}
+
+export function setAutoFallback(enabled) {
+  try {
+    localStorage.setItem(FALLBACK_KEY, enabled ? 'true' : 'false');
+  } catch {
+    // non-fatal
+  }
+}
+
+/**
+ * Return alternative providers for which the user already saved an API key.
+ * Used for graceful free-tier failover when the primary provider returns 429/503.
+ */
+export function getFallbackProviders() {
+  migrateLegacyKey();
+  const activeId = getProviderId();
+  const map = getKeysMap();
+  const out = [];
+  for (const [pid, rawKey] of Object.entries(map)) {
+    const key = String(rawKey || '').trim();
+    if (!key || pid === activeId || pid === 'custom') continue;
+    const preset = PROVIDERS[pid];
+    if (!preset || !preset.baseUrl || !preset.defaultModel) continue;
+    out.push({
+      providerId: pid,
+      name: preset.name,
+      baseUrl: preset.baseUrl.replace(/\/+$/, ''),
+      model: preset.defaultModel,
+      reasonModel: preset.reasonModel || preset.defaultModel,
+      key,
+    });
+  }
+  return out;
+}
+
+/** Masked key for display only — never log or send full key. */
 export function maskKey(key) {
   if (!key) return '';
   if (key.length <= 8) return '••••••••';

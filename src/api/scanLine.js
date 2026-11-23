@@ -1,27 +1,28 @@
 /**
  * Frontend API client — /api/scan-line.
- * Routes based on the AI backend mode (Settings → AI Backend).
  */
-import { API_BASE } from '../config';
-import { getAiMode } from '../lib/aiConfig';
+import { getApiBase } from '../config';
+import { getAiMode, getExplainStyle } from '../lib/aiConfig';
 import { scanLine as directScanLine } from '../lib/aiDirect';
 
-export async function scanLine(note, line, request = 'simpler') {
+export async function scanLine(note, line, request = 'simpler', style = null) {
+  const activeStyle = style || getExplainStyle();
   if (getAiMode() === 'direct') {
-    return directScanLine(note, line, request);
+    return directScanLine(note, line, request, activeStyle);
   }
 
+  const apiBase = getApiBase();
   let res;
   try {
-    res = await fetch(`${API_BASE}/api/scan-line`, {
+    res = await fetch(`${apiBase}/api/scan-line`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ note, line, request }),
+      body: JSON.stringify({ note, line, request, style: activeStyle }),
     });
   } catch {
     throw new Error(
-      `Can't reach the AI backend${API_BASE ? ` at ${API_BASE}` : ''}. ` +
-      'If you are using the phone app, start the Termux server: node server.js'
+      `Can't reach the AI backend${apiBase ? ` at ${apiBase}` : ''}. ` +
+        'Start the Termux server (node server.js) or switch to Direct API in Settings.'
     );
   }
 

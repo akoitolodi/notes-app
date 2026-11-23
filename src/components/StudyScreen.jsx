@@ -1,119 +1,414 @@
 /**
- * Study screen — flashcards, quiz, fill-in-the-blank, mnemonics,
- * practice grader, weakness detection — all generated from the note's AI scan.
+ * StudyScreen — persisted study & critical thinking workspace for a note:
+ * - Cards: Interactive Flip Deck + Spaced Repetition mastery tracking
+ * - Quiz: Live score summary, retake, and rationale
+ * - Blanks: Type-to-check fill-in-the-blank recall
+ * - Think: Challenge My Notes (Critical & Logical Audit), Feynman Technique Coach,
+ *          Mnemonics, Answer Grader, and interactive Weakness Detection
  */
-import { useState, useCallback } from 'react';
-import { generateCloze, generateMnemonics, analyzeWeakness, gradeAnswer } from '../lib/aiFeatures';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import {
+  ChevronLeft,
+  Sparkles,
+  Brain,
+  Check,
+  X,
+  Eye,
+  EyeOff,
+  RotateCw,
+  FileCheck,
+  Target,
+  ShieldAlert,
+  Lightbulb,
+  MessageCircleQuestion,
+} from 'lucide-react';
+import {
+  generateCloze,
+  generateMnemonics,
+  analyzeWeakness,
+  gradeAnswer,
+  critiqueNote,
+  evaluateFeynman,
+} from '../lib/aiFeatures';
+import { db, updateNote } from '../store/db';
+import { FlashcardDeck, QuizSection } from './study/StudyWidgets';
+import MarkdownContent from './ui/MarkdownContent';
+import { useDialog } from './ui/DialogProvider';
 
-function Flashcard({ card }) {
-  const [flipped, setFlipped] = useState(false);
-  return (
-    <div
-      className="explanation-card"
-      style={{ cursor: 'pointer', minHeight: 120, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}
-      onClick={() => setFlipped(f => !f)}
-    >
-      {flipped ? (
-        <>
-          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>Answer</div>
-          <div style={{ fontSize: 16, lineHeight: 1.5 }}>{card.a || '—'}</div>
-        </>
-      ) : (
-        <>
-          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>Question</div>
-          <div style={{ fontSize: 16, fontWeight: 500, lineHeight: 1.5 }}>{card.q}</div>
-          <div style={{ fontSize: 12, color: 'var(--accent)', marginTop: 10 }}>Tap to flip</div>
-        </>
-      )}
-    </div>
-  );
+function normalizeAnswer(str) {
+  return String(str || '')
+    .toLowerCase()
+    .replace(/[^\w\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
-function QuizItem({ item, index, onPick }) {
-  const [picked, setPicked] = useState(null);
-  const correct = picked != null && picked === item.answer;
+function ClozeItem({ item, index }) {
+  const [guess, setGuess] = useState('');
+  const [checked, setChecked] = useState(null);
+  const [revealed, setRevealed] = useState(false);
+
+  const checkGuess = () => {
+    if (!guess.trim()) return;
+    const ok = normalizeAnswer(guess) === normalizeAnswer(item.answer);
+    setChecked(ok ? 'correct' : 'wrong');
+    if (ok) setRevealed(true);
+  };
+
+  const parts = String(item.text || '').split('____');
 
   return (
     <div className="explanation-card">
-      <div style={{ fontSize: 15, fontWeight: 500, marginBottom: 12 }}>{index + 1}. {item.question}</div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {item.choices.map((choice, i) => {
-          let bg = 'var(--bg-elevated)';
-          let color = 'var(--text)';
-          if (picked != null) {
-            if (i === item.answer) { bg = 'rgba(52,199,89,0.2)'; color = 'var(--ok)'; }
-            else if (i === picked) { bg = 'rgba(255,69,58,0.2)'; color = 'var(--bad)'; }
-          }
-          return (
-            <button
-              key={i}
-              onClick={() => { if (picked == null) { setPicked(i); onPick?.(index, i); } }}
-              style={{
-                textAlign: 'left', padding: '10px 14px', borderRadius: 10,
-                border: '1px solid var(--divider)', background: bg, color,
-                fontSize: 14, fontFamily: 'inherit', cursor: picked == null ? 'pointer' : 'default',
-              }}
-            >
-              {String.fromCharCode(65 + i)}. {choice}
-            </button>
-          );
-        })}
+      <div style={{ fontSize: 15, fontWeight: 500, lineHeight: 1.55, marginBottom: 12 }}>
+        {index + 1}.{' '}
+        {parts.map((part, k) => (
+          <span key={k}>
+            {part}
+            {k < parts.length - 1 && (
+              <span
+                style={{
+                  background: revealed ? 'var(--ok-bg)' : 'var(--accent-tint)',
+                  color: revealed ? 'var(--ok)' : 'var(--accent-ink)',
+                  padding: '2px 8px',
+                  borderRadius: 6,
+                  fontWeight: 700,
+                }}
+              >
+                {revealed ? item.answer : '____'}
+              </span>
+            )}
+          </span>
+        ))}
       </div>
-      {picked != null && (
-        <div style={{ marginTop: 10, fontSize: 13, fontWeight: 500, color: correct ? 'var(--ok)' : 'var(--bad)' }}>
-          {correct ? '✓ Correct' : '✗ Not quite'}
+
+      <div className="flex gap-8 items-center">
+        <input
+          className="ai-input"
+          style={{ marginTop: 0, flex: 1 }}
+          placeholder="Type missing word(s)…"
+          value={guess}
+          onChange={e => {
+            setGuess(e.target.value);
+            if (checked) setChecked(null);
+          }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') checkGuess();
+          }}
+        />
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          disabled={!guess.trim()}
+          onClick={checkGuess}
+        >
+          Check
+        </button>
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          onClick={() => setRevealed(r => !r)}
+          title={revealed ? 'Hide answer' : 'Reveal answer'}
+        >
+          <Eye size={15} />
+        </button>
+      </div>
+
+      {checked && (
+        <div
+          className="flex items-center gap-6"
+          style={{
+            marginTop: 8,
+            fontSize: 13,
+            fontWeight: 600,
+            color: checked === 'correct' ? 'var(--ok)' : 'var(--bad)',
+          }}
+        >
+          {checked === 'correct' ? (
+            <>
+              <Check size={15} /> Spot on!
+            </>
+          ) : (
+            <>
+              <X size={15} /> Not quite — tap the eye icon or try again.
+            </>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function ClozeItem({ item, index, onToggle }) {
-  const [show, setShow] = useState(false);
+function ChallengeCard({ item, index }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="critique-gap-card">
+      <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.45, marginBottom: 8 }}>
+        {index + 1}. {item.question}
+      </div>
+      <button
+        type="button"
+        className="btn btn-secondary btn-sm w-full"
+        onClick={() => setOpen(o => !o)}
+      >
+        {open ? <EyeOff size={14} /> : <Eye size={14} />}
+        {open ? 'Hide model reasoning' : 'Reveal reasoning'}
+      </button>
+      {open && item.reasoning && (
+        <div style={{ marginTop: 8, fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+          <MarkdownContent text={item.reasoning} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CriticalAuditSection({ critique, busy, onRun }) {
+  if (!critique && !busy) {
+    return (
+      <div className="explanation-card">
+        <div className="flex items-center gap-6" style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>
+          <ShieldAlert size={17} style={{ color: 'var(--accent-ink)' }} /> Challenge My Notes
+        </div>
+        <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12, lineHeight: 1.5 }}>
+          Audits your note (and related folder notes) for logical gaps, unstated assumptions, contradictions, and tough exam-style "What-if" challenges.
+        </div>
+        <button type="button" className="btn btn-primary w-full" onClick={onRun}>
+          <ShieldAlert size={16} /> Audit logic & assumptions
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="explanation-card">
-      <div style={{ fontSize: 15, fontWeight: 500, marginBottom: 12 }}>{index + 1}. {String(item.text || '').split('____').map((part, k, arr) => (
-        <span key={k}>
-          {part}
-          {k < arr.length - 1 && <span style={{ background: 'var(--accent)', color: 'var(--accent-text)', padding: '2px 6px', borderRadius: 4, fontWeight: 700 }}>____</span>}
+      <div className="flex justify-between items-center" style={{ marginBottom: 10 }}>
+        <span className="flex items-center gap-6" style={{ fontSize: 15, fontWeight: 700 }}>
+          <ShieldAlert size={17} style={{ color: 'var(--accent-ink)' }} /> Critical Audit
         </span>
-      ))}</div>
+        {!busy && (
+          <button type="button" className="btn btn-secondary btn-sm" onClick={onRun}>
+            <RotateCw size={13} /> Re-audit
+          </button>
+        )}
+      </div>
+
+      {busy ? (
+        <div className="scan-indicator" style={{ padding: '6px 0' }}>
+          <span className="spinner" /> Checking logic, assumptions & edge cases…
+        </div>
+      ) : (
+        <>
+          {critique.strengths?.length > 0 && (
+            <div className="grade-box good" style={{ marginTop: 0, marginBottom: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', marginBottom: 4 }}>
+                Solid reasoning
+              </div>
+              {critique.strengths.map((s, i) => (
+                <div key={i} style={{ fontSize: 13, lineHeight: 1.45 }}>• {s}</div>
+              ))}
+            </div>
+          )}
+
+          {critique.contradictions?.length > 0 && (
+            <div className="grade-box bad" style={{ marginTop: 0, marginBottom: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', marginBottom: 4 }}>
+                Possible contradictions
+              </div>
+              {critique.contradictions.map((c, i) => (
+                <div key={i} style={{ fontSize: 13, lineHeight: 1.45 }}>• {c}</div>
+              ))}
+            </div>
+          )}
+
+          {critique.gaps?.length > 0 && (
+            <div style={{ marginBottom: 12 }}>
+              <div className="settings-label" style={{ marginBottom: 6 }}>
+                Logical gaps & hidden assumptions
+              </div>
+              {critique.gaps.map((g, i) => (
+                <div key={i} className="critique-gap-card">
+                  <div style={{ fontSize: 14, fontWeight: 600 }}>{g.issue}</div>
+                  {g.whyItMatters && (
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 3 }}>
+                      <strong>Why it matters:</strong> {g.whyItMatters}
+                    </div>
+                  )}
+                  {g.suggestion && (
+                    <div style={{ fontSize: 13, color: 'var(--accent-ink)', marginTop: 3 }}>
+                      <strong>Sharpen it:</strong> {g.suggestion}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {critique.challenges?.length > 0 && (
+            <div>
+              <div className="settings-label" style={{ marginBottom: 6 }}>
+                Critical thinking challenges
+              </div>
+              {critique.challenges.map((c, i) => (
+                <ChallengeCard key={i} item={c} index={i} />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function FeynmanCoach({ note }) {
+  const { toast } = useDialog();
+  const [concept, setConcept] = useState(note?.title || '');
+  const [explanation, setExplanation] = useState('');
+  const [result, setResult] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const handleEvaluate = async () => {
+    if (!concept.trim() || !explanation.trim() || busy) return;
+    setBusy(true);
+    setResult(null);
+    try {
+      const res = await evaluateFeynman({
+        note: note.body,
+        concept,
+        explanation,
+        subject: note.subject,
+      });
+      setResult(res);
+    } catch (err) {
+      toast(`Feynman check failed: ${err.message}`, { type: 'error' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const tone = !result ? '' : result.score >= 75 ? 'good' : result.score >= 45 ? 'warn' : 'bad';
+
+  return (
+    <div className="explanation-card">
+      <div className="flex items-center gap-6" style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>
+        <Lightbulb size={17} style={{ color: 'var(--accent-ink)' }} /> Feynman Technique Coach
+      </div>
+      <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 10 }}>
+        Explain a concept in plain words as if teaching a beginner. The AI catches hand-waving and logical leaps.
+      </div>
+      <input
+        className="ai-input"
+        value={concept}
+        onChange={e => setConcept(e.target.value)}
+        placeholder="Concept to explain (e.g. Osmosis, Derivatives)…"
+        style={{ marginBottom: 8 }}
+      />
+      <textarea
+        className="ai-input"
+        value={explanation}
+        onChange={e => setExplanation(e.target.value)}
+        placeholder="Explain how & why it works in your own simple words…"
+        style={{ minHeight: 88, marginBottom: 10 }}
+      />
       <button
-        className="btn btn-secondary"
-        style={{ width: '100%', marginTop: 8 }}
-        onClick={() => setShow(s => !s)}
+        type="button"
+        className="btn btn-primary w-full"
+        disabled={busy || !concept.trim() || !explanation.trim()}
+        onClick={handleEvaluate}
       >
-        {show ? <span style={{ color: 'var(--accent)' }}>✓ {item.answer}</span> : 'Reveal answer'}
+        {busy ? (
+          <>
+            <span className="spinner" style={{ width: 15, height: 15 }} /> Auditing clarity…
+          </>
+        ) : (
+          <>
+            <Lightbulb size={16} /> Check my explanation
+          </>
+        )}
       </button>
+
+      {result && (
+        <div className={`grade-box ${tone}`}>
+          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>
+            Clarity: {result.score}/100 — {result.verdict}
+          </div>
+          {result.strengths && (
+            <div style={{ fontSize: 13, marginBottom: 6 }}>{result.strengths}</div>
+          )}
+          {result.gaps?.length > 0 && (
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 3 }}>
+                Gaps / hand-waving to tighten:
+              </div>
+              {result.gaps.map((g, i) => (
+                <div key={i} style={{ fontSize: 13, lineHeight: 1.45 }}>• {g}</div>
+              ))}
+            </div>
+          )}
+          {result.followUpQuestion && (
+            <div className="feynman-followup">
+              <div className="flex items-center gap-6" style={{ fontSize: 12, fontWeight: 700, marginBottom: 3 }}>
+                <MessageCircleQuestion size={14} /> Follow-up probe
+              </div>
+              <div style={{ fontSize: 13, lineHeight: 1.45 }}>{result.followUpQuestion}</div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
 function MnemonicsSection({ mnemonics, busy, onGenerate }) {
-  if (!mnemonics && !busy) return (
-    <div className="explanation-card">
-      <button className="btn btn-primary" onClick={onGenerate} style={{ width: '100%' }}>
-        🧠 Generate mnemonics
-      </button>
-    </div>
-  );
-  return (
-    <div>
-      <div className="explanation-card" style={{ marginBottom: 12 }}>
-        {(mnemonics || []).map((m, i) => (
-          <div key={i} style={{ marginBottom: 12 }}>
-            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>{m.term}</div>
-            <div style={{ fontSize: 13, color: 'var(--accent)', fontStyle: 'italic' }}>{m.hook}</div>
-          </div>
-        ))}
-        {busy && <div style={{ textAlign: 'center', padding: 12, color: 'var(--accent)' }}>Generating…</div>}
-        {!busy && <button className="btn btn-secondary" style={{ width: '100%', marginTop: 8 }} onClick={onGenerate}>Regenerate</button>}
+  if (!mnemonics && !busy) {
+    return (
+      <div className="explanation-card">
+        <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>Memory Hooks & Mnemonics</div>
+        <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>
+          Turn key terms and lists in this note into memorable acronyms and hooks.
+        </div>
+        <button type="button" className="btn btn-secondary w-full" onClick={onGenerate}>
+          <Brain size={17} /> Generate mnemonics
+        </button>
       </div>
+    );
+  }
+
+  return (
+    <div className="explanation-card">
+      <div className="flex justify-between items-center" style={{ marginBottom: 10 }}>
+        <span style={{ fontSize: 15, fontWeight: 600 }}>Mnemonics</span>
+        {!busy && (
+          <button type="button" className="btn btn-secondary btn-sm" onClick={onGenerate}>
+            <RotateCw size={13} /> Regenerate
+          </button>
+        )}
+      </div>
+      {busy ? (
+        <div className="scan-indicator" style={{ padding: '6px 0' }}>
+          <span className="spinner" /> Creating memory hooks…
+        </div>
+      ) : (
+        (mnemonics || []).map((m, i) => (
+          <div
+            key={i}
+            style={{
+              padding: '8px 0',
+              borderBottom: i < mnemonics.length - 1 ? '0.5px solid var(--divider)' : 'none',
+            }}
+          >
+            <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 3 }}>{m.term}</div>
+            <div style={{ fontSize: 14, color: 'var(--accent-ink)', lineHeight: 1.45 }}>
+              {m.hook}
+            </div>
+          </div>
+        ))
+      )}
     </div>
   );
 }
 
-function PracticeGrader({ note, onGrade }) {
+function PracticeGrader({ note }) {
+  const { toast } = useDialog();
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
   const [result, setResult] = useState(null);
@@ -124,110 +419,201 @@ function PracticeGrader({ note, onGrade }) {
     setBusy(true);
     setResult(null);
     try {
-      const res = await import('../lib/aiFeatures').then(m => m.gradeAnswer({ note: note.body, question, userAnswer: answer, style: 'exam-prep' }));
+      const res = await gradeAnswer({
+        note: note.body,
+        question,
+        userAnswer: answer,
+        style: 'exam-prep',
+      });
       setResult(res);
     } catch (err) {
-      alert(err.message);
+      toast(`Grading failed: ${err.message}`, { type: 'error' });
     } finally {
       setBusy(false);
     }
   };
 
+  const gradeTone =
+    !result ? '' : result.score >= 75 ? 'good' : result.score >= 45 ? 'warn' : 'bad';
+
   return (
-    <div>
-      <div className="explanation-card" style={{ marginBottom: 12 }}>
-        <div style={{ fontSize: 15, fontWeight: 500, marginBottom: 12 }}>Practice answer</div>
-        <textarea
-          className="ai-input"
-          value={question}
-          onChange={e => setQuestion(e.target.value)}
-          placeholder="Paste an exam question or write one yourself…"
-          style={{ minHeight: 60, marginBottom: 10 }}
-        />
-        <textarea
-          className="ai-input"
-          value={answer}
-          onChange={e => setAnswer(e.target.value)}
-          placeholder="Your answer…"
-          style={{ minHeight: 80, marginBottom: 12 }}
-        />
-        <button className="btn btn-primary" onClick={handleGrade} disabled={busy || !question.trim() || !answer.trim()} style={{ width: '100%' }}>
-          {busy ? 'Grading…' : '📝 Grade my answer'}
-        </button>
-        {result && (
-          <div className="explanation-mistake" style={{ marginTop: 12 }}>
-            <svg className="mistake-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="10" />
-              <line x1="12" y1="8" x2="12" y2="12" />
-              <line x1="12" y1="16" x2="12.01" y2="16" />
-            </svg>
-            <div>
-              <div className="mistake-reason">Score: {result.score}/100 — {result.verdict}</div>
-              <div className="mistake-correction">{result.feedback}</div>
-            </div>
-          </div>
+    <div className="explanation-card">
+      <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 10 }}>Practice Answer Grader</div>
+      <textarea
+        className="ai-input"
+        value={question}
+        onChange={e => setQuestion(e.target.value)}
+        placeholder="Paste an exam question or write one yourself…"
+        style={{ minHeight: 62, marginBottom: 10 }}
+      />
+      <textarea
+        className="ai-input"
+        value={answer}
+        onChange={e => setAnswer(e.target.value)}
+        placeholder="Write your answer from memory…"
+        style={{ minHeight: 84, marginBottom: 12 }}
+      />
+      <button
+        type="button"
+        className="btn btn-secondary w-full"
+        onClick={handleGrade}
+        disabled={busy || !question.trim() || !answer.trim()}
+      >
+        {busy ? (
+          <>
+            <span className="spinner" style={{ width: 15, height: 15 }} /> Grading…
+          </>
+        ) : (
+          <>
+            <FileCheck size={17} /> Grade my answer
+          </>
         )}
-      </div>
+      </button>
+
+      {result && (
+        <div className={`grade-box ${gradeTone}`}>
+          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>
+            Score: {result.score}/100 — {result.verdict}
+          </div>
+          <div style={{ fontSize: 14, lineHeight: 1.5 }}>{result.feedback}</div>
+        </div>
+      )}
     </div>
   );
 }
 
-/** Main Study screen with 4 tabs: Cards / Quiz / Blanks / Practice */
 export default function StudyScreen({ note, onBack }) {
-  const [tab, setTab] = useState('cards'); // cards | quiz | blanks | practice
+  const { toast } = useDialog();
+  const [tab, setTab] = useState('cards'); // cards | quiz | blanks | think
   const flashcards = note?.flashcards || [];
   const quiz = note?.quiz || [];
 
-  const [cloze, setCloze] = useState([]);
+  const initialStudy = note?.studyData || {};
+  const [studyData, setStudyData] = useState(initialStudy);
+  const studyRef = useRef(studyData);
+  useEffect(() => {
+    studyRef.current = studyData;
+  }, [studyData]);
+
+  const persistStudy = useCallback(
+    patch => {
+      const next = { ...studyRef.current, ...patch };
+      studyRef.current = next;
+      setStudyData(next);
+      if (note?.id) {
+        updateNote(note.id, { studyData: next }).catch(() => {});
+      }
+    },
+    [note?.id]
+  );
+
   const [clozeBusy, setClozeBusy] = useState(false);
-  const [mnemonics, setMnemonics] = useState(null);
   const [mnBusy, setMnBusy] = useState(false);
-  const [graderResult, setGraderResult] = useState(null);
-  const [weakness, setWeakness] = useState(null);
-  const [quizAnswers, setQuizAnswers] = useState({});
-  const answeredCount = Object.keys(quizAnswers).length;
   const [weakBusy, setWeakBusy] = useState(false);
+  const [critiqueBusy, setCritiqueBusy] = useState(false);
+
+  const cloze = studyData.cloze || [];
+  const mnemonics = studyData.mnemonics || null;
+  const weakness = studyData.weakness || null;
+  const critique = studyData.critique || null;
+  const cardProgress = studyData.cardProgress || {};
+  const quizAnswers = studyData.quizAnswers || {};
+  const answeredCount = Object.keys(quizAnswers).length;
 
   const handleCloze = useCallback(async () => {
+    if (!note?.body?.trim()) return toast('Add some text to this note first');
     setClozeBusy(true);
-    try { const c = await import('../lib/aiFeatures').then(m => m.generateCloze({ note: note.body })); setCloze(c); }
-    catch (e) { alert(e.message); }
-    finally { setClozeBusy(false); }
-  }, [note]);
+    try {
+      const items = await generateCloze({ note: note.body, subject: note.subject });
+      persistStudy({ cloze: items });
+    } catch (e) {
+      toast(`Failed to generate blanks: ${e.message}`, { type: 'error' });
+    } finally {
+      setClozeBusy(false);
+    }
+  }, [note, persistStudy, toast]);
 
   const handleMnemonics = useCallback(async () => {
+    if (!note?.body?.trim()) return toast('Add some text to this note first');
     setMnBusy(true);
-    try { const m = await import('../lib/aiFeatures').then(m => m.generateMnemonics({ note: note.body })); setMnemonics(m); }
-    catch (e) { alert(e.message); }
-    finally { setMnBusy(false); }
-  }, [note]);
+    try {
+      const items = await generateMnemonics({ note: note.body, subject: note.subject });
+      persistStudy({ mnemonics: items });
+    } catch (e) {
+      toast(`Failed to generate mnemonics: ${e.message}`, { type: 'error' });
+    } finally {
+      setMnBusy(false);
+    }
+  }, [note, persistStudy, toast]);
+
+  const handleCritique = useCallback(async () => {
+    if (!note?.body?.trim()) return toast('Add some text to this note first');
+    setCritiqueBusy(true);
+    try {
+      let siblingNotes = [];
+      if (typeof note.folderId === 'number') {
+        const list = await db.notes.where('folderId').equals(note.folderId).toArray();
+        siblingNotes = list.filter(n => n.id !== note.id && !n.trashed);
+      }
+      const res = await critiqueNote({
+        note: note.body,
+        title: note.title,
+        subject: note.subject,
+        siblingNotes,
+      });
+      persistStudy({ critique: res });
+    } catch (e) {
+      toast(`Critical audit failed: ${e.message}`, { type: 'error' });
+    } finally {
+      setCritiqueBusy(false);
+    }
+  }, [note, persistStudy, toast]);
 
   const handleAnalyzeWeakness = useCallback(async () => {
-    if (!note.quiz || !note.quiz.length) return;
+    if (!quiz.length) return;
     setWeakBusy(true);
     try {
-      const w = await import('../lib/aiFeatures').then(m => m.analyzeWeakness({ note: note.body, quiz: note.quiz, answers: quizAnswers, style: 'exam-prep' }));
-      setWeakness(w);
-    } catch (e) { alert(e.message); }
-    finally { setWeakBusy(false); }
-  }, [note, quizAnswers]);
+      const w = await analyzeWeakness({
+        note: note.body,
+        quiz,
+        answers: quizAnswers,
+        style: 'exam-prep',
+      });
+      persistStudy({ weakness: w });
+    } catch (e) {
+      toast(`Weakness analysis failed: ${e.message}`, { type: 'error' });
+    } finally {
+      setWeakBusy(false);
+    }
+  }, [note, quiz, quizAnswers, persistStudy, toast]);
 
   return (
     <div className="screen">
-      <header className="navbar safe-top">
-        <button className="navbar-btn" style={{ width: 'auto', paddingLeft: 0 }} onClick={onBack} aria-label="Back">
-          ‹ Back
+      <header className="navbar">
+        <button
+          type="button"
+          className="navbar-btn navbar-back"
+          onClick={onBack}
+          aria-label="Back to note"
+        >
+          <ChevronLeft size={20} /> Note
         </button>
-        <span className="navbar-title" style={{ fontSize: 15 }}>Study</span>
-        <span style={{ width: 44 }} />
+        <span className="navbar-title">Study</span>
+        <span style={{ width: 64 }} />
       </header>
-      <div className="large-title">{note?.title || 'New Note'}</div>
 
-      {/* Tabs */}
+      <div className="large-title">{note?.title || 'Study Mode'}</div>
+
       <div className="view-switcher">
-        {[['cards', `Cards (${flashcards.length})`], ['quiz', `Quiz (${quiz.length})`], ['blanks', 'Blanks'], ['practice', 'Practice']].map(([t, label]) => (
+        {[
+          ['cards', `Cards (${flashcards.length})`],
+          ['quiz', `Quiz (${quiz.length})`],
+          ['blanks', `Blanks${cloze.length ? ` (${cloze.length})` : ''}`],
+          ['think', 'Think'],
+        ].map(([t, label]) => (
           <button
             key={t}
+            type="button"
             className={`view-switch-btn${tab === t ? ' active' : ''}`}
             onClick={() => setTab(t)}
           >
@@ -236,68 +622,131 @@ export default function StudyScreen({ note, onBack }) {
         ))}
       </div>
 
-      <div className="editor" style={{ paddingTop: 12 }}>
+      <div className="editor">
         {tab === 'cards' && (
-          flashcards.length === 0
-            ? <div className="empty-state"><div className="empty-icon">🃏</div><div className="empty-title">No flashcards yet</div><div className="empty-text">Save your note to generate flashcards.</div></div>
-            : flashcards.map((c, i) => <Flashcard key={i} card={c} />)
+          <FlashcardDeck
+            cards={flashcards}
+            progress={cardProgress}
+            onMarkCard={(idx, status) =>
+              persistStudy({ cardProgress: { ...cardProgress, [idx]: status } })
+            }
+          />
         )}
+
         {tab === 'quiz' && (
-          quiz.length === 0
-            ? <div className="empty-state"><div className="empty-icon">❓</div><div className="empty-title">No quiz yet</div><div className="empty-text">Save your note to generate a quiz.</div></div>
-            : quiz.map((q, i) => <QuizItem key={i} item={q} index={i} onPick={(qi, pick) => setQuizAnswers(a => ({ ...a, [qi]: pick }))} />)
+          <QuizSection
+            quiz={quiz}
+            answers={quizAnswers}
+            onPick={(qi, pick) =>
+              persistStudy({ quizAnswers: { ...quizAnswers, [qi]: pick } })
+            }
+            onReset={() => persistStudy({ quizAnswers: {} })}
+          />
         )}
+
         {tab === 'blanks' && (
           <div>
-            {cloze.length === 0 && !clozeBusy ? (
-              <button className="btn btn-primary" onClick={handleCloze} disabled={clozeBusy} style={{ width: '100%', marginBottom: 16 }}>
-                {clozeBusy ? 'Generating…' : '📝 Generate fill-in-the-blank'}
-              </button>
-            ) : (
-              <div className="explanation-card" style={{ marginBottom: 12 }}>
-                <div style={{ fontSize: 15, fontWeight: 500, marginBottom: 12 }}>Fill-in-the-blank ({cloze.length})</div>
-                {cloze.map((c, i) => <ClozeItem key={i} item={c} index={i} onToggle={() => {}} />)}
-                <button className="btn btn-secondary" onClick={handleCloze} disabled={clozeBusy} style={{ width: '100%', marginTop: 12 }}>Regenerate</button>
+            {clozeBusy ? (
+              <div className="explanation-card">
+                <div className="scan-indicator" style={{ padding: '10px 0' }}>
+                  <span className="spinner" /> Generating fill-in-the-blank questions…
+                </div>
               </div>
+            ) : cloze.length === 0 ? (
+              <div className="explanation-card">
+                <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>
+                  Fill-in-the-Blank Recall
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 14 }}>
+                  Generate active-recall blanks from this note, type your answers, and check yourself.
+                </div>
+                <button type="button" className="btn btn-primary w-full" onClick={handleCloze}>
+                  <Sparkles size={16} /> Generate fill-in-the-blank
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="flex justify-between items-center" style={{ marginBottom: 10 }}>
+                  <span className="settings-label">Fill-in-the-blank ({cloze.length})</span>
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={handleCloze}
+                    disabled={clozeBusy}
+                  >
+                    <RotateCw size={13} /> Regenerate
+                  </button>
+                </div>
+                {cloze.map((c, i) => (
+                  <ClozeItem key={`${i}-${c.answer}`} item={c} index={i} />
+                ))}
+              </>
             )}
           </div>
         )}
-        {tab === 'practice' && (
+
+        {tab === 'think' && (
           <div>
+            <CriticalAuditSection
+              critique={critique}
+              busy={critiqueBusy}
+              onRun={handleCritique}
+            />
+
+            <FeynmanCoach note={note} />
+
             <MnemonicsSection mnemonics={mnemonics} busy={mnBusy} onGenerate={handleMnemonics} />
-            <PracticeGrader note={note} busy={false} onGrade={null} />
-            {weakness && (
-              <div className="explanation-mistake" style={{ marginTop: 16 }}>
-                <svg className="mistake-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
-                </svg>
-                <div>
-                  <div className="mistake-reason" style={{ fontWeight: 600, marginBottom: 6 }}>Weak areas: {weakness.weakAreas.join(', ')}</div>
-                  <div style={{ marginTop: 12 }}>
-                    {weakness.practice.map((p, i) => (
-                      <div key={i} className="explanation-card" style={{ marginBottom: 12 }}>
-                        <div style={{ fontSize: 14, fontWeight: 500, marginBottom: 8 }}>{i + 1}. {p.question}</div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                          {p.choices.map((c, j) => (
-                            <button key={j} className="btn btn-secondary" style={{ textAlign: 'left' }} disabled>
-                              {String.fromCharCode(65 + j)}. {c}
-                            </button>
-                          ))}
-                        </div>
-                        <div className="mistake-correction" style={{ marginTop: 8 }}>Answer: {String.fromCharCode(65 + p.answer)}</div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+
+            <PracticeGrader note={note} />
+
+            <div className="explanation-card">
+              <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>
+                Weakness Detection
               </div>
-            )}
-            <div style={{ marginTop: 16 }}>
-              <button className="btn btn-primary" onClick={handleAnalyzeWeakness} disabled={weakBusy || answeredCount === 0} style={{ width: '100%' }}>
-                {weakBusy ? 'Analyzing…' : '🔍 Analyze my weak areas'}
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>
+                Pinpoints topics you missed in the Quiz tab and builds targeted reasoning practice.
+              </div>
+              <button
+                type="button"
+                className="btn btn-secondary w-full"
+                onClick={handleAnalyzeWeakness}
+                disabled={weakBusy || answeredCount === 0}
+              >
+                {weakBusy ? (
+                  <>
+                    <span className="spinner" style={{ width: 15, height: 15 }} /> Analyzing…
+                  </>
+                ) : (
+                  <>
+                    <Target size={16} />{' '}
+                    {weakness ? 'Re-analyze weak areas' : 'Analyze my weak areas'}
+                  </>
+                )}
               </button>
               {answeredCount === 0 && (
-                <div style={{ marginTop: 8, fontSize: 13, color: 'var(--text-secondary)', textAlign: 'center' }}>
-                  Answer some questions in the Quiz tab first.
+                <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-secondary)', textAlign: 'center' }}>
+                  Answer questions in the Quiz tab first to unlock weakness detection.
+                </div>
+              )}
+
+              {weakness && (
+                <div style={{ marginTop: 14 }}>
+                  {weakness.weakAreas?.length > 0 && (
+                    <div className="grade-box warn" style={{ marginBottom: 14 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>
+                        Focus areas to review
+                      </div>
+                      <div style={{ fontSize: 14 }}>{weakness.weakAreas.join(' · ')}</div>
+                    </div>
+                  )}
+                  {weakness.practice?.length > 0 && (
+                    <>
+                      <div className="settings-label" style={{ marginBottom: 8 }}>
+                        Targeted Practice Quiz
+                      </div>
+                      <QuizSection quiz={weakness.practice} />
+                    </>
+                  )}
                 </div>
               )}
             </div>

@@ -1,12 +1,61 @@
 /**
- * aiCore — unified AI text/vision router for all newer features.
- * Routes by backend mode (Settings → AI Backend):
- *   - 'direct': calls the chosen provider straight from the device
- *   - 'termux': POSTs to the local Termux server /api/chat
- * Returns plain assistant text. Vision passes a dataURL image.
+ * aiCore — unified AI text/vision/streaming router with Free-Tier Resilience:
+ * - ES2015-compatible AbortController timeout helper (safe on all Android WebViews)
+ * - External AbortSignal support (Stop button / unmount cancellation)
+ * - SSE token streaming for both Direct API and Termux server modes
+ * - Automatic 429 / 503 backoff retry + optional failover to another saved free provider
  */
-import { API_BASE } from '../config';
-import { getAiMode, getDirectConfig } from './aiConfig';
+import { getApiBase } from '../config';
+import { getAiMode, getDirectConfig, getAutoFallback, getFallbackProviders } from './aiConfig';
+import { stripThinking } from '../../shared/aiParsers.js';
+
+/** ES2015-safe AbortController with timeout + optional parent signal forwarding. */
+export function createAbortController(timeoutMs, externalSignal = null) {
+  const controller = new AbortController();
+  let timedOut = false;
+
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  const onExternalAbort = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+  }
+
+  return {
+    signal: controller.signal,
+    wasTimeout: () => timedOut,
+    cleanup() {
+      clearTimeout(timer);
+      if (externalSignal) externalSignal.removeEventListener('abort', onExternalAbort);
+    },
+  };
+}
+
+function sleep(ms, signal = null) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(Object.assign(new Error('Cancelled'), { isCancelled: true }));
+    const t = setTimeout(() => {
+      if (signal) signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(Object.assign(new Error('Cancelled'), { isCancelled: true }));
+    };
+    if (signal) signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+function isRetryableStatus(status) {
+  return status === 429 || status === 502 || status === 503 || status === 504;
+}
 
 function buildMessages({ system, user, imageDataUrl = null, history = [] }) {
   const messages = [];
@@ -26,109 +75,381 @@ function buildMessages({ system, user, imageDataUrl = null, history = [] }) {
   return messages;
 }
 
-export async function aiText({ system, user, maxTokens = 2048, timeoutMs = 180000, history = [], modelOverride = null }) {
+/** Test Termux / Express backend reachability via /api/health. */
+export async function testTermuxConnection() {
+  const apiBase = getApiBase();
+  const { signal, cleanup } = createAbortController(8000);
+  try {
+    const res = await fetch(`${apiBase}/api/health`, { method: 'GET', signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    if (err?.name === 'AbortError') throw new Error('Connection timed out');
+    throw new Error(`Can't reach backend${apiBase ? ` at ${apiBase}` : ''}`);
+  } finally {
+    cleanup();
+  }
+}
+
+/** Build candidate list of direct endpoints (primary first, then saved fallbacks if enabled). */
+function getDirectCandidates(modelOverride = null, useReasoning = false) {
+  const primary = getDirectConfig();
+  if (!primary.key) throw new Error('No API key configured. Set your key in Settings → AI backend.');
+  if (!primary.baseUrl) throw new Error('No base URL configured for the selected provider.');
+
+  const list = [
+    {
+      name: primary.preset?.name || primary.providerId,
+      baseUrl: primary.baseUrl,
+      key: primary.key,
+      model: (modelOverride || '').trim() || primary.model,
+      isFallback: false,
+    },
+  ];
+
+  if (getAutoFallback()) {
+    for (const fb of getFallbackProviders()) {
+      list.push({
+        name: fb.name,
+        baseUrl: fb.baseUrl,
+        key: fb.key,
+        model: useReasoning ? fb.reasonModel : fb.model,
+        isFallback: true,
+      });
+    }
+  }
+  return list;
+}
+
+export async function aiText({
+  system,
+  user,
+  maxTokens = 2048,
+  timeoutMs = 180000,
+  history = [],
+  modelOverride = null,
+  useReasoning = false,
+  signal = null,
+  onFallback = null,
+}) {
   const messages = buildMessages({ system, user, history });
 
   if (getAiMode() === 'direct') {
-    return directChat(messages, maxTokens, timeoutMs, modelOverride);
+    return directChatWithResilience(messages, maxTokens, timeoutMs, modelOverride, useReasoning, signal, onFallback);
   }
 
-  // Termux mode
+  return termuxChat(messages, maxTokens, timeoutMs, modelOverride, signal);
+}
+
+/**
+ * Streaming chat completion with progressive token callback `onToken(partialText)`.
+ * Includes automatic 429/503 retry + free-tier provider failover before tokens start flowing.
+ */
+export async function aiTextStream({
+  system,
+  user,
+  maxTokens = 2048,
+  timeoutMs = 180000,
+  history = [],
+  modelOverride = null,
+  useReasoning = false,
+  signal = null,
+  onToken = null,
+  onFallback = null,
+}) {
+  if (!onToken) {
+    return aiText({ system, user, maxTokens, timeoutMs, history, modelOverride, useReasoning, signal, onFallback });
+  }
+
+  const messages = buildMessages({ system, user, history });
+  const isDirect = getAiMode() === 'direct';
+
+  if (!isDirect) {
+    return streamRequest({
+      url: `${getApiBase()}/api/chat-stream`,
+      headers: { 'Content-Type': 'application/json' },
+      bodyObj: { messages, maxTokens, modelOverride },
+      timeoutMs,
+      signal,
+      onToken,
+      fallbackTextFn: () => termuxChat(messages, maxTokens, timeoutMs, modelOverride, signal),
+    });
+  }
+
+  const candidates = getDirectCandidates(modelOverride, useReasoning);
+  let lastErr = null;
+
+  for (let idx = 0; idx < candidates.length; idx++) {
+    const c = candidates[idx];
+    if (c.isFallback) onFallback?.(c.name);
+
+    for (let attempt = 0; attempt < (c.isFallback ? 1 : 2); attempt++) {
+      try {
+        return await streamRequest({
+          url: `${c.baseUrl}/chat/completions`,
+          headers: { Authorization: `Bearer ${c.key}`, 'Content-Type': 'application/json' },
+          bodyObj: { model: c.model, messages, temperature: 0.4, max_tokens: maxTokens, stream: true },
+          timeoutMs,
+          signal,
+          onToken,
+          fallbackTextFn: () => directSingleCall(c, messages, maxTokens, timeoutMs, signal),
+        });
+      } catch (err) {
+        if (err?.isCancelled) throw err;
+        lastErr = err;
+        if (err?.retryable && attempt === 0 && !c.isFallback) {
+          await sleep(1200, signal);
+          continue;
+        }
+        // Only try next fallback provider on rate-limit / server error / retired model
+        if (!(err?.retryable || err?.httpStatus === 404 || err?.httpStatus === 410)) {
+          throw err;
+        }
+        break;
+      }
+    }
+  }
+
+  throw lastErr || new Error('AI request failed');
+}
+
+async function streamRequest({ url, headers, bodyObj, timeoutMs, signal, onToken, fallbackTextFn }) {
+  const ctrl = createAbortController(timeoutMs, signal);
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(bodyObj),
+      signal: ctrl.signal,
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw buildHttpError(res.status, text);
+    }
+
+    const contentType = res.headers.get('content-type') || '';
+    if (!res.body?.getReader || !contentType.includes('event-stream')) {
+      const data = await res.json().catch(() => null);
+      const full = data?.choices?.[0]?.message?.content || data?.content || '';
+      if (!full) throw new Error('AI returned no content');
+      const cleaned = stripThinking(full);
+      onToken(cleaned);
+      return cleaned;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+    let rawAccum = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) continue;
+        const payload = trimmed.slice(5).trim();
+        if (!payload || payload === '[DONE]') continue;
+        try {
+          const parsed = JSON.parse(payload);
+          if (parsed.error) throw new Error(parsed.error?.message || String(parsed.error));
+          const delta = parsed.choices?.[0]?.delta?.content;
+          if (typeof delta === 'string' && delta) {
+            rawAccum += delta;
+            const visible = hideLiveThinking(rawAccum);
+            if (visible) onToken(visible);
+          }
+        } catch (parseErr) {
+          if (parseErr instanceof SyntaxError) continue;
+          throw parseErr;
+        }
+      }
+    }
+
+    const finalClean = stripThinking(rawAccum);
+    if (!finalClean) {
+      return fallbackTextFn();
+    }
+    onToken(finalClean);
+    return finalClean;
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      if (ctrl.wasTimeout()) throw new Error('The AI took too long to answer. Tap Retry.');
+      const cancelled = new Error('Cancelled');
+      cancelled.isCancelled = true;
+      throw cancelled;
+    }
+    throw err;
+  } finally {
+    ctrl.cleanup();
+  }
+}
+
+function hideLiveThinking(raw) {
+  let out = raw.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  const openIdx = out.toLowerCase().indexOf('<think>');
+  if (openIdx !== -1) out = out.slice(0, openIdx);
+  return out.replace(/<\/?think>/gi, '').trim();
+}
+
+function buildHttpError(status, body) {
+  let msg = `AI API error ${status}: ${String(body || '').slice(0, 200)}`;
+  if (status === 404 || status === 410) {
+    msg += '\n\nThis model may have been retired by the provider. Pick another model in Settings → AI Backend.';
+  }
+  const err = new Error(msg);
+  err.httpStatus = status;
+  err.retryable = isRetryableStatus(status);
+  return err;
+}
+
+async function termuxChat(messages, maxTokens, timeoutMs, modelOverride = null, signal = null) {
+  const apiBase = getApiBase();
+  const ctrl = createAbortController(timeoutMs, signal);
   let res;
   try {
-    res = await fetch(`${API_BASE}/api/chat`, {
+    res = await fetch(`${apiBase}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages, maxTokens }),
-      signal: AbortSignal.timeout(timeoutMs),
+      body: JSON.stringify({ messages, maxTokens, modelOverride }),
+      signal: ctrl.signal,
     });
-  } catch {
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      if (ctrl.wasTimeout()) throw new Error('The AI took too long to answer. Tap Retry.');
+      const cancelled = new Error('Cancelled');
+      cancelled.isCancelled = true;
+      throw cancelled;
+    }
     throw new Error(
-      `Can't reach the AI backend${API_BASE ? ` at ${API_BASE}` : ''}. Start the Termux server: node server.js`
+      `Can't reach the AI backend${apiBase ? ` at ${apiBase}` : ''}. Start the Termux server: node server.js`
     );
+  } finally {
+    ctrl.cleanup();
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'AI request failed' }));
-    throw new Error(err.error || `HTTP ${res.status}`);
+    throw buildHttpError(res.status, err.error || `HTTP ${res.status}`);
   }
   const data = await res.json();
   if (!data.content) throw new Error('AI returned no content');
-  return data.content;
+  return stripThinking(data.content);
 }
 
-/** Direct-provider chat with a prebuilt messages array. */
-async function directChat(messages, maxTokens, timeoutMs, modelOverride = null) {
-  const { baseUrl, key, model } = getDirectConfig();
-  if (!key) throw new Error('No API key configured. Set your key in Settings → AI backend.');
-  const useModel = (modelOverride || '').trim() || model;
-  const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: useModel, messages, temperature: 0.4, max_tokens: maxTokens }),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    let msg = `AI API error ${res.status}: ${body.slice(0, 200)}`;
-    if (res.status === 404 || res.status === 410) {
-      msg += '\n\n💡 This model may have been retired by the provider. Settings → AI Backend → Advanced → pick another model.';
+async function directSingleCall(candidate, messages, maxTokens, timeoutMs, signal = null) {
+  const ctrl = createAbortController(timeoutMs, signal);
+  try {
+    const res = await fetch(`${candidate.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${candidate.key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: candidate.model, messages, temperature: 0.4, max_tokens: maxTokens }),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw buildHttpError(res.status, body);
     }
-    throw new Error(msg);
+    const data = await res.json();
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) throw new Error('AI returned no content');
+    return stripThinking(content);
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      if (ctrl.wasTimeout()) throw new Error('The AI took too long to answer. Tap Retry.');
+      const cancelled = new Error('Cancelled');
+      cancelled.isCancelled = true;
+      throw cancelled;
+    }
+    throw err;
+  } finally {
+    ctrl.cleanup();
   }
-  const data = await res.json();
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error('AI returned no content');
-  return content;
+}
+
+async function directChatWithResilience(
+  messages,
+  maxTokens,
+  timeoutMs,
+  modelOverride = null,
+  useReasoning = false,
+  signal = null,
+  onFallback = null
+) {
+  const candidates = getDirectCandidates(modelOverride, useReasoning);
+  let lastErr = null;
+
+  for (const c of candidates) {
+    if (c.isFallback) onFallback?.(c.name);
+
+    for (let attempt = 0; attempt < (c.isFallback ? 1 : 2); attempt++) {
+      try {
+        return await directSingleCall(c, messages, maxTokens, timeoutMs, signal);
+      } catch (err) {
+        if (err?.isCancelled) throw err;
+        lastErr = err;
+        if (err?.retryable && attempt === 0 && !c.isFallback) {
+          await sleep(1200, signal);
+          continue;
+        }
+        if (!(err?.retryable || err?.httpStatus === 404 || err?.httpStatus === 410)) {
+          throw err;
+        }
+        break;
+      }
+    }
+  }
+
+  throw lastErr || new Error('AI request failed');
 }
 
 /**
  * Web search via Tavily (free tier: app.tavily.com — 1,000 searches/month).
- * Returns [{title, url, content}]. Runs through CapacitorHttp in the APK,
- * so CORS is not an issue.
+ * Returns [{title, url, content, kind: 'web'}].
  */
-export async function webSearch(query, apiKey, maxResults = 5) {
-  const res = await fetch('https://api.tavily.com/search', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ api_key: apiKey, query, max_results: maxResults, search_depth: 'basic' }),
-    signal: AbortSignal.timeout(20000),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`Search failed ${res.status}: ${body.slice(0, 150)}`);
+export async function webSearch(query, apiKey, maxResults = 5, signal = null) {
+  const ctrl = createAbortController(15000, signal);
+  try {
+    const res = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: apiKey, query, max_results: maxResults, search_depth: 'basic' }),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Search failed ${res.status}: ${body.slice(0, 150)}`);
+    }
+    const data = await res.json();
+    return (data.results || [])
+      .filter(r => r && r.content)
+      .map(r => ({
+        title: r.title || '',
+        url: r.url || '',
+        content: r.content || '',
+        kind: 'web',
+      }));
+  } finally {
+    ctrl.cleanup();
   }
-  const data = await res.json();
-  return (data.results || [])
-    .filter(r => r && r.content)
-    .map(r => ({ title: r.title || '', url: r.url || '', content: r.content || '' }));
 }
 
 /** Vision request (image + prompt). Requires a vision-capable model. */
-export async function aiVision({ system, user, imageDataUrl, maxTokens = 2048, timeoutMs = 240000 }) {
+export async function aiVision({
+  system,
+  user,
+  imageDataUrl,
+  maxTokens = 2048,
+  timeoutMs = 240000,
+  signal = null,
+}) {
   const messages = buildMessages({ system, user, imageDataUrl });
-
   if (getAiMode() === 'direct') {
-    return directChat(messages, maxTokens, timeoutMs);
+    return directChatWithResilience(messages, maxTokens, timeoutMs, null, false, signal, null);
   }
-
-  // Termux mode — server /api/chat forwards message arrays (vision support
-  // depends on the configured model behind the server).
-  let res;
-  try {
-    res = await fetch(`${API_BASE}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages, maxTokens }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-  } catch {
-    throw new Error("Can't reach the AI backend. Start the Termux server: node server.js");
-  }
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'AI request failed' }));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-  const data = await res.json();
-  if (!data.content) throw new Error('AI returned no content');
-  return data.content;
+  return termuxChat(messages, maxTokens, timeoutMs, null, signal);
 }

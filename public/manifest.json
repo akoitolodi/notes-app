@@ -1,13 +1,13 @@
 {
   "name": "AI Class Notes",
   "short_name": "Notes",
-  "description": "Class notes that explain themselves as you save them.",
+  "description": "Offline-first class notes with line-by-line AI explanations, flashcards, quizzes, and exam study packs.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "orientation": "portrait",
-  "background_color": "#ffffff",
-  "theme_color": "#ffffff",
+  "orientation": "any",
+  "background_color": "#f2f2f7",
+  "theme_color": "#f2f2f7",
   "categories": ["education", "productivity"],
   "icons": [
     {

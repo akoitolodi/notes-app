@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Allow cleartext HTTP ONLY to on-device Termux loopback backend -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+    <!-- Enforce HTTPS for all external AI provider APIs -->
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

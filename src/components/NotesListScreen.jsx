@@ -1,180 +1,359 @@
 /**
- * Notes list screen — title, first-line preview, date. Search bar on top,
- * pencil (new note) bottom right, swipe-left actions: pin / delete.
+ * Notes list screen — axis-locked swipe actions (only one open at a time),
+ * fixed long-press vs click handling, desktop action menu, search clear on close,
+ * preserved search filter on pin/delete, and bottom clearance for FAB.
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  getNotesInFolder, searchNotes, createNote, togglePin, deleteNote,
-  duplicateNote, moveNote,
+  ChevronLeft,
+  ArrowUpDown,
+  Search,
+  X,
+  Pin,
+  PinOff,
+  Trash2,
+  Copy,
+  FolderInput,
+  Paperclip,
+  SquarePen,
+  MoreHorizontal,
+  Check,
+} from 'lucide-react';
+import {
+  getNotesInFolder,
+  searchNotes,
+  createNote,
+  togglePin,
+  deleteNote,
+  duplicateNote,
+  moveNote,
 } from '../store/db';
 import FolderPickerSheet from './FolderPickerSheet';
+import { useDialog } from './ui/DialogProvider';
 
-const SORT_KEY = 'aicn:sort'; // 'edited' | 'created' | 'title'
+const SORT_KEY = 'aicn:sort';
 
 function formatDate(ts) {
   if (!ts) return '';
   const d = new Date(ts);
   const today = new Date();
-  const isToday = d.toDateString() === today.toDateString();
-  if (isToday) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (d.toDateString() === today.toDateString()) {
+    return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }
   const sameYear = d.getFullYear() === today.getFullYear();
-  return d.toLocaleDateString([], sameYear
-    ? { month: 'numeric', day: 'numeric' }
-    : { month: 'numeric', day: 'numeric', year: '2-digit' });
+  return d.toLocaleDateString(
+    [],
+    sameYear
+      ? { month: 'short', day: 'numeric' }
+      : { month: 'short', day: 'numeric', year: '2-digit' }
+  );
 }
 
-/** Unique #tags in a note (max 3 shown). */
 function tagsFor(note) {
   const set = new Set();
-  ((note.title || '') + ' ' + (note.body || '')).replace(
-    /#([A-Za-z0-9_-]+)/g,
-    (m, t) => { set.add(t); return m; }
-  );
+  `${note.title || ''} ${note.body || ''}`.replace(/#([A-Za-z0-9_-]+)/g, (m, t) => {
+    set.add(t);
+    return m;
+  });
   return [...set].slice(0, 3);
 }
 
-/** One swipeable row: translate on drag, reveal pin/delete actions. */
-function NoteRow({ note, onOpen, onPin, onDelete, onLongPress, onTagTap }) {
+function hasAttachments(note) {
+  if (Array.isArray(note.images) && note.images.length > 0) return true;
+  const strokes = Array.isArray(note.drawings)
+    ? note.drawings
+    : note.drawings?.strokes || [];
+  return strokes.length > 0;
+}
+
+function NoteRow({
+  note,
+  active,
+  isSwipedOpen,
+  onSwipeOpen,
+  onOpen,
+  onPin,
+  onDelete,
+  onMore,
+  onTagTap,
+}) {
   const [dx, setDx] = useState(0);
-  const startX = useRef(null);
+  const dxRef = useRef(0);
+  const startRef = useRef(null); // { x, y, locked: null | 'h' | 'v' }
   const pressTimer = useRef(null);
-  const moved = useRef(false);
+  const suppressClickRef = useRef(false);
 
-  const startLongPress = () => {
-    moved.current = false;
-    pressTimer.current = setTimeout(() => onLongPress(note), 500);
-  };
+  useEffect(() => {
+    const target = isSwipedOpen ? -144 : 0;
+    dxRef.current = target;
+    setDx(target);
+  }, [isSwipedOpen]);
+
   const cancelLongPress = () => {
-    if (pressTimer.current) { clearTimeout(pressTimer.current); pressTimer.current = null; }
+    if (pressTimer.current) {
+      clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
   };
 
-  const onTouchStart = e => { startX.current = e.touches[0].clientX; startLongPress(); };
-  const onTouchMove = e => {
+  useEffect(() => () => cancelLongPress(), []);
+
+  const onTouchStart = e => {
+    const t = e.touches[0];
+    startRef.current = { x: t.clientX, y: t.clientY, baseDx: dxRef.current, locked: null };
+    suppressClickRef.current = false;
     cancelLongPress();
-    if (startX.current == null) return;
-    const delta = e.touches[0].clientX - startX.current;
-    if (Math.abs(delta) > 8) moved.current = true;
-    setDx(Math.max(-140, Math.min(0, delta)));
+    pressTimer.current = setTimeout(() => {
+      suppressClickRef.current = true;
+      onMore(note);
+    }, 500);
   };
+
+  const onTouchMove = e => {
+    const s = startRef.current;
+    if (!s) return;
+    const t = e.touches[0];
+    const deltaX = t.clientX - s.x;
+    const deltaY = t.clientY - s.y;
+
+    if (Math.hypot(deltaX, deltaY) > 8) cancelLongPress();
+
+    // Lock gesture axis cleanly so vertical scroll never drags rows sideways
+    if (!s.locked && (Math.abs(deltaX) > 10 || Math.abs(deltaY) > 10)) {
+      s.locked = Math.abs(deltaX) > Math.abs(deltaY) * 1.2 ? 'h' : 'v';
+    }
+    if (s.locked !== 'h') return;
+
+    suppressClickRef.current = true;
+    const next = Math.max(-144, Math.min(0, s.baseDx + deltaX));
+    dxRef.current = next;
+    setDx(next);
+  };
+
   const onTouchEnd = () => {
     cancelLongPress();
-    startX.current = null;
-    setDx(dx < -60 ? -140 : 0); // snap open or closed
+    const s = startRef.current;
+    startRef.current = null;
+    if (!s || s.locked !== 'h') return;
+    const shouldOpen = dxRef.current < -64;
+    const snapped = shouldOpen ? -144 : 0;
+    dxRef.current = snapped;
+    setDx(snapped);
+    onSwipeOpen(shouldOpen ? note.id : null);
   };
 
   const tags = tagsFor(note);
+  const preview = (note.body || 'No additional text').replace(/\n+/g, ' ').trim().slice(0, 75);
 
   return (
-    <div style={{ position: 'relative', overflow: 'hidden' }}>
-      {/* Action buttons behind the row */}
-      <div style={{
-        position: 'absolute', top: 0, bottom: 0, right: 0,
-        display: 'flex', alignItems: 'stretch',
-      }}>
+    <div className="swipe-row-wrap">
+      <div
+        className="swipe-actions"
+        style={{ visibility: dx < -1 ? 'visible' : 'hidden' }}
+        aria-hidden={dx >= -1}
+      >
         <button
-          onClick={onPin}
-          style={{ border: 'none', background: '#5e5ce6', color: '#fff', width: 70, fontSize: 13, fontWeight: 600 }}
+          type="button"
+          className="swipe-action-btn swipe-action-pin"
+          onClick={e => {
+            onSwipeOpen(null);
+            onPin(e);
+          }}
         >
-          {note.pinned ? 'Unpin' : 'Pin'}
+          {note.pinned ? <PinOff size={16} /> : <Pin size={16} />}
+          <span>{note.pinned ? 'Unpin' : 'Pin'}</span>
         </button>
         <button
-          onClick={onDelete}
-          style={{ border: 'none', background: '#ff453a', color: '#fff', width: 70, fontSize: 13, fontWeight: 600 }}
+          type="button"
+          className="swipe-action-btn swipe-action-del"
+          onClick={e => {
+            onSwipeOpen(null);
+            onDelete(e);
+          }}
         >
-          Delete
+          <Trash2 size={16} />
+          <span>Delete</span>
         </button>
       </div>
 
-      {/* The row itself */}
       <div
-        className="list-item"
-        style={{ transform: `translateX(${dx}px)`, transition: startX.current == null ? 'transform 0.2s' : 'none', cursor: 'pointer' }}
-        onClick={() => { if (dx === 0) { if (!moved.current) onOpen(); } else setDx(0); }}
+        className={`list-item${active ? ' selected' : ''}`}
+        role="button"
+        tabIndex={0}
+        style={{
+          transform: `translateX(${dx}px)`,
+          transition: startRef.current?.locked === 'h' ? 'none' : 'transform 0.2s ease',
+        }}
+        onClick={() => {
+          if (suppressClickRef.current) {
+            suppressClickRef.current = false;
+            return;
+          }
+          if (dxRef.current !== 0) {
+            onSwipeOpen(null);
+            return;
+          }
+          onOpen();
+        }}
+        onKeyDown={e => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onOpen();
+          }
+        }}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
-        onDoubleClick={() => onLongPress(note)}
+        onContextMenu={e => {
+          e.preventDefault();
+          onMore(note);
+        }}
       >
-        <div className="flex-1" style={{ minWidth: 0 }}>
-          <div className="list-item-title" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 6 }}>
-            {note.pinned ? '📌 ' : ''}{note.title || 'New Note'}
-            {(note.images?.length > 0 || note.drawings?.strokes?.length > 0) && (
-              <span style={{ fontSize: 13, color: 'var(--accent)' }}>📎</span>
+        <div className="list-item-body">
+          <div className="list-item-title">
+            {note.pinned && <Pin size={14} style={{ color: 'var(--accent-ink)', flexShrink: 0 }} />}
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {note.title || 'New Note'}
+            </span>
+            {hasAttachments(note) && (
+              <Paperclip size={13} style={{ color: 'var(--text-secondary)', flexShrink: 0 }} />
             )}
           </div>
-          <div className="list-item-subtitle" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {(note.body || 'No additional text').replace(/\n/g, ' ').slice(0, 60)}
-          </div>
+          <div className="list-item-subtitle">{preview}</div>
           {tags.length > 0 && (
-            <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+            <div className="flex gap-6" style={{ marginTop: 5, flexWrap: 'wrap' }}>
               {tags.map(t => (
-                <span
+                <button
                   key={t}
+                  type="button"
                   className="tag-pill"
-                  onClick={e => { e.stopPropagation(); onTagTap(t); }}
+                  onClick={e => {
+                    e.stopPropagation();
+                    onTagTap(t);
+                  }}
                 >
                   #{t}
-                </span>
+                </button>
               ))}
             </div>
           )}
         </div>
-        <span className="list-item-subtitle" style={{ marginLeft: 8, flexShrink: 0 }}>
-          {formatDate(note.updatedAt)}
-        </span>
+
+        <div className="list-item-meta">
+          <span>{formatDate(note.updatedAt)}</span>
+          <button
+            type="button"
+            className="row-icon-btn"
+            aria-label={`More actions for ${note.title || 'note'}`}
+            onClick={e => {
+              e.stopPropagation();
+              onMore(note);
+            }}
+          >
+            <MoreHorizontal size={17} />
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
-export default function NotesListScreen({ folder, onOpenNote, onBack }) {
+export default function NotesListScreen({
+  folder,
+  activeNoteId = null,
+  refreshKey = 0,
+  onOpenNote,
+  onBack,
+}) {
+  const { confirm, toast } = useDialog();
   const [notes, setNotes] = useState([]);
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [sort, setSort] = useState(() => {
-    try { return localStorage.getItem(SORT_KEY) || 'edited'; } catch { return 'edited'; }
+    try {
+      return localStorage.getItem(SORT_KEY) || 'edited';
+    } catch {
+      return 'edited';
+    }
   });
-  const [actionNote, setActionNote] = useState(null); // long-pressed note
-  const [moveTarget, setMoveTarget] = useState(null); // note being moved
+  const [openSwipeId, setOpenSwipeId] = useState(null);
+  const [actionNote, setActionNote] = useState(null);
+  const [moveTarget, setMoveTarget] = useState(null);
   const [sortOpen, setSortOpen] = useState(false);
 
-  const refresh = useCallback(async () => {
-    setNotes(await getNotesInFolder(folder.id, sort));
-  }, [folder.id, sort]);
+  const loadNotes = useCallback(async () => {
+    if (query.trim()) {
+      return searchNotes(query, folder.id, sort);
+    }
+    return getNotesInFolder(folder.id, sort);
+  }, [folder.id, sort, query]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  const refresh = useCallback(async () => {
+    setNotes(await loadNotes());
+  }, [loadNotes]);
 
   useEffect(() => {
     let live = true;
-    if (query.trim()) {
-      searchNotes(query, folder.id).then(r => live && setNotes(r));
-    } else {
-      refresh();
-    }
-    return () => { live = false; };
-  }, [query, folder.id, refresh]);
+    const delay = query.trim() ? 140 : 0;
+    const t = setTimeout(() => {
+      loadNotes().then(r => {
+        if (live) setNotes(r);
+      });
+    }, delay);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+  }, [loadNotes, refreshKey]);
+
+  const toggleSearch = () => {
+    setSearching(prev => {
+      if (prev) setQuery('');
+      return !prev;
+    });
+  };
 
   const handleNewNote = async () => {
-    const note = await createNote(folder.id);
+    const tagPrefix =
+      typeof folder.id === 'string' && folder.id.startsWith('__tag:')
+        ? `#${folder.id.slice(6)}\n`
+        : '';
+    const note = await createNote(
+      typeof folder.id === 'number' ? folder.id : null,
+      '',
+      tagPrefix,
+      folder.isSmart ? 'General' : folder.name
+    );
     onOpenNote(note);
   };
 
   const handlePin = async (e, note) => {
     e.stopPropagation();
     await togglePin(note.id);
-    setNotes(await getNotesInFolder(folder.id, sort));
+    refresh();
   };
 
   const handleDelete = async (e, note) => {
-    e.stopPropagation();
-    if (!confirm(`Delete "${note.title || 'New Note'}"? It will stay in Recently Deleted for 30 days.`)) return;
+    e?.stopPropagation?.();
+    const ok = await confirm({
+      title: `Delete "${note.title || 'New Note'}"?`,
+      message: 'It will stay in Recently Deleted for 30 days.',
+      confirmLabel: 'Move to Trash',
+      destructive: true,
+    });
+    if (!ok) return;
     await deleteNote(note.id);
-    setNotes(await getNotesInFolder(folder.id, sort));
+    toast('Moved to Recently Deleted');
+    refresh();
   };
 
   const applySort = s => {
     setSort(s);
-    try { localStorage.setItem(SORT_KEY, s); } catch { /* private mode */ }
+    try {
+      localStorage.setItem(SORT_KEY, s);
+    } catch {
+      // ignore
+    }
     setSortOpen(false);
   };
 
@@ -182,6 +361,7 @@ export default function NotesListScreen({ folder, onOpenNote, onBack }) {
     const src = actionNote;
     setActionNote(null);
     await duplicateNote(src.id);
+    toast('Note duplicated');
     refresh();
   };
 
@@ -189,97 +369,157 @@ export default function NotesListScreen({ folder, onOpenNote, onBack }) {
     const src = moveTarget;
     setMoveTarget(null);
     await moveNote(src.id, f.id);
+    toast(`Moved to ${f.name}`);
     refresh();
   };
 
-  const SORT_LABEL = { edited: 'Date edited', created: 'Date created', title: 'Title' };
+  const SORT_LABEL = {
+    edited: 'Date edited',
+    created: 'Date created',
+    title: 'Title (A–Z)',
+  };
 
   return (
-    <div className="screen">
-      <header className="navbar safe-top">
-        <button className="navbar-btn" style={{ width: 'auto', paddingLeft: 0 }} onClick={onBack} aria-label="Back to folders">
-          ‹ Folders
+    <div className="screen list-pad-bottom">
+      <header className="navbar">
+        <button
+          type="button"
+          className="navbar-btn navbar-back"
+          onClick={onBack}
+          aria-label="Back to folders"
+        >
+          <ChevronLeft size={20} /> Folders
         </button>
-        <span className="navbar-title" style={{ fontSize: 15 }}>{folder.name}</span>
-        <div className="flex items-center">
-          <button className="navbar-btn" aria-label="Sort notes" onClick={() => setSortOpen(true)}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M7 4v13M7 17l-3-3M7 17l3-3" /><path d="M17 20V7M17 7l-3 3M17 7l3 3" />
-            </svg>
+        <div className="flex items-center gap-6">
+          <button
+            type="button"
+            className="navbar-btn"
+            aria-label="Sort notes"
+            onClick={() => setSortOpen(true)}
+          >
+            <ArrowUpDown size={18} />
           </button>
-          <button className="navbar-btn" aria-label="Search" onClick={() => setSearching(s => !s)}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
-            </svg>
+          <button
+            type="button"
+            className={`navbar-btn${searching ? ' navbar-btn-active' : ''}`}
+            aria-label="Search notes"
+            onClick={toggleSearch}
+          >
+            <Search size={19} />
           </button>
         </div>
       </header>
+
       <div className="large-title">{folder.name}</div>
 
       {searching && (
         <div className="search-bar">
-          <span className="search-icon">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
-            </svg>
-          </span>
-          <input
-            className="search-input"
-            autoFocus
-            placeholder="Search notes"
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-          />
+          <div className="search-input-wrap">
+            <span className="search-icon">
+              <Search size={16} />
+            </span>
+            <input
+              className="search-input"
+              autoFocus
+              placeholder={`Search in ${folder.name}`}
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+            />
+            {query && (
+              <button
+                type="button"
+                className="search-clear"
+                aria-label="Clear search"
+                onClick={() => setQuery('')}
+              >
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={toggleSearch}>
+            Cancel
+          </button>
         </div>
       )}
 
       <div className="list-group">
-        {notes.length === 0 && (
-          <div className="list-item">
+        {notes.length === 0 ? (
+          <div className="list-item list-item-static">
             <span className="list-item-subtitle">
-              {query ? 'No matching notes.' : 'No notes yet — tap the pencil to write one.'}
+              {query.trim()
+                ? 'No matching notes.'
+                : 'No notes yet — tap the compose button to write one.'}
             </span>
           </div>
+        ) : (
+          notes.map(note => (
+            <NoteRow
+              key={note.id}
+              note={note}
+              active={note.id === activeNoteId}
+              isSwipedOpen={openSwipeId === note.id}
+              onSwipeOpen={setOpenSwipeId}
+              onOpen={() => onOpenNote(note)}
+              onPin={e => handlePin(e, note)}
+              onDelete={e => handleDelete(e, note)}
+              onMore={n => setActionNote(n)}
+              onTagTap={t => {
+                setSearching(true);
+                setQuery('#' + t);
+              }}
+            />
+          ))
         )}
-        {notes.map(note => (
-          <NoteRow
-            key={note.id}
-            note={note}
-            onOpen={() => onOpenNote(note)}
-            onPin={e => handlePin(e, note)}
-            onDelete={e => handleDelete(e, note)}
-            onLongPress={n => setActionNote(n)}
-            onTagTap={t => { setSearching(true); setQuery('#' + t); }}
-          />
-        ))}
       </div>
 
-      {/* Long-press actions */}
+      {/* Note Action Sheet */}
       {actionNote && (
         <div className="export-overlay" onClick={() => setActionNote(null)}>
           <div className="export-sheet" onClick={e => e.stopPropagation()}>
             <div className="export-title">{actionNote.title || 'New Note'}</div>
-            <button className="export-btn" onClick={async () => { await togglePin(actionNote.id); setActionNote(null); refresh(); }}>
-              📌 {actionNote.pinned ? 'Unpin' : 'Pin'}
-            </button>
-            <button className="export-btn" onClick={handleDuplicate}>⧉ Duplicate</button>
-            <button className="export-btn" onClick={() => { setMoveTarget(actionNote); setActionNote(null); }}>
-              📁 Move to folder…
-            </button>
             <button
+              type="button"
               className="export-btn"
-              style={{ color: 'var(--bad)' }}
               onClick={async () => {
-                const n = actionNote;
+                await togglePin(actionNote.id);
                 setActionNote(null);
-                if (!confirm(`Delete "${n.title || 'New Note'}"? It will stay in Recently Deleted for 30 days.`)) return;
-                await deleteNote(n.id);
                 refresh();
               }}
             >
-              🗑 Delete
+              {actionNote.pinned ? <PinOff size={18} /> : <Pin size={18} />}
+              {actionNote.pinned ? 'Unpin note' : 'Pin note'}
             </button>
-            <button className="export-btn cancel" onClick={() => setActionNote(null)}>Cancel</button>
+            <button type="button" className="export-btn" onClick={handleDuplicate}>
+              <Copy size={18} /> Duplicate
+            </button>
+            <button
+              type="button"
+              className="export-btn"
+              onClick={() => {
+                setMoveTarget(actionNote);
+                setActionNote(null);
+              }}
+            >
+              <FolderInput size={18} /> Move to folder…
+            </button>
+            <button
+              type="button"
+              className="export-btn danger"
+              onClick={() => {
+                const n = actionNote;
+                setActionNote(null);
+                handleDelete(null, n);
+              }}
+            >
+              <Trash2 size={18} /> Delete
+            </button>
+            <button
+              type="button"
+              className="export-btn cancel"
+              onClick={() => setActionNote(null)}
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}
@@ -292,7 +532,7 @@ export default function NotesListScreen({ folder, onOpenNote, onBack }) {
         />
       )}
 
-      {/* Sort options */}
+      {/* Sort sheet */}
       {sortOpen && (
         <div className="export-overlay" onClick={() => setSortOpen(false)}>
           <div className="export-sheet" onClick={e => e.stopPropagation()}>
@@ -300,37 +540,34 @@ export default function NotesListScreen({ folder, onOpenNote, onBack }) {
             {Object.entries(SORT_LABEL).map(([v, label]) => (
               <button
                 key={v}
+                type="button"
                 className="export-btn"
-                style={sort === v ? { fontWeight: 700 } : null}
+                style={sort === v ? { fontWeight: 700, color: 'var(--accent-ink)' } : null}
                 onClick={() => applySort(v)}
               >
-                {sort === v ? '✓ ' : ''}{label}
+                {sort === v ? <Check size={17} /> : <span style={{ width: 17 }} />}
+                {label}
               </button>
             ))}
-            <button className="export-btn cancel" onClick={() => setSortOpen(false)}>Cancel</button>
+            <button
+              type="button"
+              className="export-btn cancel"
+              onClick={() => setSortOpen(false)}
+            >
+              Cancel
+            </button>
           </div>
         </div>
       )}
 
-      {/* New note — pencil, bottom right */}
       <button
-        className="btn btn-primary"
+        type="button"
+        className="fab"
         onClick={handleNewNote}
         aria-label="New note"
-        style={{
-          position: 'fixed',
-          right: 16,
-          bottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)',
-          width: 56,
-          height: 56,
-          borderRadius: '50%',
-          padding: 0,
-          boxShadow: '0 4px 12px var(--shadow-strong)',
-        }}
+        title="New note"
       >
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-        </svg>
+        <SquarePen size={22} />
       </button>
     </div>
   );

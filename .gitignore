@@ -14,3 +14,6 @@ dist-ssr/
 *.tsbuildinfo
 *.keystore
 keystore.b64
+*.apk
+hunt/
+hunt-*.md
