@@ -148,7 +148,21 @@ function NoteRow({
   };
 
   const tags = tagsFor(note);
-  const preview = (note.body || 'No additional text').replace(/\n+/g, ' ').trim().slice(0, 75);
+  const preview =
+    (note.body || '')
+      .replace(/```[\s\S]*?```/g, ' [code] ')
+      .replace(/^\s*#{1,6}\s+/gm, '')
+      .replace(/^\s*-\s*\[[ xX]\]\s*/gm, '')
+      .replace(/^\s*[-*•]\s+/gm, '')
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/\*([^*]+)\*/g, '$1')
+      .replace(/`([^`]+)`/g, '$1')
+      .replace(/\[\[([^[\]|]+)(?:\|([^[\]]+))?\]\]/g, (_, t, a) => a || t)
+      .replace(/\$\$?([^$\n]+)\$\$?/g, '$1')
+      .replace(/\n+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 75) || 'No additional text';
 
   return (
     <div className="swipe-row-wrap">

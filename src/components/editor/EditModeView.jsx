@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 import ImageStrip, { pickImage, compressImage } from '../ImageManager';
 import TemplatePickerSheet from '../TemplatePickerSheet';
+import CleanRichEditor from './CleanRichEditor';
 import {
   DICTATION_LANGS,
   createDictationSession,
@@ -77,6 +78,26 @@ export default function EditModeView({
   const { toast } = useDialog();
   const modeMeta = getModeMeta(noteMode);
   const [templateSheetOpen, setTemplateSheetOpen] = useState(false);
+
+  // Clean visual edit mode (default — zero raw ## or ** clutter!) vs Raw Markdown mode
+  const [editorMode, setEditorMode] = useState(() => {
+    try {
+      return localStorage.getItem('aicn:editStyle') === 'raw' ? 'raw' : 'clean';
+    } catch {
+      return 'clean';
+    }
+  });
+  const cleanEditorRef = useRef(null);
+
+  const toggleEditorMode = next => {
+    setEditorMode(next);
+    setWikiSuggest(null);
+    try {
+      localStorage.setItem('aicn:editStyle', next);
+    } catch {
+      // ignore
+    }
+  };
 
   // [[Wiki-Link]] autocomplete state
   const [allNoteTitles, setAllNoteTitles] = useState([]);
@@ -128,6 +149,11 @@ export default function EditModeView({
 
   const insertWikiSuggestion = targetTitle => {
     if (!wikiSuggest) return;
+    if (wikiSuggest.isCleanMode) {
+      cleanEditorRef.current?.insertWikiTitle(targetTitle);
+      setWikiSuggest(null);
+      return;
+    }
     const { startIdx, cursorIdx } = wikiSuggest;
     const next = `${body.slice(0, startIdx)}[[${targetTitle}]]${body.slice(cursorIdx)}`;
     onBodyChange(next);
@@ -539,9 +565,29 @@ export default function EditModeView({
               </>
             )}
           </span>
-          <span>
-            {words} {words === 1 ? 'word' : 'words'} · {body.length} chars
-          </span>
+          <div className="flex items-center gap-8">
+            <span>
+              {words} {words === 1 ? 'word' : 'words'}
+            </span>
+            <div className="editor-mode-pill" role="group" aria-label="Editor view mode">
+              <button
+                type="button"
+                className={editorMode === 'clean' ? 'active' : ''}
+                onClick={() => toggleEditorMode('clean')}
+                title="Clean formatted writing (hides raw Markdown symbols)"
+              >
+                Clean
+              </button>
+              <button
+                type="button"
+                className={editorMode === 'raw' ? 'active' : ''}
+                onClick={() => toggleEditorMode('raw')}
+                title="Raw Markdown source"
+              >
+                MD
+              </button>
+            </div>
+          </div>
         </div>
 
         <input
@@ -555,7 +601,7 @@ export default function EditModeView({
         <input
           type="text"
           className="editor-subject"
-          placeholder="Subject (e.g. Biology, Calculus)"
+          placeholder="Subject"
           value={subject}
           onChange={e => onSubjectChange(e.target.value)}
           aria-label="Subject"
@@ -727,19 +773,29 @@ export default function EditModeView({
           </div>
         )}
 
-        <textarea
-          ref={textareaRef}
-          className="editor-body"
-          placeholder="Start typing… Supports Markdown (# headings, **bold**, tables, ```code```), [[Wiki-Links]], - [ ] checklists, #tags, and $LaTeX$ math."
-          value={body}
-          onChange={e => {
-            onBodyChange(e.target.value);
-            detectWikiTrigger(e.target.value, e.target.selectionStart ?? e.target.value.length);
-          }}
-          onKeyUp={e => detectWikiTrigger(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
-          aria-label="Note body"
-          autoFocus
-        />
+        {editorMode === 'clean' ? (
+          <CleanRichEditor
+            ref={cleanEditorRef}
+            value={body}
+            onChange={onBodyChange}
+            placeholder="Start writing…"
+            onWikiDetect={setWikiSuggest}
+          />
+        ) : (
+          <textarea
+            ref={textareaRef}
+            className="editor-body"
+            placeholder="Start writing…"
+            value={body}
+            onChange={e => {
+              onBodyChange(e.target.value);
+              detectWikiTrigger(e.target.value, e.target.selectionStart ?? e.target.value.length);
+            }}
+            onKeyUp={e => detectWikiTrigger(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
+            aria-label="Note body"
+            autoFocus
+          />
+        )}
       </div>
 
       {/* Mobile-friendly Formatting & Attachment Bar */}
@@ -747,7 +803,12 @@ export default function EditModeView({
         <button
           type="button"
           className="fmt-btn"
-          onClick={() => insertLinePrefix('- [ ] ')}
+          onMouseDown={e => editorMode === 'clean' && e.preventDefault()}
+          onClick={() =>
+            editorMode === 'clean'
+              ? cleanEditorRef.current?.insertChecklist()
+              : insertLinePrefix('- [ ] ')
+          }
           title="Checklist"
           aria-label="Insert checklist item"
         >
@@ -756,7 +817,12 @@ export default function EditModeView({
         <button
           type="button"
           className="fmt-btn"
-          onClick={() => insertLinePrefix('## ')}
+          onMouseDown={e => editorMode === 'clean' && e.preventDefault()}
+          onClick={() =>
+            editorMode === 'clean'
+              ? cleanEditorRef.current?.insertHeading()
+              : insertLinePrefix('## ')
+          }
           title="Heading"
           aria-label="Insert heading"
         >
@@ -765,7 +831,12 @@ export default function EditModeView({
         <button
           type="button"
           className="fmt-btn"
-          onClick={() => insertFormat('**', '**', 'bold')}
+          onMouseDown={e => editorMode === 'clean' && e.preventDefault()}
+          onClick={() =>
+            editorMode === 'clean'
+              ? cleanEditorRef.current?.toggleBold()
+              : insertFormat('**', '**', 'bold')
+          }
           title="Bold"
           aria-label="Bold"
         >
@@ -774,7 +845,12 @@ export default function EditModeView({
         <button
           type="button"
           className="fmt-btn"
-          onClick={() => insertLinePrefix('- ')}
+          onMouseDown={e => editorMode === 'clean' && e.preventDefault()}
+          onClick={() =>
+            editorMode === 'clean'
+              ? cleanEditorRef.current?.insertBullet()
+              : insertLinePrefix('- ')
+          }
           title="Bullet point"
           aria-label="Insert bullet"
         >
@@ -783,7 +859,12 @@ export default function EditModeView({
         <button
           type="button"
           className="fmt-btn"
-          onClick={() => insertFormat('`', '`', 'code')}
+          onMouseDown={e => editorMode === 'clean' && e.preventDefault()}
+          onClick={() =>
+            editorMode === 'clean'
+              ? cleanEditorRef.current?.insertCode()
+              : insertFormat('`', '`', 'code')
+          }
           title="Inline code"
           aria-label="Insert code"
         >
@@ -792,7 +873,12 @@ export default function EditModeView({
         <button
           type="button"
           className="fmt-btn"
-          onClick={() => insertFormat('$', '$', 'E = mc^2')}
+          onMouseDown={e => editorMode === 'clean' && e.preventDefault()}
+          onClick={() =>
+            editorMode === 'clean'
+              ? cleanEditorRef.current?.insertMath()
+              : insertFormat('$', '$', 'E = mc^2')
+          }
           title="LaTeX Math"
           aria-label="Insert math equation"
         >

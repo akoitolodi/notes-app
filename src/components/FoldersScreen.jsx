@@ -395,7 +395,15 @@ export default function FoldersScreen({
                   </div>
                   <div className="list-item-subtitle">
                     {highlightMatch(
-                      (n.body || 'No additional text').replace(/\n/g, ' ').slice(0, 70),
+                      (n.body || '')
+                        .replace(/^\s*#{1,6}\s+/gm, '')
+                        .replace(/^\s*-\s*\[[ xX]\]\s*/gm, '')
+                        .replace(/\*\*([^*]+)\*\*/g, '$1')
+                        .replace(/`([^`]+)`/g, '$1')
+                        .replace(/\n+/g, ' ')
+                        .replace(/\s+/g, ' ')
+                        .trim()
+                        .slice(0, 70) || 'No additional text',
                       query
                     )}
                   </div>
