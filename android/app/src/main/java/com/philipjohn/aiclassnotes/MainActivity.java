@@ -35,20 +35,30 @@ public class MainActivity extends BridgeActivity {
         if (intent == null) return;
         String action = intent.getAction();
         String mimeType = intent.getType();
-        if (!Intent.ACTION_SEND.equals(action) || mimeType == null) return;
+        boolean isSend = Intent.ACTION_SEND.equals(action);
+        boolean isView = Intent.ACTION_VIEW.equals(action);
+        if (!isSend && !isView) return;
 
         try {
             JSONObject payload = new JSONObject();
-            payload.put("mimeType", mimeType);
+            String resolvedMime = mimeType != null ? mimeType : "application/octet-stream";
+            payload.put("mimeType", resolvedMime);
 
             String sharedText = intent.getStringExtra(Intent.EXTRA_TEXT);
             String sharedSubject = intent.getStringExtra(Intent.EXTRA_SUBJECT);
             if (sharedSubject != null) payload.put("title", sharedSubject);
             if (sharedText != null) payload.put("text", sharedText);
 
-            Uri streamUri = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+            Uri streamUri = isView ? intent.getData() : intent.getParcelableExtra(Intent.EXTRA_STREAM);
             if (streamUri != null) {
-                String fileName = resolveFileName(streamUri, mimeType);
+                if ("content".equalsIgnoreCase(streamUri.getScheme())) {
+                    String contentMime = getContentResolver().getType(streamUri);
+                    if (contentMime != null) {
+                        resolvedMime = contentMime;
+                        payload.put("mimeType", resolvedMime);
+                    }
+                }
+                String fileName = resolveFileName(streamUri, resolvedMime);
                 byte[] bytes = readUriBytes(streamUri);
                 if (bytes != null && bytes.length > 0) {
                     payload.put("fileName", fileName);

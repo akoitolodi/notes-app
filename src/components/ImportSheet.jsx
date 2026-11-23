@@ -1,8 +1,10 @@
 /**
- * ImportSheet — Universal Material Importer:
- * 1. File Upload (.pdf, .pptx, .docx, .md, .txt) — 100% offline extraction + optional AI structuring
- * 2. Paste Canvas Page / Module (rich HTML -> clean Markdown keeping headings, tables, code & links)
- * 3. Batch Multi-Screenshot OCR (select up to 10 slide/handout screenshots -> one combined note)
+ * ImportSheet — Phone-First Universal Material Importer:
+ * 1. Multi-File Upload (.pdf, .pptx, .docx, .md, .txt) — 100% offline extraction (supports batch selection!)
+ * 2. Paste Canvas Page / Public Google Docs or Slides Link (HTML -> Markdown OR live Google export!)
+ * 3. Batch Multi-Screenshot OCR (select up to 10 slide/handout screenshots -> one combined note/module)
+ *
+ * Destination: Save as a Note in a Folder OR Save directly into a Course Module (AI-indexed immediately!).
  */
 import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
@@ -16,11 +18,13 @@ import {
   AlertCircle,
   ClipboardPaste,
   Images,
+  BookOpen,
 } from 'lucide-react';
-import { db, createNote, logStudyActivity } from '../store/db';
+import { db, createNote, saveCourseMaterialWithChunks, logStudyActivity } from '../store/db';
 import { isVaultUnlocked } from '../lib/vault';
 import { extractDocument, structureImportedTextWithAI } from '../lib/docImporter';
 import { htmlToCleanMarkdown } from '../lib/htmlToMarkdown';
+import { getPublicGoogleExportUrl, importPublicGoogleLink } from '../lib/courseExtras';
 import { ocrImage } from '../lib/aiFeatures';
 import { compressImage } from './ImageManager';
 import { useDialog } from './ui/DialogProvider';
@@ -31,18 +35,23 @@ export default function ImportSheet({
   initialPastedText = '',
   initialTitle = '',
   onImported,
+  onImportedToCourse = null,
   onClose,
 }) {
   const { toast } = useDialog();
   const [mode, setMode] = useState(initialPastedText ? 'paste' : 'file'); // file | paste | ocr
   const [folders, setFolders] = useState([]);
+  const [courses, setCourses] = useState([]);
+  const [destination, setDestination] = useState('note'); // 'note' | 'course'
   const [folderId, setFolderId] = useState(
     typeof defaultFolderId === 'number' ? defaultFolderId : ''
   );
+  const [courseId, setCourseId] = useState('');
+  const [moduleName, setModuleName] = useState('Module 1');
 
-  // Mode 1: File
-  const [selectedFile, setSelectedFile] = useState(initialFile);
-  // Mode 2: Rich Canvas Page Paste
+  // Mode 1: Multi-File
+  const [selectedFiles, setSelectedFiles] = useState(() => (initialFile ? [initialFile] : []));
+  // Mode 2: Rich Canvas Page Paste OR Public Google Docs/Slides Link
   const [pasteTitle, setPasteTitle] = useState(initialTitle || '');
   const [pasteMarkdown, setPasteMarkdown] = useState(initialPastedText || '');
   // Mode 3: Batch Multi-Screenshot OCR
@@ -61,9 +70,8 @@ export default function ImportSheet({
 
   useEffect(() => {
     const unlocked = isVaultUnlocked();
-    db.folders
-      .toArray()
-      .then(list => {
+    Promise.all([db.folders.toArray(), db.courses.toArray().catch(() => [])])
+      .then(([list, crsList]) => {
         const visible = list.filter(f => !f.isSystemVault && f.mode !== 'vault' && (unlocked || !f.locked));
         const sorted = [...visible].sort((a, b) => a.name.localeCompare(b.name));
         setFolders(sorted);
@@ -71,15 +79,22 @@ export default function ImportSheet({
           const general = sorted.find(f => f.name === 'General') || sorted[0];
           setFolderId(general.id);
         }
+        const activeCourses = crsList.filter(c => !c.archived);
+        setCourses(activeCourses);
+        if (activeCourses.length > 0) {
+          setCourseId(activeCourses[0].id);
+          // When opened via Android Share / Open With, default to Course Module if courses exist!
+          if (initialFile) setDestination('course');
+        }
       })
       .catch(() => {});
     return () => abortRef.current?.abort();
-  }, [defaultFolderId]);
+  }, [defaultFolderId, initialFile]);
 
   const handleFilePick = e => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    setSelectedFile(f);
+    const list = Array.from(e.target.files || []).slice(0, 12);
+    if (list.length === 0) return;
+    setSelectedFiles(list);
     setError(null);
   };
 
@@ -96,6 +111,9 @@ export default function ImportSheet({
   const handleRichPaste = e => {
     const html = e.clipboardData?.getData('text/html');
     const plain = e.clipboardData?.getData('text/plain');
+    if (plain && getPublicGoogleExportUrl(plain.trim())) {
+      return; // let plain Google Docs/Slides link paste as-is for live import
+    }
     if (html && /<[a-z]/i.test(html)) {
       e.preventDefault();
       const cleaned = htmlToCleanMarkdown(html, plain);
@@ -108,8 +126,14 @@ export default function ImportSheet({
     }
   };
 
-  const finishSaveNote = async ({ title, rawMarkdown, targetFolder, signal }) => {
-    const subjectName = targetFolder?.name || 'General';
+  const saveResultItem = async ({ title, rawMarkdown, kind = 'pdf', fileName = '', pageCount = 1, signal }) => {
+    const targetCourse = courses.find(c => c.id === Number(courseId));
+    const targetFolder = folders.find(f => f.id === Number(folderId)) || folders[0];
+    const subjectName =
+      destination === 'course' && targetCourse
+        ? targetCourse.nickname || targetCourse.name
+        : targetFolder?.name || 'General';
+
     let finalBody = rawMarkdown;
     if (useAi && rawMarkdown.trim()) {
       try {
@@ -127,6 +151,20 @@ export default function ImportSheet({
       }
     }
 
+    if (destination === 'course' && targetCourse) {
+      await saveCourseMaterialWithChunks({
+        courseId: targetCourse.id,
+        moduleName: moduleName.trim() || 'Module 1',
+        title: title || 'Imported Material',
+        kind,
+        fileName,
+        extractedText: finalBody,
+        pageCount,
+      });
+      await logStudyActivity('notes', 1);
+      return { savedToCourse: targetCourse };
+    }
+
     const created = await createNote(
       targetFolder?.id ?? null,
       title || 'Imported Material',
@@ -134,13 +172,11 @@ export default function ImportSheet({
       subjectName
     );
     await logStudyActivity('notes', 1);
-    toast(`Imported "${title || 'Material'}" into ${subjectName}`, { type: 'success' });
-    onImported?.(created, targetFolder || { id: '__all__', name: 'All Notes' });
+    return { created, targetFolder: targetFolder || { id: '__all__', name: 'All Notes' } };
   };
 
   const handleImport = async () => {
     if (busy) return;
-    const targetFolder = folders.find(f => f.id === Number(folderId)) || folders[0];
     const controller = new AbortController();
     abortRef.current = controller;
     setBusy(true);
@@ -148,41 +184,72 @@ export default function ImportSheet({
     setProgress(null);
 
     try {
+      let lastResult = null;
+      let count = 0;
+
       if (mode === 'file') {
-        if (!selectedFile) return;
-        setStatus('Reading file offline…');
-        const extracted = await extractDocument(selectedFile, {
-          onProgress: p => {
-            setProgress(p);
-            setStatus(
-              p.phase === 'slides'
-                ? `Reading slide ${p.current} of ${p.total}…`
-                : p.phase === 'docx'
-                  ? 'Reading Word document…'
-                  : `Reading page ${p.current} of ${p.total}…`
-            );
-          },
-        });
-        if (controller.signal.aborted) return;
-        await finishSaveNote({
-          title: extracted.title,
-          rawMarkdown: extracted.rawMarkdown,
-          targetFolder,
-          signal: controller.signal,
-        });
+        if (selectedFiles.length === 0) return;
+        for (let idx = 0; idx < selectedFiles.length; idx++) {
+          if (controller.signal.aborted) return;
+          const f = selectedFiles[idx];
+          setStatus(
+            selectedFiles.length > 1
+              ? `Reading file ${idx + 1}/${selectedFiles.length}: ${f.name}…`
+              : 'Reading file offline…'
+          );
+          const extracted = await extractDocument(f, {
+            onProgress: p => {
+              setProgress(p);
+              setStatus(
+                p.phase === 'slides'
+                  ? `Reading slide ${p.current}/${p.total}…`
+                  : p.phase === 'docx'
+                    ? 'Reading Word document…'
+                    : `Reading page ${p.current}/${p.total}…`
+              );
+            },
+          });
+          if (controller.signal.aborted) return;
+          lastResult = await saveResultItem({
+            title: extracted.title,
+            rawMarkdown: extracted.rawMarkdown,
+            kind: extracted.kind,
+            fileName: f.name,
+            pageCount: extracted.pageCount,
+            signal: controller.signal,
+          });
+          count += 1;
+        }
       } else if (mode === 'paste') {
-        const cleanMd = htmlToCleanMarkdown(pasteMarkdown, pasteMarkdown);
-        if (!cleanMd) throw new Error('Paste a Canvas module page or text first.');
-        const title =
-          pasteTitle.trim() ||
-          cleanMd.split('\n')[0].replace(/^#+\s*/, '').slice(0, 64) ||
-          'Canvas Module Page';
-        await finishSaveNote({
-          title,
-          rawMarkdown: cleanMd,
-          targetFolder,
-          signal: controller.signal,
-        });
+        const trimmed = pasteMarkdown.trim();
+        if (!trimmed) throw new Error('Paste a Canvas module page or a public Google Docs/Slides link first.');
+        const googleInfo = getPublicGoogleExportUrl(trimmed);
+        if (googleInfo) {
+          setStatus(`Fetching public ${googleInfo.kind}…`);
+          const gRes = await importPublicGoogleLink(trimmed);
+          lastResult = await saveResultItem({
+            title: pasteTitle.trim() || gRes.title,
+            rawMarkdown: gRes.extractedText,
+            kind: gRes.kind,
+            pageCount: gRes.pageCount,
+            signal: controller.signal,
+          });
+          count = 1;
+        } else {
+          const cleanMd = htmlToCleanMarkdown(pasteMarkdown, pasteMarkdown);
+          const title =
+            pasteTitle.trim() ||
+            cleanMd.split('\n')[0].replace(/^#+\s*/, '').slice(0, 64) ||
+            'Canvas Module Page';
+          lastResult = await saveResultItem({
+            title,
+            rawMarkdown: cleanMd,
+            kind: 'page',
+            pageCount: 1,
+            signal: controller.signal,
+          });
+          count = 1;
+        }
       } else if (mode === 'ocr') {
         if (ocrFiles.length === 0) throw new Error('Choose at least 1 screenshot or slide photo.');
         const parts = [];
@@ -203,12 +270,34 @@ export default function ImportSheet({
           }
         }
         if (parts.length === 0) throw new Error('No text could be recognized from the selected images.');
-        await finishSaveNote({
+        lastResult = await saveResultItem({
           title: ocrTitle.trim() || `Scanned Handout (${ocrFiles.length} pages)`,
           rawMarkdown: parts.join('\n\n'),
-          targetFolder,
+          kind: 'ocr',
+          pageCount: ocrFiles.length,
           signal: controller.signal,
         });
+        count = 1;
+      }
+
+      if (lastResult?.savedToCourse) {
+        toast(
+          `Indexed ${count} item${count === 1 ? '' : 's'} into ${lastResult.savedToCourse.nickname || lastResult.savedToCourse.code} (${moduleName || 'Module 1'})!`,
+          { type: 'success' }
+        );
+        if (onImportedToCourse) {
+          onImportedToCourse(lastResult.savedToCourse);
+        } else {
+          onClose?.();
+        }
+      } else if (lastResult?.created) {
+        toast(
+          count > 1
+            ? `Imported ${count} files into ${lastResult.targetFolder.name}!`
+            : `Imported "${lastResult.created.title}" into ${lastResult.targetFolder.name}`,
+          { type: 'success' }
+        );
+        onImported?.(lastResult.created, lastResult.targetFolder);
       }
     } catch (err) {
       if (!err?.isCancelled) {
@@ -236,7 +325,7 @@ export default function ImportSheet({
 
   const canSubmit =
     !busy &&
-    ((mode === 'file' && Boolean(selectedFile)) ||
+    ((mode === 'file' && selectedFiles.length > 0) ||
       (mode === 'paste' && Boolean(pasteMarkdown.trim())) ||
       (mode === 'ocr' && ocrFiles.length > 0));
 
@@ -250,7 +339,7 @@ export default function ImportSheet({
           {!busy && (
             <button
               type="button"
-              className="navbar-btn"
+              className="icon-btn"
               onClick={onClose}
               aria-label="Close import"
             >
@@ -267,7 +356,7 @@ export default function ImportSheet({
             disabled={busy}
             onClick={() => setMode('file')}
           >
-            <FileUp size={13} style={{ marginRight: 4 }} /> File
+            <FileUp size={13} style={{ marginRight: 4 }} /> Files
           </button>
           <button
             type="button"
@@ -275,7 +364,7 @@ export default function ImportSheet({
             disabled={busy}
             onClick={() => setMode('paste')}
           >
-            <ClipboardPaste size={13} style={{ marginRight: 4 }} /> Canvas Page
+            <ClipboardPaste size={13} style={{ marginRight: 4 }} /> Page / Link
           </button>
           <button
             type="button"
@@ -287,31 +376,36 @@ export default function ImportSheet({
           </button>
         </div>
 
-        {/* MODE 1: FILE PICKER (.pdf, .pptx, .docx, .md, .txt) */}
+        {/* MODE 1: MULTI-FILE PICKER (.pdf, .pptx, .docx, .md, .txt) */}
         {mode === 'file' && (
           <>
             <button
               type="button"
-              className={`import-dropzone${selectedFile ? ' has-file' : ''}`}
+              className={`import-dropzone${selectedFiles.length > 0 ? ' has-file' : ''}`}
               disabled={busy}
               onClick={() => fileInputRef.current?.click()}
             >
               <span className="import-dropzone-icon">
-                {selectedFile ? <FileText size={22} /> : <FileUp size={22} />}
+                {selectedFiles.length > 0 ? <FileText size={22} /> : <FileUp size={22} />}
               </span>
               <div className="import-dropzone-title">
-                {selectedFile ? selectedFile.name : 'Choose a .pdf, .pptx, .docx, .md, or .txt file'}
+                {selectedFiles.length === 1
+                  ? selectedFiles[0].name
+                  : selectedFiles.length > 1
+                    ? `${selectedFiles.length} files selected`
+                    : 'Choose .pdf, .pptx, .docx, .md, or .txt (multi-select)'}
               </div>
               <div className="import-dropzone-sub">
-                {selectedFile
-                  ? `${(selectedFile.size / 1024).toFixed(selectedFile.size > 1024 * 1024 ? 0 : 1)} KB · Tap to change`
-                  : 'Extracts PDF pages, PowerPoint slides & Word docs 100% offline'}
+                {selectedFiles.length > 0
+                  ? 'Tap to change selection · Extracts 100% offline on this phone'
+                  : 'Select 1 or multiple handouts at once from Downloads'}
               </div>
             </button>
 
             <input
               ref={fileInputRef}
               type="file"
+              multiple
               accept=".pdf,.pptx,.docx,.md,.markdown,.txt,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown"
               style={{ display: 'none' }}
               onChange={handleFilePick}
@@ -319,21 +413,21 @@ export default function ImportSheet({
           </>
         )}
 
-        {/* MODE 2: PASTE CANVAS MODULE PAGE (HTML -> MARKDOWN) */}
+        {/* MODE 2: PASTE CANVAS MODULE PAGE OR PUBLIC GOOGLE DOC/SLIDES LINK */}
         {mode === 'paste' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             <input
               className="ai-input"
               style={{ marginTop: 0 }}
-              placeholder="Module / Page title (auto-detected if left blank)"
+              placeholder="Title (auto-detected if left blank)"
               value={pasteTitle}
               onChange={e => setPasteTitle(e.target.value)}
               disabled={busy}
             />
             <textarea
               className="ai-input"
-              style={{ marginTop: 0, minHeight: 112 }}
-              placeholder="On Canvas, press Select All → Copy on a Module page, then paste right here! Headings, lists, tables & links convert cleanly to Markdown."
+              style={{ marginTop: 0, minHeight: 106 }}
+              placeholder="Paste a copied Canvas Module page OR paste a public Google Docs / Google Slides link (docs.google.com/...)!"
               value={pasteMarkdown}
               onPaste={handleRichPaste}
               onChange={e => setPasteMarkdown(e.target.value)}
@@ -348,7 +442,7 @@ export default function ImportSheet({
             <input
               className="ai-input"
               style={{ marginTop: 0 }}
-              placeholder="Note title (e.g. Week 3 View-Only Slides)"
+              placeholder="Title (e.g. Week 3 View-Only Slides)"
               value={ocrTitle}
               onChange={e => setOcrTitle(e.target.value)}
               disabled={busy}
@@ -368,7 +462,7 @@ export default function ImportSheet({
                   : 'Select up to 10 slide/handout screenshots'}
               </div>
               <div className="import-dropzone-sub">
-                Uses your AI Vision model to extract all screenshots into 1 clean note
+                Extracts all screenshots into 1 clean note or module
               </div>
             </button>
             <input
@@ -382,27 +476,77 @@ export default function ImportSheet({
           </div>
         )}
 
-        {/* Target Folder */}
-        {folders.length > 0 && (
-          <div className="import-field">
-            <label className="settings-label" htmlFor="import-folder-select">
-              <Folder size={13} style={{ verticalAlign: -2, marginRight: 4 }} />
-              Save into folder
-            </label>
+        {/* Destination Picker: Save to Course Module (AI-Indexed) vs Save as Note */}
+        {courses.length > 0 && (
+          <div style={{ marginTop: 10 }}>
+            <div className="view-switcher">
+              <button
+                type="button"
+                disabled={busy}
+                className={`view-switch-btn${destination === 'course' ? ' active' : ''}`}
+                onClick={() => setDestination('course')}
+              >
+                <BookOpen size={13} style={{ marginRight: 4 }} /> Course Module (AI)
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                className={`view-switch-btn${destination === 'note' ? ' active' : ''}`}
+                onClick={() => setDestination('note')}
+              >
+                <Folder size={13} style={{ marginRight: 4 }} /> Regular Note
+              </button>
+            </div>
+          </div>
+        )}
+
+        {destination === 'course' && courses.length > 0 ? (
+          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 8, marginTop: 10 }}>
             <select
-              id="import-folder-select"
               className="ai-input"
-              value={folderId}
+              style={{ marginTop: 0 }}
+              value={courseId}
               disabled={busy}
-              onChange={e => setFolderId(Number(e.target.value))}
+              onChange={e => setCourseId(Number(e.target.value))}
+              aria-label="Target Course"
             >
-              {folders.map(f => (
-                <option key={f.id} value={f.id}>
-                  {f.name}
+              {courses.map(c => (
+                <option key={c.id} value={c.id}>
+                  {c.nickname || c.code || c.name}
                 </option>
               ))}
             </select>
+            <input
+              className="ai-input"
+              style={{ marginTop: 0 }}
+              placeholder="Module 1"
+              value={moduleName}
+              disabled={busy}
+              onChange={e => setModuleName(e.target.value)}
+            />
           </div>
+        ) : (
+          folders.length > 0 && (
+            <div className="import-field">
+              <label className="settings-label" htmlFor="import-folder-select">
+                <Folder size={13} style={{ verticalAlign: -2, marginRight: 4 }} />
+                Save into folder
+              </label>
+              <select
+                id="import-folder-select"
+                className="ai-input"
+                value={folderId}
+                disabled={busy}
+                onChange={e => setFolderId(Number(e.target.value))}
+              >
+                {folders.map(f => (
+                  <option key={f.id} value={f.id}>
+                    {f.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )
         )}
 
         {/* Extraction Mode Toggle */}
@@ -456,11 +600,7 @@ export default function ImportSheet({
 
         {/* Actions */}
         <div className="flex gap-8" style={{ marginTop: 14 }}>
-          <button
-            type="button"
-            className="btn btn-secondary flex-1"
-            onClick={handleCancel}
-          >
+          <button type="button" className="btn btn-secondary flex-1" onClick={handleCancel}>
             {busy ? 'Stop' : 'Cancel'}
           </button>
           <button
@@ -469,7 +609,7 @@ export default function ImportSheet({
             disabled={!canSubmit}
             onClick={handleImport}
           >
-            <FileUp size={16} /> {busy ? 'Importing…' : 'Import Note'}
+            <FileUp size={16} /> {busy ? 'Importing…' : destination === 'course' ? 'Save to Course' : 'Import Note'}
           </button>
         </div>
       </div>

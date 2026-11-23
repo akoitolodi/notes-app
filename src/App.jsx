@@ -612,6 +612,11 @@ export default function App() {
             bumpSidebar();
             handleOpenNote(createdNote, targetFolder);
           }}
+          onImportedToCourse={() => {
+            setSharedImport(null);
+            bumpSidebar();
+            handleOpenCourses();
+          }}
           onClose={() => setSharedImport(null)}
         />
       )}
