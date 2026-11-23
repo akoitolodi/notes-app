@@ -865,9 +865,9 @@ export default function SettingsScreen({ onBack, onDataImported }) {
           </span>
         </label>
 
-        <div className="settings-label mt-16">Open-Source Bridges (Optional)</div>
+        <div className="settings-label mt-16">Open-Source Bridges (Optional — Leave Blank Normally)</div>
         <div className="settings-tip">
-          Learn Coding uses <strong>api.codapi.org</strong> automatically (no key required). You can also point to a self-hosted <strong>Codapi</strong> runner or <strong>HKUDS/DeepTutor</strong> FastAPI server below.
+          Built-in <strong>DeepTutor Learner Memory</strong> &amp; <strong>Codapi</strong> already work automatically with zero setup. Only fill these if you self-host your own Docker/Python server on PC or Termux.
         </div>
         <div className="settings-label mt-12">Codapi Sandbox URL (optional)</div>
         <input
@@ -892,7 +892,7 @@ export default function SettingsScreen({ onBack, onDataImported }) {
               setDeepTutorUrlState(e.target.value);
               setDeepTutorUrl(e.target.value);
             }}
-            placeholder="e.g. http://127.0.0.1:8001"
+            placeholder="Leave blank (built-in works offline) or http://127.0.0.1:8001"
             spellCheck="false"
           />
           <button
@@ -1091,7 +1091,7 @@ export default function SettingsScreen({ onBack, onDataImported }) {
           • Press <strong>Ctrl+S</strong> to save immediately or <strong>Ctrl+Shift+S</strong> to save & explain.
         </div>
         <div className="settings-tip" style={{ marginTop: 10, opacity: 0.7 }}>
-          Notes by Bai v1.6.0
+          Notes by Bai v1.6.1
         </div>
       </div>
 

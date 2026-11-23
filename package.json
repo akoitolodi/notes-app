@@ -1,6 +1,6 @@
 {
   "name": "ai-class-notes",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "private": true,
   "type": "module",
   "description": "A notes app styled like iOS Notes, with an AI study layer that explains what you write.",

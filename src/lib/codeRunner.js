@@ -84,7 +84,7 @@ export async function runOnCodapi(sandbox, code) {
   if (key) headers.Authorization = `Bearer ${key}`;
 
   const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
-  const ctrl = createAbortController(12000);
+  const ctrl = createAbortController(15000);
   try {
     const res = await fetch(`${url}/v1/exec`, {
       method: 'POST',
