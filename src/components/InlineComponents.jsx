@@ -9,7 +9,7 @@ import { tokenizeCode } from '../lib/codeHighlight';
 import { debugCodeWithAI } from '../lib/aiFeatures';
 
 /** Interactive syntax-highlighted fenced code card for Read Mode (Copy + 1-tap Debug/Trace). */
-export function CodeBlockCard({ lang = '', code = '', noteContext = '' }) {
+export function CodeBlockCard({ lang = '', code = '', noteContext = '', zeroAi = false }) {
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [analysis, setAnalysis] = useState('');
@@ -27,7 +27,7 @@ export function CodeBlockCard({ lang = '', code = '', noteContext = '' }) {
   };
 
   const handleDebug = async () => {
-    if (busy) return;
+    if (busy || zeroAi) return;
     if (analysis) {
       setAnalysis('');
       return;
@@ -54,22 +54,24 @@ export function CodeBlockCard({ lang = '', code = '', noteContext = '' }) {
       <div className="code-card-head">
         <span className="code-card-lang">{lang || 'code'}</span>
         <div className="flex items-center gap-6">
-          <button
-            type="button"
-            className="code-card-btn"
-            onClick={handleDebug}
-            disabled={busy}
-            title="Trace execution, spot bugs & Big-O"
-          >
-            {busy ? (
-              <span className="spinner" style={{ width: 12, height: 12 }} />
-            ) : analysis ? (
-              <ChevronUp size={13} />
-            ) : (
-              <Bug size={13} />
-            )}
-            <span>{busy ? 'Tracing…' : analysis ? 'Hide trace' : 'Trace / Debug'}</span>
-          </button>
+          {!zeroAi && (
+            <button
+              type="button"
+              className="code-card-btn"
+              onClick={handleDebug}
+              disabled={busy}
+              title="Trace execution, spot bugs & Big-O"
+            >
+              {busy ? (
+                <span className="spinner" style={{ width: 12, height: 12 }} />
+              ) : analysis ? (
+                <ChevronUp size={13} />
+              ) : (
+                <Bug size={13} />
+              )}
+              <span>{busy ? 'Tracing…' : analysis ? 'Hide trace' : 'Trace / Debug'}</span>
+            </button>
+          )}
           <button type="button" className="code-card-btn" onClick={handleCopy}>
             {copied ? <Check size={13} /> : <Copy size={13} />}
             <span>{copied ? 'Copied' : 'Copy'}</span>

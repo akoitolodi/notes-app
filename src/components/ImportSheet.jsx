@@ -14,6 +14,7 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { db, createNote } from '../store/db';
+import { isVaultUnlocked } from '../lib/vault';
 import { extractDocument, structureImportedTextWithAI } from '../lib/docImporter';
 import { useDialog } from './ui/DialogProvider';
 
@@ -38,10 +39,12 @@ export default function ImportSheet({
   const abortRef = useRef(null);
 
   useEffect(() => {
+    const unlocked = isVaultUnlocked();
     db.folders
       .toArray()
       .then(list => {
-        const sorted = [...list].sort((a, b) => a.name.localeCompare(b.name));
+        const visible = list.filter(f => unlocked || !f.locked);
+        const sorted = [...visible].sort((a, b) => a.name.localeCompare(b.name));
         setFolders(sorted);
         if (typeof defaultFolderId !== 'number' && sorted.length > 0) {
           const general = sorted.find(f => f.name === 'General') || sorted[0];

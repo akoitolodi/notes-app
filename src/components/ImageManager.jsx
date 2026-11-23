@@ -147,6 +147,7 @@ export default function ImageStrip({
   subject = 'General',
   readOnly = false,
   showAdd = true,
+  zeroAi = false,
 }) {
   const { toast } = useDialog();
   const [viewing, setViewing] = useState(null); // { img, src }
@@ -315,42 +316,44 @@ export default function ImageStrip({
             </div>
           )}
 
-          <div className="image-viewer-bar">
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              disabled={Boolean(aiBusy)}
-              onClick={handleExplainPhoto}
-            >
-              {aiBusy === 'explain' ? (
-                <>
-                  <span className="spinner" style={{ width: 14, height: 14 }} /> Explaining…
-                </>
-              ) : (
-                <>
-                  <Sparkles size={15} /> Explain photo
-                </>
-              )}
-            </button>
-            {onAppendText && (
+          {!zeroAi && (
+            <div className="image-viewer-bar">
               <button
                 type="button"
-                className="btn btn-secondary btn-sm"
+                className="btn btn-primary btn-sm"
                 disabled={Boolean(aiBusy)}
-                onClick={handleOcrPhoto}
+                onClick={handleExplainPhoto}
               >
-                {aiBusy === 'ocr' ? (
+                {aiBusy === 'explain' ? (
                   <>
-                    <span className="spinner" style={{ width: 14, height: 14 }} /> Reading…
+                    <span className="spinner" style={{ width: 14, height: 14 }} /> Explaining…
                   </>
                 ) : (
                   <>
-                    <ScanText size={15} /> Extract text (OCR)
+                    <Sparkles size={15} /> Explain photo
                   </>
                 )}
               </button>
-            )}
-          </div>
+              {onAppendText && (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={Boolean(aiBusy)}
+                  onClick={handleOcrPhoto}
+                >
+                  {aiBusy === 'ocr' ? (
+                    <>
+                      <span className="spinner" style={{ width: 14, height: 14 }} /> Reading…
+                    </>
+                  ) : (
+                    <>
+                      <ScanText size={15} /> Extract text (OCR)
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

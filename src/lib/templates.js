@@ -188,6 +188,24 @@ $$F = m \\cdot a$$
 #explore #curiosity`,
   },
   {
+    id: 'password_entry',
+    category: 'general',
+    name: 'Password & Key Record',
+    description: 'Local-only template for accounts, passwords, API keys & recovery codes',
+    icon: 'key',
+    title: 'Account / Key — ',
+    body: `## Account Details
+- **Service / App:** 
+- **Username / Email:** 
+- **Password / Key:** 
+
+## 2FA & Recovery Codes
+- 
+
+## Security Notes
+- `,
+  },
+  {
     id: 'buglog',
     category: 'tech',
     name: 'Bug & Debug Log',

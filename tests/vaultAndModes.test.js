@@ -10,18 +10,24 @@ import {
 } from '../src/lib/vault.js';
 import {
   resolveNoteMode,
+  isZeroAiMode,
   getChatModeDirective,
   getScanModeDirective,
 } from '../src/lib/noteModes.js';
 import {
   db,
+  ensureSeeded,
   createFolder,
+  deleteFolder,
+  renameFolder,
+  updateFolder,
   createNote,
   updateNote,
   getHomeSummary,
   getNotesInFolder,
   searchNotes,
   getDueFlashcards,
+  SYSTEM_VAULT_FOLDER_NAME,
 } from '../src/store/db.js';
 
 // Minimal localStorage shim for Node Vitest environment
@@ -94,12 +100,46 @@ describe('PIN Private Vault & Multi-Life Modes', () => {
     expect(dueUnlocked.totalCards).toBe(1);
   });
 
-  it('routes folder & note mode personas cleanly', () => {
+  it('routes folder & note mode personas cleanly and enforces Zero-AI on vault folders', () => {
     expect(resolveNoteMode({ mode: null }, { mode: 'journal' })).toBe('journal');
     expect(resolveNoteMode({ mode: 'explore' }, { mode: 'study' })).toBe('explore');
+    expect(resolveNoteMode({ mode: 'study' }, { mode: 'vault', isSystemVault: true })).toBe('vault');
+    expect(isZeroAiMode('vault')).toBe(true);
+    expect(isZeroAiMode('study')).toBe(false);
     expect(getChatModeDirective('journal')).toMatch(/NEVER grade/i);
     expect(getScanModeDirective('journal')).toMatch(/"mistake": null/i);
     expect(getChatModeDirective('explore')).toMatch(/pop-science myths/i);
     expect(getChatModeDirective('code')).toMatch(/Big-O/i);
+  });
+
+  it('seeds fixed Passwords & Keys Zero-AI folder, hides it when locked, and prevents deletion or unlocking', async () => {
+    await ensureSeeded();
+    await setupVaultPin('9876');
+    lockVault();
+
+    // While locked: Passwords & Keys must be completely invisible from folders and vaultFolders
+    const lockedSummary = await getHomeSummary();
+    expect(lockedSummary.folders.some(f => f.name === SYSTEM_VAULT_FOLDER_NAME)).toBe(false);
+    expect(lockedSummary.vaultFolders).toHaveLength(0);
+    expect(lockedSummary.hiddenVaultCount).toBe(1);
+
+    // Unlock vault: Passwords & Keys appears in vaultFolders (and still not in public folders)
+    await verifyVaultPin('9876');
+    const unlockedSummary = await getHomeSummary();
+    expect(unlockedSummary.folders.some(f => f.name === SYSTEM_VAULT_FOLDER_NAME)).toBe(false);
+    expect(unlockedSummary.vaultFolders).toHaveLength(1);
+    const sysVault = unlockedSummary.vaultFolders[0];
+    expect(sysVault.name).toBe('Passwords & Keys');
+    expect(sysVault.isSystemVault).toBe(true);
+    expect(sysVault.mode).toBe('vault');
+    expect(sysVault.locked).toBe(true);
+
+    // Cannot delete, rename, or remove lock from Passwords & Keys
+    await expect(deleteFolder(sysVault.id)).rejects.toThrow(/cannot be deleted/i);
+    await expect(renameFolder(sysVault.id, 'Hacked')).rejects.toThrow(/cannot be renamed/i);
+    await updateFolder(sysVault.id, { locked: false, mode: 'study' });
+    const afterUpdate = await db.folders.get(sysVault.id);
+    expect(afterUpdate.locked).toBe(true);
+    expect(afterUpdate.mode).toBe('vault');
   });
 });

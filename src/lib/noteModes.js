@@ -61,6 +61,16 @@ export const NOTE_MODES = {
       'Explain how this works under the hood',
     ],
   },
+  vault: {
+    id: 'vault',
+    label: 'Zero-AI Vault',
+    badge: 'Zero-AI',
+    actionLabel: 'Save',
+    zeroAi: true,
+    description: '100% offline local-only vault for passwords, keys & sensitive notes — no AI can ever access this area',
+    chatTitle: 'Zero-AI Vault',
+    chatStarters: [],
+  },
 };
 
 export const NOTE_MODE_LIST = [
@@ -68,10 +78,15 @@ export const NOTE_MODE_LIST = [
   NOTE_MODES.journal,
   NOTE_MODES.explore,
   NOTE_MODES.code,
+  NOTE_MODES.vault,
 ];
 
 export function normalizeNoteMode(mode) {
   return NOTE_MODES[mode] ? mode : 'study';
+}
+
+export function isZeroAiMode(mode) {
+  return normalizeNoteMode(mode) === 'vault';
 }
 
 export function getModeMeta(mode) {
@@ -79,6 +94,8 @@ export function getModeMeta(mode) {
 }
 
 export function resolveNoteMode(note, folder = null) {
+  // If the parent folder is a Zero-AI Vault (like Passwords & Keys), enforce Zero-AI strictly
+  if (folder?.mode === 'vault' || folder?.isSystemVault) return 'vault';
   if (note?.mode && NOTE_MODES[note.mode]) return note.mode;
   if (folder?.mode && NOTE_MODES[folder.mode]) return folder.mode;
   return 'study';

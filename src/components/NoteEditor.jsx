@@ -47,6 +47,7 @@ import {
   resolveImageDataUrl,
   diffAndRemapBlocks,
   getHiddenLockedFolderIds,
+  getZeroAiFolderIds,
 } from '../store/db';
 import StrokeLayer, { renderStrokesToCanvas } from './StrokeLayer';
 import ImageStrip, { pickImage, compressImage } from './ImageManager';
@@ -55,7 +56,7 @@ import { summarizeNote, ocrImage, findRelatedNotes } from '../lib/aiFeatures';
 import { instantiateTemplate } from '../lib/templates';
 import { groupNoteLines } from '../lib/codeHighlight';
 import { findBacklinks, findNoteByWikiTitle } from '../lib/wikiLinks';
-import { NOTE_MODE_LIST, resolveNoteMode, getModeMeta } from '../lib/noteModes';
+import { NOTE_MODE_LIST, resolveNoteMode, getModeMeta, isZeroAiMode } from '../lib/noteModes';
 import SlideUpPanel from './SlideUpPanel';
 import FolderPickerSheet from './FolderPickerSheet';
 import {
@@ -93,8 +94,12 @@ export default function NoteEditor({
 
   const [mode, setMode] = useState(() => initialMode || (noteHasContent(note) ? 'read' : 'edit'));
   const [noteModeOverride, setNoteModeOverride] = useState(note?.mode || '');
-  const activeNoteMode = resolveNoteMode({ mode: noteModeOverride }, { mode: folderMode });
+  const [isSystemVaultFolder, setIsSystemVaultFolder] = useState(folderMode === 'vault');
+  const activeNoteMode = isSystemVaultFolder
+    ? 'vault'
+    : resolveNoteMode({ mode: noteModeOverride }, { mode: folderMode });
   const activeModeMeta = getModeMeta(activeNoteMode);
+  const isZeroAi = isZeroAiMode(activeNoteMode);
   const [backlinks, setBacklinks] = useState([]);
   const [title, setTitle] = useState(note?.title || '');
   const [body, setBody] = useState(note?.body || '');
@@ -107,6 +112,24 @@ export default function NoteEditor({
   );
   const [folderId, setFolderId] = useState(note?.folderId);
   const [folderLabel, setFolderLabel] = useState(folderName || '');
+
+  useEffect(() => {
+    if (typeof folderId !== 'number') {
+      setIsSystemVaultFolder(folderMode === 'vault');
+      return undefined;
+    }
+    let live = true;
+    db.folders
+      .get(folderId)
+      .then(f => {
+        if (!live) return;
+        setIsSystemVaultFolder(Boolean(f?.isSystemVault || f?.mode === 'vault' || folderMode === 'vault'));
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [folderId, folderMode]);
   const [pinned, setPinned] = useState(Boolean(note?.pinned));
   const [blocks, setBlocks] = useState(note?.blocks || []);
   const [flashcards, setFlashcards] = useState(note?.flashcards || []);
@@ -297,31 +320,34 @@ export default function NoteEditor({
     };
   }, [mode, title, body, subject, note.id, blocks, onNoteChanged]);
 
-  // Refresh cross-folder [[Wiki-Link]] backlinks pointing to this note (excluding locked folders)
+  // Refresh cross-folder [[Wiki-Link]] backlinks pointing to this note (excluding locked & Zero-AI folders)
   useEffect(() => {
-    if (!title?.trim()) {
+    if (!title?.trim() || isZeroAi) {
       setBacklinks([]);
       return undefined;
     }
     let live = true;
-    Promise.all([db.notes.toArray(), getHiddenLockedFolderIds()])
-      .then(([allNotes, hiddenIds]) => {
+    Promise.all([db.notes.toArray(), getHiddenLockedFolderIds(), getZeroAiFolderIds()])
+      .then(([allNotes, hiddenIds, zeroAiIds]) => {
         if (!live) return;
-        setBacklinks(findBacklinks({ id: note.id, title }, allNotes, hiddenIds));
+        const excluded = new Set([...hiddenIds, ...zeroAiIds]);
+        setBacklinks(findBacklinks({ id: note.id, title }, allNotes, excluded));
       })
       .catch(() => {});
     return () => {
       live = false;
     };
-  }, [note.id, title, mode]);
+  }, [note.id, title, mode, isZeroAi]);
 
   const handleWikiLinkTap = useCallback(
     async targetTitle => {
-      const [allNotes, hiddenIds] = await Promise.all([
+      const [allNotes, hiddenIds, zeroAiIds] = await Promise.all([
         db.notes.toArray(),
         getHiddenLockedFolderIds(),
+        getZeroAiFolderIds(),
       ]);
-      const existing = findNoteByWikiTitle(targetTitle, allNotes, hiddenIds);
+      const excluded = new Set([...hiddenIds, ...zeroAiIds]);
+      const existing = findNoteByWikiTitle(targetTitle, allNotes, excluded);
       if (existing) {
         onOpenNote?.(existing);
         return;
@@ -422,7 +448,7 @@ export default function NoteEditor({
   }, [persistCurrentText]);
 
   const handleSaveAndExplain = useCallback(async () => {
-    if (!body.trim() && !title.trim()) {
+    if (isZeroAi || (!body.trim() && !title.trim())) {
       await persistCurrentText();
       setMode('read');
       return;
@@ -543,6 +569,7 @@ export default function NoteEditor({
   /** Tap ANY line in Read Mode: show explanation or fetch on demand (retryable if failed). */
   const handleLineTap = useCallback(
     async (block, lineIdx) => {
+      if (isZeroAi) return;
       const lineText = (body.split('\n')[lineIdx] || '').trim();
       if (!lineText || !/[a-zA-Z0-9\u00C0-\uFFFF]/.test(lineText)) return;
       setPanelOpen(true);
@@ -1102,24 +1129,28 @@ export default function NoteEditor({
         </button>
 
         <div className="flex items-center gap-6">
-          <button
-            type="button"
-            className="navbar-btn"
-            onClick={() => setChatOpen(true)}
-            aria-label="Chat with this note"
-            title="Ask AI about this note"
-          >
-            <MessageSquare size={19} />
-          </button>
-          <button
-            type="button"
-            className="navbar-btn"
-            onClick={onOpenStudy}
-            aria-label="Study mode"
-            title="Study mode (Cards, Quiz, Blanks, Practice)"
-          >
-            <GraduationCap size={20} />
-          </button>
+          {!isZeroAi && (
+            <>
+              <button
+                type="button"
+                className="navbar-btn"
+                onClick={() => setChatOpen(true)}
+                aria-label="Chat with this note"
+                title="Ask AI about this note"
+              >
+                <MessageSquare size={19} />
+              </button>
+              <button
+                type="button"
+                className="navbar-btn"
+                onClick={onOpenStudy}
+                aria-label="Study mode"
+                title="Study mode (Cards, Quiz, Blanks, Practice)"
+              >
+                <GraduationCap size={20} />
+              </button>
+            </>
+          )}
           <button
             type="button"
             className={`navbar-btn${drawMode ? ' navbar-btn-active' : ''}`}
@@ -1179,10 +1210,15 @@ export default function NoteEditor({
               {wordCount} {wordCount === 1 ? 'word' : 'words'}
               {subject && subject !== folderLabel ? ` · ${subject}` : ''}
             </span>
+            {isZeroAi && (
+              <span className="mode-badge mode-vault" title="100% Local · No AI can read or touch this note">
+                🔒 Zero-AI Vault
+              </span>
+            )}
           </div>
 
           {/* AI Summary card */}
-          {(summary || summarizing) && (
+          {!isZeroAi && (summary || summarizing) && (
             <div className="summary-card">
               <div className="summary-head">
                 <span className="summary-label">
@@ -1210,7 +1246,7 @@ export default function NoteEditor({
             </div>
           )}
 
-          {!summary && !summarizing && body.trim() && (
+          {!isZeroAi && !summary && !summarizing && body.trim() && (
             <button
               type="button"
               className="summarize-chip"
@@ -1228,6 +1264,7 @@ export default function NoteEditor({
               noteContext={body}
               subject={subject}
               onAppendText={appendTextToNote}
+              zeroAi={isZeroAi}
             />
           )}
 
@@ -1241,6 +1278,7 @@ export default function NoteEditor({
                     lang={seg.lang}
                     code={seg.code}
                     noteContext={`${title} (${subject})`}
+                    zeroAi={isZeroAi}
                   />
                 );
               }
@@ -1303,7 +1341,7 @@ export default function NoteEditor({
             </div>
           )}
 
-          {body.trim() && (
+          {!isZeroAi && body.trim() && (
             <button
               type="button"
               className="related-trigger"
@@ -1374,30 +1412,48 @@ export default function NoteEditor({
           <div className="export-sheet" onClick={e => e.stopPropagation()}>
             <div className="export-title">{title || 'Note Options'}</div>
 
-            <div className="settings-label" style={{ marginBottom: 6 }}>
-              AI Mode ({noteModeOverride ? activeModeMeta.label : `Folder: ${getModeMeta(folderMode).label}`})
-            </div>
-            <div className="mode-picker-row" style={{ marginBottom: 12 }}>
-              <button
-                type="button"
-                className={`mode-pick-chip${!noteModeOverride ? ' active' : ''}`}
-                onClick={() => handleSetNoteMode('')}
+            {isZeroAi ? (
+              <div
+                style={{
+                  fontSize: '0.8rem',
+                  color: 'var(--text-secondary)',
+                  background: 'var(--bg-hover)',
+                  borderRadius: 10,
+                  padding: '8px 12px',
+                  marginBottom: 12,
+                  lineHeight: 1.4,
+                }}
               >
-                Auto
-              </button>
-              {NOTE_MODE_LIST.map(m => (
-                <button
-                  key={m.id}
-                  type="button"
-                  className={`mode-pick-chip${noteModeOverride === m.id ? ' active' : ''}`}
-                  onClick={() => handleSetNoteMode(m.id)}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
+                <strong>🔒 Zero-AI Vault Record</strong> — Stored 100% locally. All AI models, chat, and background study scanners are disabled for this note.
+              </div>
+            ) : (
+              <>
+                <div className="settings-label" style={{ marginBottom: 6 }}>
+                  AI Mode ({noteModeOverride ? activeModeMeta.label : `Folder: ${getModeMeta(folderMode).label}`})
+                </div>
+                <div className="mode-picker-row" style={{ marginBottom: 12 }}>
+                  <button
+                    type="button"
+                    className={`mode-pick-chip${!noteModeOverride ? ' active' : ''}`}
+                    onClick={() => handleSetNoteMode('')}
+                  >
+                    Auto
+                  </button>
+                  {NOTE_MODE_LIST.map(m => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      className={`mode-pick-chip${noteModeOverride === m.id ? ' active' : ''}`}
+                      onClick={() => handleSetNoteMode(m.id)}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
 
-            {onOpenExamPaper && activeNoteMode !== 'journal' && (
+            {!isZeroAi && onOpenExamPaper && activeNoteMode !== 'journal' && (
               <button
                 type="button"
                 className="export-btn"
@@ -1420,16 +1476,18 @@ export default function NoteEditor({
             >
               <Share2 size={18} /> Share & Export PDF
             </button>
-            <button
-              type="button"
-              className="export-btn"
-              onClick={() => {
-                setMoreOpen(false);
-                handleSaveAndExplain();
-              }}
-            >
-              <Sparkles size={18} /> Re-scan ({activeModeMeta.actionLabel})
-            </button>
+            {!isZeroAi && (
+              <button
+                type="button"
+                className="export-btn"
+                onClick={() => {
+                  setMoreOpen(false);
+                  handleSaveAndExplain();
+                }}
+              >
+                <Sparkles size={18} /> Re-scan ({activeModeMeta.actionLabel})
+              </button>
+            )}
             <button type="button" className="export-btn" onClick={handleTogglePin}>
               {pinned ? <PinOff size={18} /> : <Pin size={18} />}
               {pinned ? 'Unpin note' : 'Pin note'}

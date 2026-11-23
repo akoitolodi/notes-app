@@ -42,8 +42,8 @@ import {
 } from '../../lib/voiceDictation';
 import { cleanDictation, polishWritingWithAI } from '../../lib/aiFeatures';
 import { runGrammarCheck, applyGrammarFix } from '../../lib/grammarCheck';
-import { getModeMeta } from '../../lib/noteModes';
-import { db, getHiddenLockedFolderIds } from '../../store/db';
+import { getModeMeta, isZeroAiMode } from '../../lib/noteModes';
+import { db, getHiddenLockedFolderIds, getZeroAiFolderIds } from '../../store/db';
 import { useDialog } from '../ui/DialogProvider';
 
 export default function EditModeView({
@@ -77,6 +77,7 @@ export default function EditModeView({
 }) {
   const { toast } = useDialog();
   const modeMeta = getModeMeta(noteMode);
+  const isZeroAi = isZeroAiMode(noteMode);
   const [templateSheetOpen, setTemplateSheetOpen] = useState(false);
 
   // Clean visual edit mode (default — zero raw ## or ** clutter!) vs Raw Markdown mode
@@ -112,8 +113,8 @@ export default function EditModeView({
 
   useEffect(() => {
     let live = true;
-    Promise.all([db.notes.toArray(), getHiddenLockedFolderIds()])
-      .then(([allNotes, hiddenIds]) => {
+    Promise.all([db.notes.toArray(), getHiddenLockedFolderIds(), getZeroAiFolderIds()])
+      .then(([allNotes, hiddenIds, zeroAiIds]) => {
         if (!live) return;
         const titles = allNotes
           .filter(
@@ -122,6 +123,8 @@ export default function EditModeView({
               !n.trashed &&
               n.id !== currentNoteId &&
               !hiddenIds.has(n.folderId) &&
+              !zeroAiIds.has(n.folderId) &&
+              n.mode !== 'vault' &&
               (n.title || '').trim()
           )
           .map(n => n.title.trim());
@@ -406,6 +409,15 @@ export default function EditModeView({
             >
               <X size={15} /> Stop
             </button>
+          ) : isZeroAi ? (
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              onClick={onSaveOnly}
+              title="Save locally without AI (Ctrl+S)"
+            >
+              <Check size={14} /> Done
+            </button>
           ) : (
             <>
               <button
@@ -528,7 +540,7 @@ export default function EditModeView({
               <div className="dictation-error">{dictError}</div>
             )}
 
-            {(hasDictated || (dictError && body.trim())) && (
+            {!isZeroAi && (hasDictated || (dictError && body.trim())) && (
               <div style={{ marginTop: 8 }}>
                 <button
                   type="button"
@@ -566,6 +578,11 @@ export default function EditModeView({
             )}
           </span>
           <div className="flex items-center gap-8">
+            {isZeroAi && (
+              <span className="mode-badge mode-vault" title="Zero-AI Vault — no AI can access this note">
+                🔒 Zero-AI Vault
+              </span>
+            )}
             <span>
               {words} {words === 1 ? 'word' : 'words'}
             </span>
@@ -627,9 +644,10 @@ export default function EditModeView({
           noteContext={body}
           subject={subject}
           showAdd={false}
+          zeroAi={isZeroAi}
         />
 
-        {grammarOpen && (
+        {!isZeroAi && grammarOpen && (
           <div className="grammar-bar">
             <div className="flex justify-between items-center" style={{ marginBottom: 8 }}>
               <span className="flex items-center gap-6" style={{ fontSize: 13, fontWeight: 700 }}>
@@ -905,17 +923,19 @@ export default function EditModeView({
         >
           <ImageIcon size={17} />
         </button>
-        <button
-          type="button"
-          className={`fmt-btn${grammarOpen ? ' active-rec' : ''}`}
-          style={grammarOpen ? { background: 'var(--accent)', color: 'var(--accent-text)' } : undefined}
-          onClick={() => setGrammarOpen(o => !o)}
-          title="Grammar check & AI writing polish"
-          aria-label="Grammar and writing polish"
-        >
-          <SpellCheck size={17} />
-          <span>Polish</span>
-        </button>
+        {!isZeroAi && (
+          <button
+            type="button"
+            className={`fmt-btn${grammarOpen ? ' active-rec' : ''}`}
+            style={grammarOpen ? { background: 'var(--accent)', color: 'var(--accent-text)' } : undefined}
+            onClick={() => setGrammarOpen(o => !o)}
+            title="Grammar check & AI writing polish"
+            aria-label="Grammar and writing polish"
+          >
+            <SpellCheck size={17} />
+            <span>Polish</span>
+          </button>
+        )}
         <button
           type="button"
           className={`fmt-btn${dictState !== 'idle' ? ' active-rec' : ''}`}
@@ -926,21 +946,23 @@ export default function EditModeView({
           {dictState !== 'idle' ? <MicOff size={17} /> : <Mic size={17} />}
           <span>{dictState !== 'idle' ? 'Stop' : 'Mic'}</span>
         </button>
-        <button
-          type="button"
-          className="fmt-btn"
-          disabled={ocrBusy}
-          onClick={onOcrScan}
-          title="Scan text from photo (OCR)"
-          aria-label="Scan text from photo"
-        >
-          {ocrBusy ? (
-            <span className="spinner" style={{ width: 15, height: 15 }} />
-          ) : (
-            <ScanText size={17} />
-          )}
-          <span>OCR</span>
-        </button>
+        {!isZeroAi && (
+          <button
+            type="button"
+            className="fmt-btn"
+            disabled={ocrBusy}
+            onClick={onOcrScan}
+            title="Scan text from photo (OCR)"
+            aria-label="Scan text from photo"
+          >
+            {ocrBusy ? (
+              <span className="spinner" style={{ width: 15, height: 15 }} />
+            ) : (
+              <ScanText size={17} />
+            )}
+            <span>OCR</span>
+          </button>
+        )}
       </div>
 
       {templateSheetOpen && (

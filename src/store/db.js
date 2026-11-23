@@ -64,26 +64,58 @@ export function sortNotes(notes, sort = 'edited') {
   });
 }
 
-/** Create default folders on first run. */
+export const SYSTEM_VAULT_FOLDER_NAME = 'Passwords & Keys';
+
+/** Create default folders on first run + always ensure the fixed Zero-AI "Passwords & Keys" vault folder exists. */
 export async function ensureSeeded() {
   const count = await db.folders.count();
   if (count === 0) {
     await db.folders.bulkAdd([
-      { name: 'General', createdAt: Date.now() },
-      { name: 'Notes', createdAt: Date.now() },
+      { name: 'General', mode: 'study', locked: false, createdAt: Date.now() },
+      { name: 'Notes', mode: 'study', locked: false, createdAt: Date.now() },
+      {
+        name: SYSTEM_VAULT_FOLDER_NAME,
+        mode: 'vault',
+        locked: true,
+        isSystemVault: true,
+        createdAt: Date.now(),
+      },
     ]);
+    return;
+  }
+
+  const all = await db.folders.toArray();
+  const existingVault = all.find(
+    f => f.isSystemVault || f.name.toLowerCase() === SYSTEM_VAULT_FOLDER_NAME.toLowerCase()
+  );
+  if (!existingVault) {
+    await db.folders.add({
+      name: SYSTEM_VAULT_FOLDER_NAME,
+      mode: 'vault',
+      locked: true,
+      isSystemVault: true,
+      createdAt: Date.now(),
+    });
+  } else if (!existingVault.isSystemVault || existingVault.mode !== 'vault' || !existingVault.locked) {
+    await db.folders.update(existingVault.id, {
+      mode: 'vault',
+      locked: true,
+      isSystemVault: true,
+    });
   }
 }
 
-/** All folders with note counts (trashed notes excluded) + smart counts. */
-export async function getFoldersWithCounts() {
+/** All folders with note counts (trashed notes excluded; locked folders hidden when vault is locked). */
+export async function getFoldersWithCounts({ includeLocked = false } = {}) {
   const folders = await db.folders.toArray();
+  const unlocked = includeLocked || isVaultUnlocked();
   const counts = {};
   await db.notes.each(note => {
     if (note.trashed) return;
     counts[note.folderId] = (counts[note.folderId] || 0) + 1;
   });
   return folders
+    .filter(f => unlocked || !f.locked)
     .map(f => ({ ...f, noteCount: counts[f.id] || 0 }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -95,14 +127,20 @@ export async function getHiddenLockedFolderIds({ forceAll = false } = {}) {
   return new Set(folders.filter(f => Boolean(f.locked)).map(f => f.id));
 }
 
+/** Return Set of folder IDs that are Zero-AI Vault folders (never sent to AI even when unlocked). */
+export async function getZeroAiFolderIds() {
+  const folders = await db.folders.toArray();
+  return new Set(folders.filter(f => f.mode === 'vault' || f.isSystemVault).map(f => f.id));
+}
+
 export async function getHomeSummary() {
   const folders = await db.folders.toArray();
   const unlocked = isVaultUnlocked();
   const hiddenIds = new Set(
     unlocked ? [] : folders.filter(f => Boolean(f.locked)).map(f => f.id)
   );
-  const journalFolderIds = new Set(
-    folders.filter(f => f.mode === 'journal').map(f => f.id)
+  const noFlashcardFolderIds = new Set(
+    folders.filter(f => f.mode === 'journal' || f.mode === 'vault' || f.isSystemVault).map(f => f.id)
   );
 
   const counts = {};
@@ -127,8 +165,11 @@ export async function getHomeSummary() {
     totalNotes += 1;
     if (note.pinned) pinnedCount += 1;
 
-    const isJournal = note.mode === 'journal' || journalFolderIds.has(note.folderId);
-    if (!isJournal && Array.isArray(note.flashcards) && note.flashcards.length > 0) {
+    const skipCards =
+      note.mode === 'journal' ||
+      note.mode === 'vault' ||
+      noFlashcardFolderIds.has(note.folderId);
+    if (!skipCards && Array.isArray(note.flashcards) && note.flashcards.length > 0) {
       const progress = note.studyData?.cardProgress || {};
       for (let i = 0; i < note.flashcards.length; i++) {
         totalCardsCount += 1;
@@ -148,22 +189,30 @@ export async function getHomeSummary() {
     });
   });
 
-  const sortedFolders = folders
+  const allWithCounts = folders
     .map(f => ({ ...f, noteCount: counts[f.id] || 0 }))
     .sort((a, b) => a.name.localeCompare(b.name));
+
+  // Public (unlocked) folders vs Hidden Vault folders (only visible when vault is unlocked!)
+  const publicFolders = allWithCounts.filter(f => !f.locked);
+  const vaultFolders = allWithCounts
+    .filter(f => Boolean(f.locked))
+    .sort((a, b) => (b.isSystemVault ? 1 : 0) - (a.isSystemVault ? 1 : 0) || a.name.localeCompare(b.name));
 
   const tags = [...tagCounts.entries()]
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 
   return {
-    folders: sortedFolders,
+    folders: publicFolders,
+    vaultFolders: unlocked ? vaultFolders : [],
+    hiddenVaultCount: vaultFolders.length,
     totalNotes,
     pinnedCount,
     trashCount,
     dueCardsCount,
     totalCardsCount,
-    hasLockedFolders: folders.some(f => Boolean(f.locked)),
+    hasLockedFolders: vaultFolders.length > 0,
     tags,
   };
 }
@@ -175,6 +224,7 @@ export async function createFolder(name, opts = {}) {
     name: trimmed,
     mode: opts.mode || 'study',
     locked: Boolean(opts.locked),
+    isSystemVault: Boolean(opts.isSystemVault),
     createdAt: Date.now(),
   });
   return id;
@@ -183,21 +233,38 @@ export async function createFolder(name, opts = {}) {
 export async function renameFolder(id, name) {
   const trimmed = String(name || '').trim();
   if (!trimmed) return;
+  const folder = await db.folders.get(id);
+  if (folder?.isSystemVault) {
+    throw new Error('Passwords & Keys is a fixed vault folder and cannot be renamed.');
+  }
   await db.folders.update(id, { name: trimmed });
 }
 
 export async function updateFolder(id, patch) {
   if (!id || !patch || typeof patch !== 'object') return null;
+  const folder = await db.folders.get(id);
+  if (!folder) return null;
+  if (folder.isSystemVault) {
+    // Fixed Passwords & Keys folder is permanently locked and Zero-AI
+    const safePatch = { ...patch, mode: 'vault', locked: true, isSystemVault: true };
+    await db.folders.update(id, safePatch);
+    return db.folders.get(id);
+  }
   await db.folders.update(id, patch);
   return db.folders.get(id);
 }
 
 /**
  * Delete a folder safely:
+ * - Fixed Passwords & Keys system vault folder cannot be deleted.
  * - Moves its active notes to Trash (recoverable for 30 days) instead of wiping them.
  * - Cleans up orphaned examCache for this folder.
  */
 export async function deleteFolder(id, { permanent = false } = {}) {
+  const folder = await db.folders.get(id);
+  if (folder?.isSystemVault) {
+    throw new Error('Passwords & Keys is a permanent vault folder and cannot be deleted.');
+  }
   const now = Date.now();
   await db.transaction('rw', db.folders, db.notes, db.examCache, db.attachments, async () => {
     const folderNotes = await db.notes.where('folderId').equals(id).toArray();
@@ -612,7 +679,14 @@ export async function getDueFlashcards(now = Date.now()) {
     if (note.trashed || !Array.isArray(note.flashcards) || note.flashcards.length === 0) continue;
     const f = folderById.get(note.folderId);
     if (!unlocked && f?.locked) continue;
-    if (note.mode === 'journal' || f?.mode === 'journal') continue;
+    if (
+      note.mode === 'journal' ||
+      note.mode === 'vault' ||
+      f?.mode === 'journal' ||
+      f?.mode === 'vault' ||
+      f?.isSystemVault
+    )
+      continue;
 
     const progress = note.studyData?.cardProgress || {};
     const folderName = f?.name || note.subject || 'General';

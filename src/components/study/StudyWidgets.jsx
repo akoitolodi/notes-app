@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Shuffle,
+  RotateCcw,
   Check,
   X,
   LayoutList,

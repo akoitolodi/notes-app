@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   Wrench,
   SpellCheck,
+  RotateCw,
 } from 'lucide-react';
 import {
   THEME_KEY,
@@ -46,6 +47,8 @@ import {
   setDevToolkitEnabled,
   getGrammarConfig,
   setGrammarConfig,
+  getModelsForProvider,
+  fetchLiveModelsForProvider,
   maskKey,
   EXPLAIN_STYLES,
   PROVIDERS,
@@ -172,8 +175,10 @@ export default function SettingsScreen({ onBack, onDataImported }) {
   const [aiLocked, setAiLocked] = useState(() => isAiProviderLocked() && Boolean(getKeyForProvider(getProviderId()).trim()));
   const [devToolkitOn, setDevToolkitOn] = useState(() => isDevToolkitEnabled());
   const [grammarCfg, setGrammarCfg] = useState(() => getGrammarConfig());
-  const [pinModal, setPinModal] = useState(null); // null | 'setup' | 'change'
+  const [pinModal, setPinModal] = useState(null); // null | 'setup' | 'change' | 'verify-ai-unlock'
   const [vaultPinExists, setVaultPinExists] = useState(() => hasVaultPin());
+  const [availableModels, setAvailableModels] = useState(() => getModelsForProvider(getProviderId()));
+  const [fetchingModels, setFetchingModels] = useState(false);
 
   const [showKey, setShowKey] = useState(false);
   const [showTavily, setShowTavily] = useState(false);
@@ -236,6 +241,26 @@ export default function SettingsScreen({ onBack, onDataImported }) {
     setModel(preset.defaultModel);
     setReasonModel(preset.reasonModel || preset.defaultModel || '');
     setKey(getKeyForProvider(providerId));
+    setAvailableModels(getModelsForProvider(providerId));
+  };
+
+  const handleRefreshLiveModels = async () => {
+    if (fetchingModels) return;
+    setFetchingModels(true);
+    try {
+      const list = await fetchLiveModelsForProvider(provider, { baseUrl, key });
+      setAvailableModels(list);
+      if (list.length > 0 && !list.includes(model)) {
+        handleModelChange(list[0]);
+      }
+      toast(`Loaded ${list.length} live models from ${PROVIDERS[provider]?.name || 'endpoint'}`, {
+        type: 'success',
+      });
+    } catch (err) {
+      toast(`Could not fetch live models: ${err.message}`, { type: 'error' });
+    } finally {
+      setFetchingModels(false);
+    }
   };
 
   const handleKeyChange = e => {
@@ -536,6 +561,10 @@ export default function SettingsScreen({ onBack, onDataImported }) {
             <div className="mt-8">
               <HoldToUnlockButton
                 onUnlock={() => {
+                  if (hasVaultPin()) {
+                    setPinModal('verify-ai-unlock');
+                    return;
+                  }
                   setAiProviderLocked(false);
                   setAiLocked(false);
                   toast('AI provider settings unlocked', { type: 'info' });
@@ -607,23 +636,33 @@ export default function SettingsScreen({ onBack, onDataImported }) {
               </div>
             )}
 
-            {/* Quick-pick Model Chips */}
-            {preset.models.length > 0 && (
-              <>
-                <div className="settings-label mt-16">Model</div>
-                <div className="model-chips">
-                  {preset.models.map(m => (
-                    <button
-                      key={m}
-                      type="button"
-                      className={`model-chip${model === m ? ' active' : ''}`}
-                      onClick={() => handleModelChange(m)}
-                    >
-                      {m}
-                    </button>
-                  ))}
-                </div>
-              </>
+            {/* Quick-pick Model Chips + Live /models Refresh */}
+            <div className="flex justify-between items-center mt-16" style={{ marginBottom: 6 }}>
+              <div className="settings-label" style={{ marginBottom: 0 }}>Model</div>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                disabled={fetchingModels}
+                onClick={handleRefreshLiveModels}
+                title="Fetch latest available models from provider /models endpoint"
+              >
+                <RotateCw size={13} className={fetchingModels ? 'spin' : ''} />{' '}
+                {fetchingModels ? 'Refreshing…' : 'Refresh live models'}
+              </button>
+            </div>
+            {availableModels.length > 0 && (
+              <div className="model-chips">
+                {availableModels.map(m => (
+                  <button
+                    key={m}
+                    type="button"
+                    className={`model-chip${model === m ? ' active' : ''}`}
+                    onClick={() => handleModelChange(m)}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
             )}
 
             <button
@@ -943,17 +982,29 @@ export default function SettingsScreen({ onBack, onDataImported }) {
           • Press <strong>Ctrl+S</strong> to save immediately or <strong>Ctrl+Shift+S</strong> to save & explain.
         </div>
         <div className="settings-tip" style={{ marginTop: 10, opacity: 0.7 }}>
-          Notes by Bai v1.5.1
+          Notes by Bai v1.5.2
         </div>
       </div>
 
       {pinModal && (
         <PinLockSheet
-          mode={pinModal}
+          mode={pinModal === 'verify-ai-unlock' ? 'verify' : pinModal}
+          title={
+            pinModal === 'verify-ai-unlock'
+              ? 'Confirm PIN to Unlock AI Settings'
+              : undefined
+          }
           onSuccess={() => {
+            const action = pinModal;
             setPinModal(null);
             setVaultPinExists(hasVaultPin());
-            toast('Private Vault PIN saved!', { type: 'success' });
+            if (action === 'verify-ai-unlock') {
+              setAiProviderLocked(false);
+              setAiLocked(false);
+              toast('AI provider settings unlocked', { type: 'info' });
+            } else {
+              toast('Hidden Vault PIN saved!', { type: 'success' });
+            }
           }}
           onClose={() => setPinModal(null)}
         />

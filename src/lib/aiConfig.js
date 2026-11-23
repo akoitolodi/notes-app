@@ -14,6 +14,7 @@ export const FALLBACK_KEY = 'aicn:autoFallback'; // boolean string ('true' defau
 export const AI_LOCK_KEY = 'aicn:aiProviderLocked'; // passwordless Hold-to-Unlock safety lock
 export const DEV_TOOLKIT_KEY = 'aicn:addonDevToolkit'; // optional Dev & IT Toolkit add-on ('true' default)
 export const GRAMMAR_CONFIG_KEY = 'aicn:grammarConfig'; // JSON { provider, ltUrl, ltUsername, ltApiKey, grammarlyClientId, grammarlyClientSecret, grammarlyToken, saplingKey }
+export const FETCHED_MODELS_KEY = 'aicn:fetchedModels'; // JSON { [providerId]: string[] }
 
 export const EXPLAIN_STYLES = [
   ['simple', 'Simple'],
@@ -37,8 +38,9 @@ export const PROVIDERS = {
       'llama-3.3-70b-versatile',
       'llama-3.1-8b-instant',
       'qwen/qwen3-32b',
-      'openai/gpt-oss-120b',
-      'openai/gpt-oss-20b',
+      'deepseek-r1-distill-llama-70b',
+      'meta-llama/llama-4-scout-17b-16e-instruct',
+      'meta-llama/llama-4-maverick-17b-128e-instruct',
     ],
     keyUrl: 'https://console.groq.com/keys',
   },
@@ -49,7 +51,12 @@ export const PROVIDERS = {
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
     defaultModel: 'gemini-2.5-flash',
     reasonModel: 'gemini-2.5-pro',
-    models: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite'],
+    models: [
+      'gemini-2.5-flash',
+      'gemini-2.5-pro',
+      'gemini-2.5-flash-lite',
+      'gemini-2.0-flash',
+    ],
     keyUrl: 'https://aistudio.google.com/apikey',
   },
   openrouter: {
@@ -61,11 +68,12 @@ export const PROVIDERS = {
     reasonModel: 'deepseek/deepseek-r1:free',
     models: [
       'openrouter/free',
-      'google/gemma-4-31b-it:free',
-      'nvidia/nemotron-3-ultra-550b-a55b:free',
-      'inclusionai/ling-3.2-flash:free',
-      'baidu/ernie-5.5-flash-preview:free',
       'deepseek/deepseek-r1:free',
+      'meta-llama/llama-3.3-70b-instruct:free',
+      'qwen/qwen3-235b-a22b:free',
+      'google/gemma-3-27b-it:free',
+      'nvidia/nemotron-3-ultra-550b-a55b:free',
+      'mistralai/mistral-small-3.2-24b-instruct:free',
     ],
     keyUrl: 'https://openrouter.ai/keys',
   },
@@ -76,7 +84,7 @@ export const PROVIDERS = {
     baseUrl: 'https://api.openai.com/v1',
     defaultModel: 'gpt-4.1-mini',
     reasonModel: 'o4-mini',
-    models: ['gpt-4.1-mini', 'gpt-4o-mini', 'gpt-4.1', 'o4-mini'],
+    models: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4.1-nano', 'o4-mini', 'o3', 'gpt-4o-mini'],
     keyUrl: 'https://platform.openai.com/api-keys',
   },
   cerebras: {
@@ -86,7 +94,13 @@ export const PROVIDERS = {
     baseUrl: 'https://api.cerebras.ai/v1',
     defaultModel: 'llama-3.3-70b',
     reasonModel: 'qwen-3-32b',
-    models: ['llama-3.3-70b', 'qwen-3-32b', 'llama3.1-8b'],
+    models: [
+      'llama-3.3-70b',
+      'qwen-3-32b',
+      'qwen-3-235b-a22b',
+      'llama-4-scout-17b-16e-instruct',
+      'llama3.1-8b',
+    ],
     keyUrl: 'https://cloud.cerebras.ai',
   },
   mistral: {
@@ -96,7 +110,14 @@ export const PROVIDERS = {
     baseUrl: 'https://api.mistral.ai/v1',
     defaultModel: 'mistral-small-latest',
     reasonModel: 'magistral-medium-latest',
-    models: ['mistral-small-latest', 'mistral-large-latest', 'magistral-medium-latest'],
+    models: [
+      'mistral-small-latest',
+      'mistral-medium-latest',
+      'mistral-large-latest',
+      'magistral-medium-latest',
+      'magistral-small-latest',
+      'codestral-latest',
+    ],
     keyUrl: 'https://console.mistral.ai/api-keys',
   },
   nvidia: {
@@ -111,10 +132,10 @@ export const PROVIDERS = {
       'nvidia/nemotron-3-ultra-550b-a55b',
       'nvidia/nemotron-3.5-lightning-30b-a3b',
       'nvidia/nemotron-3.5-bolt-e4b',
-      'google/gemma-4-31b-it',
-      'moonshotai/kimi-k3.1-pro',
-      'mistralai/mistral-large-4-1t-a52b',
-      'minimaxai/minimax-m3.1-flash',
+      'meta/llama-3.3-70b-instruct',
+      'deepseek-ai/deepseek-r1',
+      'qwen/qwen3-235b-a22b',
+      'google/gemma-3-27b-it',
     ],
     keyUrl: 'https://build.nvidia.com',
   },
@@ -127,11 +148,12 @@ export const PROVIDERS = {
     reasonModel: 'deepseek/deepseek-r1:free',
     models: [
       'nvidia/nemotron-3.5-super-vl:free',
+      'deepseek/deepseek-r1:free',
       'inclusionai/ling-3.2-flash:free',
-      'baidu/ernie-5.5-flash-preview:free',
+      'google/gemini-2.5-flash',
+      'google/gemini-2.5-pro',
       'anthropic/claude-sonnet-4.6',
       'openai/gpt-5.4',
-      'google/gemini-3-pro-preview',
     ],
     keyUrl: 'https://kilo.ai',
   },
@@ -387,4 +409,84 @@ export function setGrammarConfig(patch) {
     // non-fatal
   }
   return next;
+}
+
+function getFetchedModelsMap() {
+  try {
+    return JSON.parse(localStorage.getItem(FETCHED_MODELS_KEY) || '{}') || {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Returns the list of models for a provider, combining any live-fetched models
+ * from the provider's /models endpoint with the curated preset defaults.
+ */
+export function getModelsForProvider(providerId) {
+  const preset = PROVIDERS[providerId] || PROVIDERS.groq;
+  const fetched = getFetchedModelsMap()[providerId];
+  const base = Array.isArray(preset.models) ? preset.models : [];
+  if (!Array.isArray(fetched) || fetched.length === 0) return base;
+  return [...new Set([...fetched, ...base])];
+}
+
+const NON_CHAT_MODEL_RE =
+  /(whisper|tts|embed|moderation|dall-e|babbage|davinci|rerank|guard|audio|transcribe|realtime|imagen|veo|aqa)/i;
+
+/**
+ * Queries GET ${baseUrl}/models to discover live available models for the provider,
+ * caches them in localStorage, and returns the cleaned list of chat model IDs.
+ */
+export async function fetchLiveModelsForProvider(providerId, { baseUrl = '', key = '' } = {}) {
+  const preset = PROVIDERS[providerId] || PROVIDERS.groq;
+  const cleanUrl = (baseUrl || preset.baseUrl || '').trim().replace(/\/+$/, '');
+  if (!cleanUrl) throw new Error('Enter a Base URL first');
+
+  const headers = { Accept: 'application/json' };
+  if (key && key.trim()) {
+    headers.Authorization = `Bearer ${key.trim()}`;
+  }
+
+  const res = await fetch(`${cleanUrl}/models`, { method: 'GET', headers });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status}: ${errText.slice(0, 80) || 'Could not fetch models'}`);
+  }
+  const data = await res.json();
+  const rawList = Array.isArray(data?.data)
+    ? data.data
+    : Array.isArray(data?.models)
+      ? data.models
+      : Array.isArray(data)
+        ? data
+        : [];
+
+  let ids = rawList
+    .map(item => String(item?.id || item?.name || '').trim().replace(/^models\//, ''))
+    .filter(id => id && !NON_CHAT_MODEL_RE.test(id));
+
+  if (providerId === 'openrouter') {
+    const freeIds = ids.filter(id => id.endsWith(':free') || id === 'openrouter/free');
+    const otherIds = ids.filter(id => !id.endsWith(':free') && id !== 'openrouter/free');
+    ids = [...freeIds.slice(0, 20), ...otherIds.slice(0, 8)];
+  } else {
+    ids = ids.slice(0, 24);
+  }
+
+  if (ids.length === 0) {
+    throw new Error('No chat models returned by endpoint');
+  }
+
+  const presetModels = Array.isArray(preset.models) ? preset.models : [];
+  const merged = [...new Set([...presetModels.filter(m => ids.includes(m)), ...ids])];
+
+  try {
+    const map = getFetchedModelsMap();
+    map[providerId] = merged;
+    localStorage.setItem(FETCHED_MODELS_KEY, JSON.stringify(map));
+  } catch {
+    // non-fatal
+  }
+  return merged;
 }

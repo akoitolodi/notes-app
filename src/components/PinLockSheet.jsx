@@ -13,13 +13,21 @@ import {
 } from '../lib/vault';
 
 export default function PinLockSheet({
-  mode = 'unlock', // 'unlock' | 'setup' | 'change'
+  mode = 'unlock', // 'unlock' | 'verify' | 'setup' | 'change'
   title = '',
   subtitle = '',
   onSuccess,
   onClose,
 }) {
-  const [step, setStep] = useState(() => (mode === 'change' ? 'verify' : mode === 'setup' ? 'create' : 'unlock'));
+  const [step, setStep] = useState(() =>
+    mode === 'change'
+      ? 'verify'
+      : mode === 'verify'
+        ? 'verify-action'
+        : mode === 'setup'
+          ? 'create'
+          : 'unlock'
+  );
   const [pin, setPin] = useState('');
   const [firstPin, setFirstPin] = useState('');
   const [hint, setHint] = useState('');
@@ -38,7 +46,7 @@ export default function PinLockSheet({
     setBusy(true);
     setError('');
     try {
-      if (step === 'unlock') {
+      if (step === 'unlock' || step === 'verify-action') {
         const ok = await verifyVaultPin(clean);
         if (!ok) {
           setError('Incorrect PIN. Try again.');
@@ -104,22 +112,26 @@ export default function PinLockSheet({
   const heading =
     title ||
     (step === 'unlock'
-      ? 'Unlock Private Vault'
-      : step === 'verify'
-        ? 'Enter Current PIN'
-        : step === 'create'
-          ? 'Create Diary PIN'
-          : 'Confirm Diary PIN');
+      ? 'Unlock Hidden Vault'
+      : step === 'verify-action'
+        ? 'Confirm PIN to Continue'
+        : step === 'verify'
+          ? 'Enter Current PIN'
+          : step === 'create'
+            ? 'Create Vault PIN'
+            : 'Confirm Vault PIN');
 
   const desc =
     subtitle ||
     (step === 'unlock'
-      ? 'Enter your 4–6 digit PIN to view locked folders.'
-      : step === 'verify'
-        ? 'Confirm your existing PIN before changing it.'
-        : step === 'create'
-          ? 'Choose a 4–6 digit PIN to hide private folders from All Notes & Search.'
-          : 'Re-enter your PIN to confirm.');
+      ? 'Enter your 4–6 digit PIN to reveal your Hidden Vault folders.'
+      : step === 'verify-action'
+        ? 'Enter your 4–6 digit PIN to authorize this security change.'
+        : step === 'verify'
+          ? 'Confirm your existing PIN before changing it.'
+          : step === 'create'
+            ? 'Choose a 4–6 digit PIN to protect your Hidden Vault & lock settings.'
+            : 'Re-enter your PIN to confirm.');
 
   const modal = (
     <div className="export-overlay" onClick={onClose}>
@@ -168,7 +180,7 @@ export default function PinLockSheet({
           </div>
         )}
 
-        {(step === 'unlock' || step === 'verify') && savedHint && (
+        {(step === 'unlock' || step === 'verify' || step === 'verify-action') && savedHint && (
           <div style={{ textAlign: 'center', marginBottom: 10 }}>
             {showHint ? (
               <span className="tag-pill">Hint: {savedHint}</span>
@@ -234,7 +246,13 @@ export default function PinLockSheet({
             disabled={busy || pin.length < 4}
             onClick={() => submitPin(pin)}
           >
-            {step === 'create' ? 'Next' : step === 'confirm' ? 'Save PIN' : 'Unlock'}
+            {step === 'create'
+              ? 'Next'
+              : step === 'confirm'
+                ? 'Save PIN'
+                : step === 'verify-action'
+                  ? 'Confirm PIN'
+                  : 'Unlock'}
           </button>
         </div>
       </div>

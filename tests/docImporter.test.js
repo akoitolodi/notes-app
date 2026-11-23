@@ -101,13 +101,17 @@ describe('Document Importer (.pptx, .md, .txt)', () => {
 });
 
 describe('Note Templates', () => {
-  it('exposes categorized general (8) and optional tech (4) templates including Cornell & Formula Sheet', () => {
-    expect(NOTE_TEMPLATES.length).toBe(12);
-    expect(NOTE_TEMPLATES.filter(t => t.category !== 'tech').length).toBe(8);
+  it('exposes categorized general (9) and optional tech (4) templates including Cornell, Formula Sheet & Password Entry', () => {
+    expect(NOTE_TEMPLATES.length).toBe(13);
+    expect(NOTE_TEMPLATES.filter(t => t.category !== 'tech').length).toBe(9);
     expect(NOTE_TEMPLATES.filter(t => t.category === 'tech').length).toBe(4);
     const cornell = instantiateTemplate('cornell');
     expect(cornell.title).toContain('Cornell');
     expect(cornell.body).toContain('## Key Cues & Questions');
+
+    const pwd = instantiateTemplate('password_entry');
+    expect(pwd.title).toContain('Account / Key');
+    expect(pwd.body).toContain('## Account Details');
 
     const formula = instantiateTemplate('formula', { tagPrefix: '#physics' });
     expect(formula.body).toContain('$y = mx + b$');

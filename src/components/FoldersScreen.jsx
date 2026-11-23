@@ -25,6 +25,9 @@ import {
   Lock,
   Unlock,
   Wrench,
+  KeyRound,
+  Shield,
+  EyeOff,
 } from 'lucide-react';
 import {
   db,
@@ -79,6 +82,8 @@ export default function FoldersScreen({
   const { confirm, prompt, toast } = useDialog();
   const [summary, setSummary] = useState({
     folders: [],
+    vaultFolders: [],
+    hiddenVaultCount: 0,
     totalNotes: 0,
     pinnedCount: 0,
     trashCount: 0,
@@ -201,23 +206,41 @@ export default function FoldersScreen({
 
   const handleDelete = async folder => {
     setMenuFolder(null);
-    const ok = await confirm({
-      title: `Delete "${folder.name}"?`,
-      message:
+    if (folder.isSystemVault) {
+      toast('Passwords & Keys is a permanent Zero-AI vault and cannot be deleted');
+      return;
+    }
+
+    const executeDelete = async () => {
+      const ok = await confirm({
+        title: `Delete "${folder.name}"?`,
+        message:
+          folder.noteCount > 0
+            ? `Its ${folder.noteCount} note${folder.noteCount === 1 ? '' : 's'} will be moved to Recently Deleted for 30 days.`
+            : 'This empty folder will be removed.',
+        confirmLabel: 'Delete folder',
+        destructive: true,
+      });
+      if (!ok) return;
+      await deleteFolder(folder.id);
+      toast(
         folder.noteCount > 0
-          ? `Its ${folder.noteCount} note${folder.noteCount === 1 ? '' : 's'} will be moved to Recently Deleted for 30 days.`
-          : 'This empty folder will be removed.',
-      confirmLabel: 'Delete folder',
-      destructive: true,
-    });
-    if (!ok) return;
-    await deleteFolder(folder.id);
-    toast(
-      folder.noteCount > 0
-        ? `Folder deleted — notes moved to Trash`
-        : 'Folder deleted'
-    );
-    refresh();
+          ? `Folder deleted — notes moved to Trash`
+          : 'Folder deleted'
+      );
+      refresh();
+    };
+
+    if (folder.locked && hasVaultPin()) {
+      setPinRequest({
+        mode: 'verify',
+        title: `Confirm PIN to Delete "${folder.name}"`,
+        onDone: executeDelete,
+      });
+      return;
+    }
+
+    await executeDelete();
   };
 
   const handleQuickNewNote = async () => {
@@ -227,18 +250,57 @@ export default function FoldersScreen({
     onOpenNote(created, defaultFolder || { id: '__all__', name: 'All Notes' }, { startInEdit: true });
   };
 
+  const handleToggleHiddenVault = () => {
+    if (vaultUnlocked) {
+      lockVault();
+      toast('Hidden Vault locked & concealed');
+      return;
+    }
+    setPinRequest({
+      mode: hasVaultPin() ? 'unlock' : 'setup',
+      title: hasVaultPin() ? 'Unlock Hidden Vault' : 'Create Hidden Vault PIN',
+      onDone: () => {
+        refresh();
+        toast('Hidden Vault revealed');
+      },
+    });
+  };
+
   const handlePickTemplate = async templateId => {
     setTemplatesOpen(false);
+    const createFromTpl = async targetFolder => {
+      const { title, body } = instantiateTemplate(templateId);
+      const created = await createNote(
+        targetFolder?.id,
+        title,
+        body,
+        targetFolder?.name || 'General'
+      );
+      onOpenNote(created, targetFolder || { id: '__all__', name: 'All Notes' }, { startInEdit: true });
+    };
+
+    if (templateId === 'password_entry') {
+      const openInSystemVault = async () => {
+        const fresh = await getHomeSummary();
+        setSummary(fresh);
+        const sysVault = (fresh.vaultFolders || []).find(f => f.isSystemVault);
+        await createFromTpl(sysVault || fresh.folders[0]);
+      };
+      if (!isVaultUnlocked()) {
+        setPinRequest({
+          mode: hasVaultPin() ? 'unlock' : 'setup',
+          title: hasVaultPin() ? 'Unlock Passwords & Keys' : 'Set Vault PIN for Passwords & Keys',
+          onDone: openInSystemVault,
+        });
+        return;
+      }
+      await openInSystemVault();
+      return;
+    }
+
     const defaultFolder =
       summary.folders.find(f => f.name === 'General') || summary.folders[0];
-    const { title, body } = instantiateTemplate(templateId);
-    const created = await createNote(
-      defaultFolder?.id,
-      title,
-      body,
-      defaultFolder?.name || 'General'
-    );
-    onOpenNote(created, defaultFolder || { id: '__all__', name: 'All Notes' }, { startInEdit: true });
+    await createFromTpl(defaultFolder);
   };
 
   const handleFolderClick = folder => {
@@ -258,6 +320,7 @@ export default function FoldersScreen({
 
   const handleSetFolderMode = async (folder, nextMode) => {
     setMenuFolder(null);
+    if (folder.isSystemVault) return;
     await updateFolder(folder.id, { mode: nextMode });
     toast(`"${folder.name}" set to ${getModeMeta(nextMode).label} mode`);
     refresh();
@@ -265,16 +328,20 @@ export default function FoldersScreen({
 
   const handleToggleFolderLock = async folder => {
     setMenuFolder(null);
+    if (folder.isSystemVault) {
+      toast('Passwords & Keys is permanently protected in your Hidden Vault');
+      return;
+    }
     if (folder.locked) {
       const doUnlock = async () => {
         await updateFolder(folder.id, { locked: false });
-        toast(`Removed PIN lock from "${folder.name}"`);
+        toast(`Removed PIN lock — "${folder.name}" moved back to Subjects`);
         refresh();
       };
-      if (!isVaultUnlocked() && hasVaultPin()) {
+      if (hasVaultPin()) {
         setPinRequest({
-          mode: 'unlock',
-          title: `Unlock "${folder.name}"`,
+          mode: 'verify',
+          title: `Confirm PIN to Remove Lock on "${folder.name}"`,
           onDone: doUnlock,
         });
       } else {
@@ -285,14 +352,18 @@ export default function FoldersScreen({
 
     const doLock = async () => {
       await updateFolder(folder.id, { locked: true });
-      lockVault();
-      toast(`"${folder.name}" locked & hidden from All Notes & Search`, { type: 'success' });
+      toast(
+        isVaultUnlocked()
+          ? `"${folder.name}" moved to Hidden Vault`
+          : `"${folder.name}" locked & moved to Hidden Vault (tap Lock icon in top bar to open)`,
+        { type: 'success' }
+      );
       refresh();
     };
     if (!hasVaultPin()) {
       setPinRequest({
         mode: 'setup',
-        title: `Lock "${folder.name}"`,
+        title: `Create PIN to Lock "${folder.name}"`,
         onDone: doLock,
       });
     } else {
@@ -300,27 +371,31 @@ export default function FoldersScreen({
     }
   };
 
-  const { folders, totalNotes, pinnedCount, trashCount, dueCardsCount = 0, totalCardsCount = 0, hasLockedFolders = false, tags } = summary;
+  const {
+    folders,
+    vaultFolders = [],
+    totalNotes,
+    pinnedCount,
+    trashCount,
+    dueCardsCount = 0,
+    totalCardsCount = 0,
+    tags,
+  } = summary;
 
   return (
     <div className="screen list-pad-bottom">
       <header className="navbar">
         <span className="navbar-title" style={{ opacity: 0 }}>Folders</span>
         <div className="flex items-center gap-6">
-          {hasLockedFolders && vaultUnlocked && (
-            <button
-              type="button"
-              className="navbar-btn"
-              aria-label="Lock private vault"
-              title="Lock private vault now"
-              onClick={() => {
-                lockVault();
-                toast('Private vault locked');
-              }}
-            >
-              <Lock size={18} />
-            </button>
-          )}
+          <button
+            type="button"
+            className={`navbar-btn${vaultUnlocked ? ' navbar-btn-active' : ''}`}
+            aria-label={vaultUnlocked ? 'Hide & lock Hidden Vault' : 'Unlock Hidden Vault'}
+            title={vaultUnlocked ? 'Hide & lock Hidden Vault' : 'Unlock Hidden Vault (Passwords & Keys)'}
+            onClick={handleToggleHiddenVault}
+          >
+            {vaultUnlocked ? <Unlock size={18} /> : <Lock size={18} />}
+          </button>
           <button
             className={`navbar-btn${searching ? ' navbar-btn-active' : ''}`}
             aria-label="Search all notes"
@@ -337,7 +412,16 @@ export default function FoldersScreen({
         </div>
       </header>
 
-      <div className="large-title">Folders</div>
+      <div
+        className="large-title"
+        onContextMenu={e => {
+          e.preventDefault();
+          handleToggleHiddenVault();
+        }}
+        title="Tap the lock icon in the top bar (or right-click/long-press here) to open Hidden Vault"
+      >
+        Folders
+      </div>
 
       {searching && (
         <div className="search-bar">
@@ -524,6 +608,106 @@ export default function FoldersScreen({
         </div>
       )}
 
+      {/* Hidden Vault Section — completely invisible when locked, revealed only when unlocked */}
+      {vaultUnlocked && vaultFolders.length > 0 && (
+        <>
+          <div
+            className="section-heading"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingRight: 16,
+            }}
+          >
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+              <Shield size={13} /> Hidden Vault
+            </span>
+            <button
+              type="button"
+              className="row-action-chip"
+              onClick={() => {
+                lockVault();
+                toast('Hidden Vault locked & concealed');
+              }}
+              title="Lock and hide vault folders now"
+            >
+              <EyeOff size={12} /> Hide &amp; Lock
+            </button>
+          </div>
+          <div className="list-group">
+            {vaultFolders.map(folder => (
+              <div
+                key={folder.id}
+                className="list-item"
+                role="button"
+                tabIndex={0}
+                onClick={() => {
+                  if (longPressedRef.current) {
+                    longPressedRef.current = false;
+                    return;
+                  }
+                  handleFolderClick(folder);
+                }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleFolderClick(folder);
+                  }
+                }}
+                onTouchStart={() => startLongPress(folder)}
+                onTouchEnd={cancelLongPress}
+                onTouchMove={cancelLongPress}
+                onContextMenu={e => {
+                  e.preventDefault();
+                  setMenuFolder(folder);
+                }}
+              >
+                <span className="list-item-icon">
+                  {folder.isSystemVault ? <KeyRound size={17} /> : <Lock size={16} />}
+                </span>
+                <div className="list-item-body">
+                  <div className="list-item-title">
+                    <span>{folder.name}</span>
+                    {folder.isSystemVault ? (
+                      <span className="mode-badge mode-vault">Zero-AI</span>
+                    ) : (
+                      <>
+                        {folder.mode && folder.mode !== 'study' && (
+                          <span className={`mode-badge mode-${folder.mode}`}>
+                            {getModeMeta(folder.mode).badge}
+                          </span>
+                        )}
+                        <span className="mode-badge mode-vault">Hidden</span>
+                      </>
+                    )}
+                  </div>
+                  <div className="list-item-subtitle">
+                    {folder.isSystemVault
+                      ? `${folder.noteCount} record${folder.noteCount === 1 ? '' : 's'} · 100% local · Zero AI access`
+                      : `${folder.noteCount} note${folder.noteCount === 1 ? '' : 's'} · Concealed when locked`}
+                  </div>
+                </div>
+                <div className="list-item-meta">
+                  <button
+                    type="button"
+                    className="row-icon-btn"
+                    aria-label={`More actions for ${folder.name}`}
+                    onClick={e => {
+                      e.stopPropagation();
+                      setMenuFolder(folder);
+                    }}
+                  >
+                    <MoreHorizontal size={17} />
+                  </button>
+                  <ChevronRight size={17} className="list-item-chevron" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
       {/* Subject Folders */}
       <div className="section-heading">Subjects</div>
       <div className="list-group">
@@ -655,56 +839,92 @@ export default function FoldersScreen({
           <div className="export-sheet" onClick={e => e.stopPropagation()}>
             <div className="export-title">{menuFolder.name}</div>
 
-            <div className="settings-label" style={{ marginBottom: 6 }}>Folder Mode</div>
-            <div className="mode-picker-row" style={{ marginBottom: 12 }}>
-              {NOTE_MODE_LIST.map(m => (
-                <button
-                  key={m.id}
-                  type="button"
-                  className={`mode-pick-chip${(menuFolder.mode || 'study') === m.id ? ' active' : ''}`}
-                  onClick={() => handleSetFolderMode(menuFolder, m.id)}
+            {menuFolder.isSystemVault ? (
+              <>
+                <div
+                  style={{
+                    fontSize: '0.82rem',
+                    color: 'var(--text-secondary)',
+                    background: 'var(--bg-hover)',
+                    borderRadius: 10,
+                    padding: '10px 12px',
+                    marginBottom: 12,
+                    lineHeight: 1.45,
+                  }}
                 >
-                  {m.label}
+                  <strong>🔒 Permanent Zero-AI Vault Folder</strong>
+                  <div style={{ marginTop: 4 }}>
+                    Records inside <strong>Passwords &amp; Keys</strong> are stored 100% locally on your device. No AI model, cloud API, search query, or background study feature can ever read or touch this folder.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="export-btn"
+                  onClick={() => {
+                    setMenuFolder(null);
+                    lockVault();
+                    toast('Hidden Vault locked & concealed');
+                  }}
+                >
+                  <EyeOff size={18} /> Hide &amp; Lock Vault Now
                 </button>
-              ))}
-            </div>
+              </>
+            ) : (
+              <>
+                <div className="settings-label" style={{ marginBottom: 6 }}>Folder Mode</div>
+                <div className="mode-picker-row" style={{ marginBottom: 12 }}>
+                  {NOTE_MODE_LIST.map(m => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      className={`mode-pick-chip${(menuFolder.mode || 'study') === m.id ? ' active' : ''}`}
+                      onClick={() => handleSetFolderMode(menuFolder, m.id)}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
 
-            <button
-              type="button"
-              className="export-btn"
-              onClick={() => handleToggleFolderLock(menuFolder)}
-            >
-              {menuFolder.locked ? <Unlock size={18} /> : <Lock size={18} />}
-              {menuFolder.locked ? 'Remove PIN lock' : 'Lock folder with PIN (Private)'}
-            </button>
+                <button
+                  type="button"
+                  className="export-btn"
+                  onClick={() => handleToggleFolderLock(menuFolder)}
+                >
+                  {menuFolder.locked ? <Unlock size={18} /> : <Lock size={18} />}
+                  {menuFolder.locked
+                    ? 'Remove PIN lock (requires PIN)'
+                    : 'Move to Hidden Vault (PIN Lock)'}
+                </button>
 
-            {menuFolder.noteCount > 0 && menuFolder.mode !== 'journal' && (
-              <button
-                type="button"
-                className="export-btn"
-                onClick={() => {
-                  const f = menuFolder;
-                  setMenuFolder(null);
-                  onOpenExam?.(f);
-                }}
-              >
-                <GraduationCap size={18} /> Exam Summary &amp; Paper
-              </button>
+                {menuFolder.noteCount > 0 && menuFolder.mode !== 'journal' && (
+                  <button
+                    type="button"
+                    className="export-btn"
+                    onClick={() => {
+                      const f = menuFolder;
+                      setMenuFolder(null);
+                      onOpenExam?.(f);
+                    }}
+                  >
+                    <GraduationCap size={18} /> Exam Summary &amp; Paper
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="export-btn"
+                  onClick={() => handleRename(menuFolder)}
+                >
+                  <Folder size={18} /> Rename folder
+                </button>
+                <button
+                  type="button"
+                  className="export-btn danger"
+                  onClick={() => handleDelete(menuFolder)}
+                >
+                  <Trash2 size={18} /> Delete folder
+                </button>
+              </>
             )}
-            <button
-              type="button"
-              className="export-btn"
-              onClick={() => handleRename(menuFolder)}
-            >
-              <Folder size={18} /> Rename folder
-            </button>
-            <button
-              type="button"
-              className="export-btn danger"
-              onClick={() => handleDelete(menuFolder)}
-            >
-              <Trash2 size={18} /> Delete folder
-            </button>
             <button
               type="button"
               className="export-btn cancel"

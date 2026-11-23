@@ -3063,6 +3063,8 @@ a:hover {
 .mode-badge {
   display: inline-flex;
   align-items: center;
+  flex-shrink: 0;
+  white-space: nowrap;
   padding: 2px 7px;
   border-radius: 999px;
   font-size: 10.5px;
@@ -3087,6 +3089,13 @@ a:hover {
 .mode-code {
   background: var(--ok-bg);
   color: var(--ok);
+}
+.mode-vault {
+  background: rgba(255, 149, 0, 0.16);
+  color: #b25e00;
+}
+[data-theme='dark'] .mode-vault {
+  color: #ffb84d;
 }
 .mode-picker-row {
   display: flex;

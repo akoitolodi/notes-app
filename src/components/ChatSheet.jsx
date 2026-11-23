@@ -30,7 +30,7 @@ import {
 import { chatWithNote } from '../lib/aiFeatures';
 import { getModeMeta } from '../lib/noteModes';
 import { resolveLinkedNotes } from '../lib/wikiLinks';
-import { db, getHiddenLockedFolderIds } from '../store/db';
+import { db, getHiddenLockedFolderIds, getZeroAiFolderIds } from '../store/db';
 import MarkdownContent from './ui/MarkdownContent';
 import { useDialog } from './ui/DialogProvider';
 
@@ -124,22 +124,21 @@ export default function ChatSheet({
   const abortRef = useRef(null);
 
   // Load sibling folder notes + explicitly [[Wiki-Linked]] notes across unlocked folders for Cross-Note RAG
+  // Strictly excludes Zero-AI Vault folders (Passwords & Keys) even when the vault is unlocked!
   useEffect(() => {
     let live = true;
-    Promise.all([db.notes.toArray(), getHiddenLockedFolderIds()])
-      .then(([allNotes, hiddenIds]) => {
+    Promise.all([db.notes.toArray(), getHiddenLockedFolderIds(), getZeroAiFolderIds()])
+      .then(([allNotes, hiddenIds, zeroAiIds]) => {
         if (!live) return;
+        const excludedFolderIds = new Set([...hiddenIds, ...zeroAiIds]);
+        const safeNotes = allNotes.filter(
+          n => n && !n.trashed && n.mode !== 'vault' && !excludedFolderIds.has(n.folderId)
+        );
         const siblings =
-          typeof note?.folderId === 'number'
-            ? allNotes.filter(
-                n =>
-                  n.folderId === note.folderId &&
-                  n.id !== note.id &&
-                  !n.trashed &&
-                  !hiddenIds.has(n.folderId)
-              )
+          typeof note?.folderId === 'number' && !excludedFolderIds.has(note.folderId)
+            ? safeNotes.filter(n => n.folderId === note.folderId && n.id !== note.id)
             : [];
-        const linked = resolveLinkedNotes(note, allNotes, hiddenIds);
+        const linked = resolveLinkedNotes(note, safeNotes, excludedFolderIds);
         const byId = new Map();
         [...linked, ...siblings].forEach(n => byId.set(n.id, n));
         setSiblingNotes([...byId.values()]);

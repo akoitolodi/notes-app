@@ -1,10 +1,10 @@
-## What's New in Notes by Bai v1.5.1
+## What's New in Notes by Bai v1.5.2
 
-### Clean Visual Editor & Minimal Placeholders
-- **Zero Raw Markdown Symbols While Writing & Using Templates**: Edit Mode now defaults to **Clean** mode — headings render bold & large (no `##`), bold/italic render directly (no `**` asterisks), checklists are real tappable checkboxes (no `- [ ]`), tables and code blocks render cleanly, and LaTeX math formulas render via KaTeX (tap any equation to edit!).
-- **1-Tap `Clean | MD` Switch**: Power users can still toggle to raw Markdown (`MD`) anytime from the top editor bar while keeping 100% compatibility with Read Mode, AI Explain, `[[Wiki-Links]]`, Bond-Paper Exams, and PDF Export.
-- **Calm, Minimal Placeholders**: Replaced the long syntax hint paragraph with a crisp **`Start writing…`** placeholder and concise **`Subject`** field.
+### True Hidden Vault, Zero-AI "Passwords & Keys" Folder, Hardened Lock Security & Live AI Models
+- **True Hidden Vault**: Locked folders are now **completely invisible** on the main Folders screen while locked. Tap the **Lock icon** in the top navigation bar (or long-press the `Folders` header) and enter your 4–6 digit PIN to reveal the dedicated **Hidden Vault** section, and tap **`Hide & Lock`** anytime to conceal it again.
+- **Fixed Zero-AI "Passwords & Keys" Folder (`Zero-AI` Mode)**: Automatically includes a permanent, undeletable **Passwords & Keys** folder inside your Hidden Vault where **no AI can ever touch, read, or process your records** — all AI actions (`Explain`, `Chat`, `Study`, `Summarize`, `Polish`, `OCR`, `Code Trace`, and `Cross-Note RAG`) are strictly disabled, plus a new **Password & Key Record** template.
+- **Hardened PIN Lock Security**: Once a Vault PIN is created, no lock can be turned off without verifying the PIN first — removing a folder's PIN lock, deleting a locked folder, changing the PIN, or unlocking a locked AI Provider configuration in Settings all require entering your current PIN.
+- **Updated AI Models & Live `/models` Refresh**: Updated provider model presets across Groq, Gemini, OpenRouter, NVIDIA, Kilo, Cerebras, Mistral, and OpenAI, and added a 1-tap **`🔄 Refresh live models`** button in Settings → AI Backend to fetch live available models directly from your provider's `/models` endpoint.
+- **Bug Fix**: Fixed `ReferenceError: RotateCcw is not defined` when opening the Quiz tab in Study Mode.
 
-> Includes everything from `v1.5.0` (Multi-Life Modes, PIN Private Vault, Passwordless AI Provider Lock, Answerable & Printable Bond-Paper Exam Builder, Code Cards, Tables, `[[Wiki-Links]]`, Pluggable Grammar & AI Polish, Optional Offline Dev & IT Toolkit, and faster AI latency).
->
 > **Update Note**: Install `Notes-by-Bai.apk` directly over your current version (do not uninstall) — all notes, drawings, photos, and API keys stay 100% intact.

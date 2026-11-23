@@ -16,6 +16,7 @@ import {
   Code2,
   Database,
   Layers,
+  KeyRound,
   X,
 } from 'lucide-react';
 import { NOTE_TEMPLATES } from '../lib/templates';
@@ -30,6 +31,7 @@ const ICONS = {
   zap: Zap,
   heart: Heart,
   compass: Compass,
+  key: KeyRound,
   bug: Bug,
   code: Code2,
   database: Database,

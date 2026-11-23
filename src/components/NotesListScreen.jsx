@@ -466,6 +466,22 @@ export default function NotesListScreen({
       </header>
 
       <div className="large-title">{folder.name}</div>
+      {(folder.isSystemVault || folder.mode === 'vault') && (
+        <div
+          style={{
+            margin: '0 var(--gutter) 12px',
+            padding: '8px 12px',
+            borderRadius: 10,
+            background: 'var(--bg-hover)',
+            border: '1px solid var(--border)',
+            fontSize: '0.78rem',
+            color: 'var(--text-secondary)',
+            lineHeight: 1.4,
+          }}
+        >
+          <strong>🔒 Zero-AI Protected Vault</strong> · Records here stay 100% local on your device and are completely isolated from all AI models, chat, and cloud services.
+        </div>
+      )}
 
       {searching && (
         <div className="search-bar">
