@@ -8,6 +8,7 @@ import {
   computeAttendanceStatus,
   ATTENDANCE_PRESETS,
 } from '../src/lib/courseExtras.js';
+import { isSpeechSupported, speakSegment, stopSpeech } from '../src/lib/audioStudy.js';
 
 describe('Auto-Pinned Course Links & Public Google Docs/Slides Importer', () => {
   it('extracts deduplicated Google Chat, Google Docs, Google Slides & Zoom links from announcements', () => {
@@ -97,5 +98,42 @@ describe('Customizable PH College Attendance & FDA Absence Guard', () => {
     expect(noLatePenalty.latePenalty).toBe(0);
     expect(noLatePenalty.effectiveAbsences).toBe(3);
     expect(noLatePenalty.riskLevel).toBe('danger');
+  });
+});
+
+describe('Native Android TTS Bridge (Study Commute Audio on Android APK)', () => {
+  it('uses window.BaiNativeTts when Web Speech API is absent in Android WebView', () => {
+    const calls = [];
+    const origWindow = globalThis.window;
+    globalThis.window = {
+      BaiNativeTts: {
+        isAvailable: () => true,
+        speak: (txt, rate, pitch, id) => calls.push({ txt, rate, pitch, id }),
+        stop: () => calls.push({ stopped: true }),
+      },
+    };
+    try {
+      expect(isSpeechSupported()).toBe(true);
+      let doneFired = false;
+      speakSegment({
+        text: '**Hello** $x^2$',
+        rate: 1.25,
+        speaker: 'Tutor',
+        onEnd: () => {
+          doneFired = true;
+        },
+      });
+      const spoken = calls.find(c => c.txt);
+      expect(spoken.txt).toContain('Hello');
+      expect(spoken.txt).toContain('squared');
+      expect(spoken.rate).toBe(1.25);
+      expect(spoken.pitch).toBe(0.9);
+      globalThis.window.__baiTtsCallback(spoken.id, 'done');
+      expect(doneFired).toBe(true);
+      stopSpeech();
+      expect(calls.some(c => c.stopped)).toBe(true);
+    } finally {
+      globalThis.window = origWindow;
+    }
   });
 });

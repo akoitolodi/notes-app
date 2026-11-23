@@ -7,20 +7,28 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.OpenableColumns;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 import android.util.Base64;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
 import com.getcapacitor.BridgeActivity;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.util.Locale;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
 
     private static final int MAX_SHARED_BYTES = 12 * 1024 * 1024; // 12 MB safety cap
+    private TextToSpeech tts;
+    private volatile boolean ttsReady = false;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        initNativeTts();
         handleShareIntent(getIntent());
     }
 
@@ -29,6 +37,127 @@ public class MainActivity extends BridgeActivity {
         super.onNewIntent(intent);
         setIntent(intent);
         handleShareIntent(intent);
+    }
+
+    @Override
+    public void onDestroy() {
+        try {
+            if (tts != null) {
+                tts.stop();
+                tts.shutdown();
+                tts = null;
+            }
+        } catch (Exception ignored) {
+            // ignore shutdown error
+        }
+        super.onDestroy();
+    }
+
+    private void initNativeTts() {
+        try {
+            if (getBridge() != null && getBridge().getWebView() != null) {
+                getBridge().getWebView().addJavascriptInterface(new AndroidTtsBridge(), "BaiNativeTts");
+            }
+            tts = new TextToSpeech(getApplicationContext(), status -> {
+                if (status == TextToSpeech.SUCCESS && tts != null) {
+                    int langRes = tts.setLanguage(Locale.US);
+                    if (langRes == TextToSpeech.LANG_MISSING_DATA || langRes == TextToSpeech.LANG_NOT_SUPPORTED) {
+                        tts.setLanguage(Locale.getDefault());
+                    }
+                    tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                        @Override
+                        public void onStart(String utteranceId) {}
+
+                        @Override
+                        public void onDone(String utteranceId) {
+                            notifyTtsJs(utteranceId, "done");
+                        }
+
+                        @Override
+                        @Deprecated
+                        public void onError(String utteranceId) {
+                            notifyTtsJs(utteranceId, "error");
+                        }
+
+                        @Override
+                        public void onError(String utteranceId, int errorCode) {
+                            notifyTtsJs(utteranceId, "error");
+                        }
+                    });
+                    ttsReady = true;
+                }
+            });
+        } catch (Exception ignored) {
+            ttsReady = false;
+        }
+    }
+
+    private void notifyTtsJs(final String utteranceId, final String eventType) {
+        final String js =
+            "try { if (window.__baiTtsCallback) window.__baiTtsCallback("
+                + JSONObject.quote(utteranceId != null ? utteranceId : "")
+                + ", "
+                + JSONObject.quote(eventType)
+                + "); } catch(e) {}";
+        mainHandler.post(() -> {
+            try {
+                if (getBridge() != null && getBridge().getWebView() != null) {
+                    getBridge().getWebView().evaluateJavascript(js, null);
+                }
+            } catch (Exception ignored) {
+                // ignore
+            }
+        });
+    }
+
+    private final class AndroidTtsBridge {
+
+        @JavascriptInterface
+        public boolean isAvailable() {
+            return tts != null;
+        }
+
+        @JavascriptInterface
+        public void speak(final String text, final float rate, final float pitch, final String utteranceId) {
+            mainHandler.post(() -> {
+                if (tts == null || text == null || text.trim().isEmpty()) {
+                    notifyTtsJs(utteranceId, "error");
+                    return;
+                }
+                Runnable doSpeak = () -> {
+                    try {
+                        if (tts == null) return;
+                        tts.setSpeechRate(Math.max(0.5f, Math.min(2.0f, rate)));
+                        tts.setPitch(Math.max(0.6f, Math.min(1.6f, pitch)));
+                        Bundle params = new Bundle();
+                        params.putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId);
+                        int res = tts.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId);
+                        if (res == TextToSpeech.ERROR) {
+                            notifyTtsJs(utteranceId, "error");
+                        }
+                    } catch (Exception e) {
+                        notifyTtsJs(utteranceId, "error");
+                    }
+                };
+                if (ttsReady) {
+                    doSpeak.run();
+                } else {
+                    // Wait briefly if TTS engine is still binding on cold start
+                    mainHandler.postDelayed(doSpeak, 450);
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void stop() {
+            mainHandler.post(() -> {
+                try {
+                    if (tts != null) tts.stop();
+                } catch (Exception ignored) {
+                    // ignore
+                }
+            });
+        }
     }
 
     private void handleShareIntent(Intent intent) {
@@ -115,7 +244,7 @@ public class MainActivity extends BridgeActivity {
         final String escaped = JSONObject.quote(jsonPayload);
         final String js =
             "try { var p = JSON.parse(" + escaped + "); window.__BAI_SHARED_PAYLOAD__ = p; window.dispatchEvent(new CustomEvent('bai-share', { detail: p })); } catch(e) {}";
-        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+        mainHandler.postDelayed(() -> {
             try {
                 if (getBridge() != null && getBridge().getWebView() != null) {
                     WebView webView = getBridge().getWebView();

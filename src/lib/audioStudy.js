@@ -114,13 +114,55 @@ export async function generateStudyPodcastScript({ title = '', body = '', subjec
   return buildOfflineNarrationSegments({ title, body });
 }
 
+const nativePending = new Map();
+let nativeSeq = 0;
+
+function hasNativeAndroidTts() {
+  try {
+    return typeof window !== 'undefined' && Boolean(window.BaiNativeTts?.speak);
+  } catch {
+    return false;
+  }
+}
+
+function ensureNativeCallbackRegistered() {
+  if (typeof window === 'undefined') return;
+  if (!window.__baiTtsCallback) {
+    window.__baiTtsCallback = (utteranceId, eventType) => {
+      const handler = nativePending.get(utteranceId);
+      if (!handler) return;
+      nativePending.delete(utteranceId);
+      if (eventType === 'done') {
+        handler.onEnd?.();
+      } else {
+        handler.onError?.(new Error('Android Text-to-Speech could not speak this line. Check Android TTS settings.'));
+      }
+    };
+  }
+}
+
 export function isSpeechSupported() {
-  return typeof window !== 'undefined' && 'speechSynthesis' in window && typeof SpeechSynthesisUtterance !== 'undefined';
+  if (hasNativeAndroidTts()) return true;
+  return (
+    typeof window !== 'undefined' &&
+    'speechSynthesis' in window &&
+    typeof SpeechSynthesisUtterance !== 'undefined'
+  );
 }
 
 export function stopSpeech() {
+  nativePending.clear();
   try {
-    if (isSpeechSupported()) window.speechSynthesis.cancel();
+    if (hasNativeAndroidTts()) {
+      window.BaiNativeTts.stop();
+    }
+  } catch {
+    // ignore
+  }
+  try {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
   } catch {
     // ignore
   }
@@ -139,16 +181,33 @@ function pickVoiceForSpeaker(speaker) {
   }
 }
 
-/** Speak a single utterance with distinct Host vs Tutor voice/pitch. */
+/** Speak a single utterance using Native Android TextToSpeech on APK or Web Speech API on desktop/browser. */
 export function speakSegment({ text, rate = 1, speaker = 'Narrator', onEnd, onError }) {
   if (!isSpeechSupported()) {
     onError?.(new Error('Text-to-Speech is not available on this device browser.'));
     return null;
   }
   stopSpeech();
-  const utt = new SpeechSynthesisUtterance(stripForSpeech(text));
-  utt.rate = Math.max(0.5, Math.min(2.0, Number(rate) || 1));
-  utt.pitch = speaker === 'Tutor' ? 0.94 : speaker === 'Host' ? 1.08 : 1.0;
+  const cleanText = stripForSpeech(text);
+  const safeRate = Math.max(0.5, Math.min(2.0, Number(rate) || 1));
+  const pitch = speaker === 'Tutor' ? 0.9 : speaker === 'Host' ? 1.08 : 1.0;
+
+  if (hasNativeAndroidTts()) {
+    ensureNativeCallbackRegistered();
+    const id = `bai-tts-${++nativeSeq}-${Date.now()}`;
+    nativePending.set(id, { onEnd, onError });
+    try {
+      window.BaiNativeTts.speak(cleanText, safeRate, pitch, id);
+    } catch (err) {
+      nativePending.delete(id);
+      onError?.(err);
+    }
+    return { nativeId: id };
+  }
+
+  const utt = new SpeechSynthesisUtterance(cleanText);
+  utt.rate = safeRate;
+  utt.pitch = pitch;
   const voice = pickVoiceForSpeaker(speaker);
   if (voice) utt.voice = voice;
   utt.onend = () => onEnd?.();
