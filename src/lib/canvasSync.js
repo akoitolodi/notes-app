@@ -454,11 +454,14 @@ export async function syncCanvasFeeds({ icsUrl = '', rssUrls = '', host = '', to
   const existingAll = await db.plannerItems.toArray();
   const byUid = new Map(existingAll.filter(x => x.externalUid).map(x => [x.externalUid, x]));
 
+  const todayKey = localDateKey();
   const newlyAddedAnnouncements = [];
+  let archivedPast = 0;
 
   for (const item of fetchedItems) {
     const prev = byUid.get(item.externalUid);
     if (prev) {
+      // Never overwrite user's `done` / submitted check-off on re-sync!
       await db.plannerItems.update(prev.id, {
         title: item.title,
         course: item.course,
@@ -472,14 +475,22 @@ export async function syncCanvasFeeds({ icsUrl = '', rssUrls = '', host = '', to
       });
       updated += 1;
     } else {
+      // Canvas .ics feeds export old already-submitted/graded assignments from earlier in the term;
+      // auto-archive newly imported past-due items as done (user can still uncheck in Show Completed).
+      const isPastOnImport =
+        item.type !== 'announcement' &&
+        Boolean(item.dateKey) &&
+        item.dateKey < todayKey;
       await db.plannerItems.add({
         ...item,
-        done: false,
+        done: isPastOnImport,
+        autoArchivedPast: isPastOnImport,
         priority: item.type === 'exam' ? 'high' : 'normal',
         createdAt: Date.now(),
         updatedAt: Date.now(),
       });
       added += 1;
+      if (isPastOnImport) archivedPast += 1;
       if (item.type === 'announcement') newlyAddedAnnouncements.push(item);
     }
   }
@@ -490,7 +501,21 @@ export async function syncCanvasFeeds({ icsUrl = '', rssUrls = '', host = '', to
   if (newlyAddedAnnouncements.length > 0) {
     notifyNewCanvasAnnouncements(newlyAddedAnnouncements).catch(() => {});
   }
-  return { added, updated, total: fetchedItems.length, syncedAt: now };
+  return { added, updated, archivedPast, total: fetchedItems.length, syncedAt: now };
+}
+
+/** 1-tap cleanup: mark all already-past incomplete tasks as submitted/done & clear overdue alerts. */
+export async function markPastTasksDone() {
+  const todayKey = localDateKey();
+  const all = await db.plannerItems.toArray().catch(() => []);
+  const pastPending = all.filter(
+    it => !it.done && it.type !== 'announcement' && it.dateKey && it.dateKey < todayKey
+  );
+  for (const it of pastPending) {
+    await db.plannerItems.update(it.id, { done: true, updatedAt: Date.now() });
+  }
+  syncDeadlineNotifications().catch(() => {});
+  return pastPending.length;
 }
 
 let inFlightAutoSync = null;

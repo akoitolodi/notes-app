@@ -58,6 +58,7 @@ import {
   markAllAnnouncementsRead,
   snoozeInAppBanner,
 } from '../lib/notifications';
+import { markPastTasksDone } from '../lib/canvasSync';
 import TemplatePickerSheet from './TemplatePickerSheet';
 import ImportSheet from './ImportSheet';
 import PinLockSheet from './PinLockSheet';
@@ -557,6 +558,19 @@ export default function FoldersScreen({
                 <button type="button" className="row-action-chip active-chip" onClick={onOpenPlanner}>
                   View Tasks
                 </button>
+                {alertSummary.overdue.length > 0 && (
+                  <button
+                    type="button"
+                    className="row-action-chip"
+                    onClick={async () => {
+                      const n = await markPastTasksDone();
+                      refresh();
+                      toast(`Marked ${n} past/submitted item${n === 1 ? '' : 's'} as Done!`, { type: 'success' });
+                    }}
+                  >
+                    ✓ Mark Overdue Done
+                  </button>
+                )}
                 {alertSummary.unreadAnnouncements.length > 0 && (
                   <button
                     type="button"

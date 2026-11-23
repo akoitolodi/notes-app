@@ -39,6 +39,7 @@ import {
   saveCanvasSettings,
   syncCanvasFeeds,
   autoSyncCanvasIfStale,
+  markPastTasksDone,
   parsePastedAnnouncement,
   buildCanvasNoteContent,
 } from '../lib/canvasSync';
@@ -286,6 +287,7 @@ export default function StudentHubScreen({
     await db.plannerItems.update(item.id, { done: nextDone, updatedAt: Date.now() });
     if (nextDone) await logStudyActivity('notes', 1);
     syncDeadlineNotifications().catch(() => {});
+    onChanged?.();
     refreshData();
   };
 
@@ -293,6 +295,7 @@ export default function StudentHubScreen({
     await db.plannerItems.delete(id);
     toast('Removed item');
     syncDeadlineNotifications().catch(() => {});
+    onChanged?.();
     refreshData();
   };
 
@@ -966,20 +969,42 @@ export default function StudentHubScreen({
           </div>
 
           {/* Pending To-Do Checklist */}
-          <div className="section-heading" style={{ display: 'flex', justifyContent: 'space-between', paddingRight: 16 }}>
+          <div className="section-heading" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6, paddingRight: 16 }}>
             <span>To-Do &amp; Assignments ({pendingTasks.length})</span>
-            <button
-              type="button"
-              className="row-action-chip"
-              onClick={() => {
-                setNewType('todo');
-                setNewDate(todayKey);
-                setAddOpen(true);
-              }}
-            >
-              <Plus size={12} /> Add To-Do
-            </button>
+            <div className="flex gap-6">
+              {pendingTasks.some(t => t.dateKey && t.dateKey < todayKey) && (
+                <button
+                  type="button"
+                  className="row-action-chip"
+                  onClick={async () => {
+                    const count = await markPastTasksDone();
+                    onChanged?.();
+                    await refreshData();
+                    toast(`Marked ${count} past/submitted task${count === 1 ? '' : 's'} as Done!`, { type: 'success' });
+                  }}
+                >
+                  ✓ Clear Past ({pendingTasks.filter(t => t.dateKey && t.dateKey < todayKey).length})
+                </button>
+              )}
+              <button
+                type="button"
+                className="row-action-chip"
+                onClick={() => {
+                  setNewType('todo');
+                  setNewDate(todayKey);
+                  setAddOpen(true);
+                }}
+              >
+                <Plus size={12} /> Add To-Do
+              </button>
+            </div>
           </div>
+          {pendingTasks.some(t => t.source === 'canvas') && (
+            <div className="settings-help" style={{ padding: '0 var(--gutter) 6px', margin: 0 }}>
+              Tip: Canvas <code>.ics</code> feeds don&apos;t include submission/grade status — tap the checkbox on
+              anything you already submitted and we&apos;ll remember it across future syncs!
+            </div>
+          )}
           <div className="list-group">
             {pendingTasks.length === 0 ? (
               <div className="list-item list-item-static">

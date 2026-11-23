@@ -19,6 +19,7 @@ import {
   deleteCourseMaterial,
   discoverCoursesFromPlanner,
 } from '../src/store/db.js';
+import { markPastTasksDone } from '../src/lib/canvasSync.js';
 
 const memStore = new Map();
 globalThis.localStorage = {
@@ -232,5 +233,31 @@ describe('Persistent Due-Date Notifications & Slow-Internet Resilience', () => {
     });
     expect(attempts).toBe(3);
     expect(res.status).toBe(200);
+  });
+
+  it('marks already-past tasks as done via markPastTasksDone without touching future tasks', async () => {
+    await db.plannerItems.clear();
+    await db.plannerItems.add({
+      title: 'Already Graded Old Lab',
+      course: 'IPT 101A',
+      type: 'assignment',
+      source: 'canvas',
+      dateKey: '2025-01-15',
+      done: false,
+    });
+    await db.plannerItems.add({
+      title: 'Upcoming Future Quiz',
+      course: 'IPT 101A',
+      type: 'exam',
+      source: 'canvas',
+      dateKey: '2099-12-15',
+      done: false,
+    });
+
+    const cleared = await markPastTasksDone();
+    expect(cleared).toBe(1);
+    const items = await db.plannerItems.toArray();
+    expect(items.find(x => x.title === 'Already Graded Old Lab').done).toBe(true);
+    expect(items.find(x => x.title === 'Upcoming Future Quiz').done).toBe(false);
   });
 });
