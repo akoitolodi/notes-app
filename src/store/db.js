@@ -10,6 +10,7 @@
  * - Full JSON backup export & import.
  */
 import Dexie from 'dexie';
+import { isCardDue, isCardMastered, normalizeCardState } from '../lib/spacedRepetition.js';
 export { diffLines, diffAndRemapBlocks } from '../../shared/lineDiff.js';
 
 export const db = new Dexie('ai-class-notes');
@@ -92,6 +93,9 @@ export async function getHomeSummary() {
   let totalNotes = 0;
   let pinnedCount = 0;
   let trashCount = 0;
+  let dueCardsCount = 0;
+  let totalCardsCount = 0;
+  const now = Date.now();
   const tagCounts = new Map();
 
   await db.notes.each(note => {
@@ -102,6 +106,14 @@ export async function getHomeSummary() {
     totalNotes += 1;
     if (note.pinned) pinnedCount += 1;
     counts[note.folderId] = (counts[note.folderId] || 0) + 1;
+
+    if (Array.isArray(note.flashcards) && note.flashcards.length > 0) {
+      const progress = note.studyData?.cardProgress || {};
+      for (let i = 0; i < note.flashcards.length; i++) {
+        totalCardsCount += 1;
+        if (isCardDue(progress[i], now)) dueCardsCount += 1;
+      }
+    }
 
     const seen = new Set();
     const combined = `${note.title || ''} ${note.body || ''}`;
@@ -123,7 +135,15 @@ export async function getHomeSummary() {
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 
-  return { folders: sortedFolders, totalNotes, pinnedCount, trashCount, tags };
+  return {
+    folders: sortedFolders,
+    totalNotes,
+    pinnedCount,
+    trashCount,
+    dueCardsCount,
+    totalCardsCount,
+    tags,
+  };
 }
 
 export async function createFolder(name) {
@@ -534,4 +554,88 @@ export async function importBackup(payload, { mode = 'merge' } = {}) {
 
   await ensureSeeded();
   return { foldersAdded, notesAdded };
+}
+
+// ---------- Cross-Folder SM-2 Spaced Repetition Helpers ----------
+
+/**
+ * Scan all non-trashed notes across every folder and collect due flashcards
+ * ordered with overdue/lapsed cards first, then unreviewed cards.
+ */
+export async function getDueFlashcards(now = Date.now()) {
+  const [folders, notes] = await Promise.all([db.folders.toArray(), db.notes.toArray()]);
+  const folderNames = new Map(folders.map(f => [f.id, f.name]));
+
+  const dueCards = [];
+  const allCards = [];
+  let masteredCount = 0;
+  let nextDueAt = null;
+
+  for (const note of notes) {
+    if (note.trashed || !Array.isArray(note.flashcards) || note.flashcards.length === 0) continue;
+    const progress = note.studyData?.cardProgress || {};
+    const folderName = folderNames.get(note.folderId) || note.subject || 'General';
+
+    for (let i = 0; i < note.flashcards.length; i++) {
+      const card = note.flashcards[i];
+      if (!card || (!card.q && !card.a)) continue;
+      const rawState = progress[i];
+      const state = normalizeCardState(rawState);
+      if (isCardMastered(rawState)) masteredCount += 1;
+
+      const entry = {
+        key: `${note.id}:${i}`,
+        noteId: note.id,
+        noteTitle: note.title || 'Untitled Note',
+        folderId: note.folderId,
+        folderName,
+        cardIndex: i,
+        card,
+        state,
+      };
+      allCards.push(entry);
+
+      if (isCardDue(rawState, now)) {
+        dueCards.push(entry);
+      } else if (state.nextReviewAt > now) {
+        if (nextDueAt === null || state.nextReviewAt < nextDueAt) {
+          nextDueAt = state.nextReviewAt;
+        }
+      }
+    }
+  }
+
+  // Prioritize learning/lapsed cards, then earliest overdue, then new cards
+  dueCards.sort((a, b) => {
+    const aLapsed = a.state.status === 'learning' ? 0 : a.state.nextReviewAt > 0 ? 1 : 2;
+    const bLapsed = b.state.status === 'learning' ? 0 : b.state.nextReviewAt > 0 ? 1 : 2;
+    if (aLapsed !== bLapsed) return aLapsed - bLapsed;
+    return (a.state.nextReviewAt || 0) - (b.state.nextReviewAt || 0);
+  });
+
+  return {
+    dueCards,
+    allCards,
+    totalCards: allCards.length,
+    dueCount: dueCards.length,
+    masteredCount,
+    nextDueAt,
+  };
+}
+
+/**
+ * Persist an SM-2 card review state on a note WITHOUT modifying updatedAt
+ * so reviewing flashcards never disturbs the note edit timeline.
+ */
+export async function saveCardReviewResult(noteId, cardIndex, nextCardState) {
+  const note = await db.notes.get(noteId);
+  if (!note) return;
+  const studyData = note.studyData && typeof note.studyData === 'object' ? { ...note.studyData } : {};
+  const cardProgress =
+    studyData.cardProgress && typeof studyData.cardProgress === 'object'
+      ? { ...studyData.cardProgress }
+      : {};
+  cardProgress[cardIndex] = nextCardState;
+  studyData.cardProgress = cardProgress;
+  await db.notes.update(noteId, { studyData });
 }

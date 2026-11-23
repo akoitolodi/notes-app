@@ -1,6 +1,6 @@
 {
   "appId": "com.philipjohn.aiclassnotes",
-  "appName": "AI Class Notes",
+  "appName": "Notes by Bai",
   "webDir": "dist",
   "server": {
     "cleartext": true,

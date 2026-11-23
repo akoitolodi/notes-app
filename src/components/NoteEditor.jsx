@@ -49,6 +49,7 @@ import StrokeLayer, { renderStrokesToCanvas } from './StrokeLayer';
 import ImageStrip, { pickImage, compressImage } from './ImageManager';
 import ChatSheet from './ChatSheet';
 import { summarizeNote, ocrImage, findRelatedNotes } from '../lib/aiFeatures';
+import { instantiateTemplate } from '../lib/templates';
 import SlideUpPanel from './SlideUpPanel';
 import FolderPickerSheet from './FolderPickerSheet';
 import { NoteLine as NoteLineComponent } from './InlineComponents';
@@ -66,6 +67,7 @@ function normalizeDrawings(d) {
 
 export default function NoteEditor({
   note,
+  initialMode = null,
   folderName,
   onOpenStudy,
   onBackToList,
@@ -77,7 +79,7 @@ export default function NoteEditor({
 }) {
   const { confirm, toast } = useDialog();
 
-  const [mode, setMode] = useState(() => (noteHasContent(note) ? 'read' : 'edit'));
+  const [mode, setMode] = useState(() => initialMode || (noteHasContent(note) ? 'read' : 'edit'));
   const [title, setTitle] = useState(note?.title || '');
   const [body, setBody] = useState(note?.body || '');
   const [subject, setSubject] = useState(
@@ -210,6 +212,16 @@ export default function NoteEditor({
   const handleSubjectChange = val => {
     setSubject(val);
     setSaveState('dirty');
+  };
+
+  const handleApplyTemplate = templateId => {
+    const tpl = instantiateTemplate(templateId);
+    const nextTitle = title.trim() ? title : tpl.title;
+    const nextBody = tpl.body;
+    setTitle(nextTitle);
+    setBody(nextBody);
+    setSaveState('dirty');
+    commitHistoryNow(nextTitle, nextBody);
   };
 
   const undo = useCallback(() => {
@@ -980,6 +992,7 @@ export default function NoteEditor({
         onBackToList={handleBackFromEdit}
         onSaveOnly={handleSaveOnly}
         onSaveAndExplain={handleSaveAndExplain}
+        onApplyTemplate={handleApplyTemplate}
       />
     );
   }

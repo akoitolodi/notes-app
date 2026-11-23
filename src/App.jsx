@@ -11,6 +11,7 @@ import FoldersScreen from './components/FoldersScreen';
 import NotesListScreen from './components/NotesListScreen';
 import NoteEditor from './components/NoteEditor';
 import StudyScreen from './components/StudyScreen';
+import ReviewDashboardScreen from './components/ReviewDashboardScreen';
 import ExamSummaryScreen from './components/ExamSummaryScreen';
 import TrashScreen from './components/TrashScreen';
 import SettingsScreen from './components/SettingsScreen';
@@ -22,6 +23,7 @@ export default function App() {
   const [screen, setScreen] = useState('folders'); // folders | list | editor | study | exam | trash | settings
   const [folder, setFolder] = useState(null);
   const [note, setNote] = useState(null);
+  const [noteInitialMode, setNoteInitialMode] = useState(null);
   const [sidebarTick, setSidebarTick] = useState(0);
   const [isWide, setIsWide] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth >= 900 : false
@@ -85,13 +87,14 @@ export default function App() {
   );
 
   const handleOpenNote = useCallback(
-    async (targetNote, folderArg = null) => {
+    async (targetNote, folderArg = null, opts = null) => {
       if (folderArg) {
         setFolder(folderArg);
       } else if (!folder && targetNote?.folderId) {
         const f = await db.folders.get(targetNote.folderId);
         setFolder(f || { id: '__all__', name: 'All Notes' });
       }
+      setNoteInitialMode(opts?.startInEdit ? 'edit' : null);
       setNote(targetNote);
       setScreen('editor');
       pushHistoryEntry('editor');
@@ -160,6 +163,11 @@ export default function App() {
     pushHistoryEntry('settings');
   }, [pushHistoryEntry]);
 
+  const handleOpenReview = useCallback(() => {
+    setScreen('review');
+    pushHistoryEntry('review');
+  }, [pushHistoryEntry]);
+
   const handleNoteMoved = useCallback(
     newFolder => {
       if (newFolder) setFolder(newFolder);
@@ -189,7 +197,13 @@ export default function App() {
       await handleBackFromEditor();
       return true;
     }
-    if (screen === 'list' || screen === 'exam' || screen === 'trash' || screen === 'settings') {
+    if (
+      screen === 'list' ||
+      screen === 'exam' ||
+      screen === 'review' ||
+      screen === 'trash' ||
+      screen === 'settings'
+    ) {
       handleBackToFolders();
       return true;
     }
@@ -247,6 +261,7 @@ export default function App() {
         <NoteEditor
           key={note.id}
           note={note}
+          initialMode={noteInitialMode}
           folderName={folder?.name || ''}
           onOpenNote={handleOpenNote}
           onNoteMoved={handleNoteMoved}
@@ -267,6 +282,15 @@ export default function App() {
     }
     if (screen === 'study' && note) {
       return <StudyScreen note={note} onBack={handleBackFromStudy} />;
+    }
+    if (screen === 'review') {
+      return (
+        <ReviewDashboardScreen
+          onBack={handleBackToFolders}
+          onOpenNote={handleOpenNote}
+          onChanged={bumpSidebar}
+        />
+      );
     }
     if (screen === 'exam' && folder) {
       return <ExamSummaryScreen folder={folder} onBack={handleBackToFolders} />;
@@ -303,6 +327,7 @@ export default function App() {
               onOpenFolder={handleOpenFolder}
               onOpenExam={handleOpenExam}
               onOpenNote={handleOpenNote}
+              onOpenReview={handleOpenReview}
               onOpenTrash={handleOpenTrash}
               onOpenSettings={handleOpenSettings}
             />

@@ -18,6 +18,10 @@ import {
   X,
   SquarePen,
   Hash,
+  FileUp,
+  LayoutTemplate,
+  Flame,
+  Brain,
 } from 'lucide-react';
 import {
   db,
@@ -28,6 +32,10 @@ import {
   searchNotes,
   createNote,
 } from '../store/db';
+import { instantiateTemplate } from '../lib/templates';
+import { getReviewStats } from '../lib/spacedRepetition';
+import TemplatePickerSheet from './TemplatePickerSheet';
+import ImportSheet from './ImportSheet';
 import { useDialog } from './ui/DialogProvider';
 
 function highlightMatch(text, query) {
@@ -50,6 +58,7 @@ export default function FoldersScreen({
   onOpenFolder,
   onOpenExam,
   onOpenNote,
+  onOpenReview,
   onOpenTrash,
   onOpenSettings,
 }) {
@@ -59,13 +68,18 @@ export default function FoldersScreen({
     totalNotes: 0,
     pinnedCount: 0,
     trashCount: 0,
+    dueCardsCount: 0,
+    totalCardsCount: 0,
     tags: [],
   });
+  const [reviewStats, setReviewStats] = useState(() => getReviewStats());
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [folderMap, setFolderMap] = useState({});
   const [menuFolder, setMenuFolder] = useState(null);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   const pressTimer = useRef(null);
   const longPressedRef = useRef(false);
@@ -90,6 +104,7 @@ export default function FoldersScreen({
 
   const refresh = useCallback(async () => {
     setSummary(await getHomeSummary());
+    setReviewStats(getReviewStats());
   }, []);
 
   useEffect(() => {
@@ -182,10 +197,24 @@ export default function FoldersScreen({
     const defaultFolder =
       summary.folders.find(f => f.name === 'General') || summary.folders[0];
     const created = await createNote(defaultFolder?.id);
-    onOpenNote(created, defaultFolder || { id: '__all__', name: 'All Notes' });
+    onOpenNote(created, defaultFolder || { id: '__all__', name: 'All Notes' }, { startInEdit: true });
   };
 
-  const { folders, totalNotes, pinnedCount, trashCount, tags } = summary;
+  const handlePickTemplate = async templateId => {
+    setTemplatesOpen(false);
+    const defaultFolder =
+      summary.folders.find(f => f.name === 'General') || summary.folders[0];
+    const { title, body } = instantiateTemplate(templateId);
+    const created = await createNote(
+      defaultFolder?.id,
+      title,
+      body,
+      defaultFolder?.name || 'General'
+    );
+    onOpenNote(created, defaultFolder || { id: '__all__', name: 'All Notes' }, { startInEdit: true });
+  };
+
+  const { folders, totalNotes, pinnedCount, trashCount, dueCardsCount = 0, totalCardsCount = 0, tags } = summary;
 
   return (
     <div className="screen list-pad-bottom">
@@ -281,6 +310,35 @@ export default function FoldersScreen({
         </div>
       )}
 
+      {/* Daily Spaced Repetition Review Card */}
+      <button
+        type="button"
+        className={`review-banner${dueCardsCount > 0 ? ' has-due' : ''}`}
+        onClick={onOpenReview}
+      >
+        <span className="review-banner-icon">
+          <Brain size={20} />
+        </span>
+        <div className="review-banner-body">
+          <div className="review-banner-title">Daily Review</div>
+          <div className="review-banner-sub">
+            {totalCardsCount === 0
+              ? 'Spaced repetition · Tap Explain on a note'
+              : dueCardsCount > 0
+                ? `${dueCardsCount} card${dueCardsCount === 1 ? '' : 's'} due across your subjects`
+                : `All caught up · ${totalCardsCount} card${totalCardsCount === 1 ? '' : 's'} scheduled`}
+          </div>
+        </div>
+        <div className="review-banner-right">
+          {reviewStats.streak > 0 && (
+            <span className="streak-pill">
+              <Flame size={13} /> {reviewStats.streak}d
+            </span>
+          )}
+          <ChevronRight size={17} className="list-item-chevron" />
+        </div>
+      </button>
+
       {/* Smart Collections */}
       <div className="list-group">
         <button
@@ -318,6 +376,26 @@ export default function FoldersScreen({
             </span>
           </button>
         )}
+      </div>
+
+      {/* Quick Creation & Import Row */}
+      <div className="quick-action-row">
+        <button
+          type="button"
+          className="quick-action-btn"
+          onClick={() => setImportOpen(true)}
+        >
+          <FileUp size={16} />
+          <span>Import PDF / Slides</span>
+        </button>
+        <button
+          type="button"
+          className="quick-action-btn"
+          onClick={() => setTemplatesOpen(true)}
+        >
+          <LayoutTemplate size={16} />
+          <span>Templates</span>
+        </button>
       </div>
 
       {/* Subject Folders */}
@@ -477,6 +555,24 @@ export default function FoldersScreen({
             </button>
           </div>
         </div>
+      )}
+
+      {templatesOpen && (
+        <TemplatePickerSheet
+          onPick={handlePickTemplate}
+          onClose={() => setTemplatesOpen(false)}
+        />
+      )}
+
+      {importOpen && (
+        <ImportSheet
+          onImported={(created, targetFolder) => {
+            setImportOpen(false);
+            refresh();
+            onOpenNote(created, targetFolder);
+          }}
+          onClose={() => setImportOpen(false)}
+        />
       )}
 
       {/* Quick New Note FAB */}

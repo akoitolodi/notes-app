@@ -639,7 +639,7 @@ export default function SettingsScreen({ onBack, onDataImported }) {
           • Press <strong>Ctrl+S</strong> to save immediately or <strong>Ctrl+Shift+S</strong> to save & explain.
         </div>
         <div className="settings-tip" style={{ marginTop: 10, opacity: 0.7 }}>
-          AI Class Notes v1.3.0
+          Notes by Bai v1.4.0
         </div>
       </div>
     </div>

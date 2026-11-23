@@ -11,17 +11,25 @@ import {
   ChevronLeft,
   ChevronRight,
   Shuffle,
-  RotateCcw,
   Check,
   X,
   LayoutList,
   Layers,
 } from 'lucide-react';
+import {
+  scheduleCard,
+  previewIntervals,
+  isCardMastered,
+  isCardLearning,
+  formatInterval,
+  normalizeCardState,
+  recordCardReview,
+} from '../../lib/spacedRepetition';
 import MarkdownContent from '../ui/MarkdownContent';
 
 export function FlashcardDeck({
   cards = [],
-  progress = {}, // { [cardIndex]: 'known' | 'learning' }
+  progress = {}, // { [cardIndex]: SM2State | 'known' | 'learning' }
   onMarkCard = null,
 }) {
   const [view, setView] = useState('deck'); // 'deck' | 'list'
@@ -51,10 +59,13 @@ export function FlashcardDeck({
     );
   }
 
-  const knownCount = Object.values(progress).filter(v => v === 'known').length;
+  const knownCount = Object.values(progress).filter(v => isCardMastered(v)).length;
   const currentIdx = safeOrder[Math.min(pos, safeOrder.length - 1)] ?? 0;
   const currentCard = cards[currentIdx];
   const currentStatus = progress[currentIdx];
+  const currentMastered = isCardMastered(currentStatus);
+  const currentLearning = isCardLearning(currentStatus);
+  const intervals = previewIntervals(currentStatus);
 
   const go = delta => {
     setFlipped(false);
@@ -72,11 +83,15 @@ export function FlashcardDeck({
     setFlipped(false);
   };
 
-  const mark = status => {
-    onMarkCard?.(currentIdx, status);
+  const rate = rating => {
+    const nextState = scheduleCard(currentStatus, rating);
+    recordCardReview();
+    onMarkCard?.(currentIdx, nextState);
     if (pos < safeOrder.length - 1) {
       setFlipped(false);
       setPos(p => p + 1);
+    } else {
+      setFlipped(false);
     }
   };
 
@@ -126,15 +141,17 @@ export function FlashcardDeck({
                 <span className="flashcard-side-label" style={{ marginBottom: 0 }}>
                   {flipped ? 'Answer' : 'Question'}
                 </span>
-                {currentStatus && (
+                {(currentMastered || currentLearning) && (
                   <span
                     className="tag-pill"
                     style={{
-                      background: currentStatus === 'known' ? 'var(--ok-bg)' : 'var(--mistake-bg)',
-                      color: currentStatus === 'known' ? 'var(--ok)' : 'var(--mistake-ink)',
+                      background: currentMastered ? 'var(--ok-bg)' : 'var(--mistake-bg)',
+                      color: currentMastered ? 'var(--ok)' : 'var(--mistake-ink)',
                     }}
                   >
-                    {currentStatus === 'known' ? 'Mastered' : 'Still learning'}
+                    {currentMastered
+                      ? `Mastered${normalizeCardState(currentStatus).intervalDays > 0 ? ` · ${formatInterval(normalizeCardState(currentStatus).intervalDays)}` : ''}`
+                      : 'Learning'}
                   </span>
                 )}
               </div>
@@ -148,21 +165,22 @@ export function FlashcardDeck({
           </div>
 
           {onMarkCard && flipped && (
-            <div className="flex gap-8" style={{ marginBottom: 12 }}>
-              <button
-                type="button"
-                className="btn btn-secondary flex-1"
-                style={{ color: 'var(--mistake-ink)' }}
-                onClick={() => mark('learning')}
-              >
-                <RotateCcw size={15} /> Still learning
+            <div className="sm2-grid" style={{ marginBottom: 12 }} role="group" aria-label="Rate recall">
+              <button type="button" className="sm2-btn sm2-again" onClick={() => rate('again')}>
+                <span className="sm2-label">Again</span>
+                <span className="sm2-int">{intervals.again}</span>
               </button>
-              <button
-                type="button"
-                className="btn btn-primary flex-1"
-                onClick={() => mark('known')}
-              >
-                <Check size={16} /> Got it
+              <button type="button" className="sm2-btn sm2-hard" onClick={() => rate('hard')}>
+                <span className="sm2-label">Hard</span>
+                <span className="sm2-int">{intervals.hard}</span>
+              </button>
+              <button type="button" className="sm2-btn sm2-good" onClick={() => rate('good')}>
+                <span className="sm2-label">Good</span>
+                <span className="sm2-int">{intervals.good}</span>
+              </button>
+              <button type="button" className="sm2-btn sm2-easy" onClick={() => rate('easy')}>
+                <span className="sm2-label">Easy</span>
+                <span className="sm2-int">{intervals.easy}</span>
               </button>
             </div>
           )}
@@ -187,6 +205,8 @@ export function FlashcardDeck({
 
 function ListFlashcard({ card, status }) {
   const [flipped, setFlipped] = useState(false);
+  const mastered = isCardMastered(status);
+  const learning = isCardLearning(status);
   return (
     <button
       type="button"
@@ -198,15 +218,15 @@ function ListFlashcard({ card, status }) {
         <span className="flashcard-side-label" style={{ marginBottom: 0 }}>
           {flipped ? 'Answer' : 'Question'}
         </span>
-        {status && (
+        {(mastered || learning) && (
           <span
             className="tag-pill"
             style={{
-              background: status === 'known' ? 'var(--ok-bg)' : 'var(--mistake-bg)',
-              color: status === 'known' ? 'var(--ok)' : 'var(--mistake-ink)',
+              background: mastered ? 'var(--ok-bg)' : 'var(--mistake-bg)',
+              color: mastered ? 'var(--ok)' : 'var(--mistake-ink)',
             }}
           >
-            {status === 'known' ? 'Mastered' : 'Learning'}
+            {mastered ? 'Mastered' : 'Learning'}
           </span>
         )}
       </div>

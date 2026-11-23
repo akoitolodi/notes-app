@@ -599,3 +599,26 @@ Only include genuinely related notes (max 4). If none relate, return {"links": [
       reason: l.reason || '',
     }));
 }
+
+// ---------------- 13. Clean Voice Dictation Transcript ----------------
+export async function cleanDictation({ transcript, subject = 'General', signal = null }) {
+  const clean = String(transcript || '').trim();
+  if (!clean) return '';
+  const sys = `You are a study-note editor cleaning up a raw voice-dictated class lecture or spoken study note.
+
+RULES:
+- Remove verbal filler words ("um", "uh", "like", "you know", "ano", "kumbaga", false starts, repetitions).
+- Fix punctuation, capitalization, and obvious speech-to-text typos while keeping the speaker's exact technical meaning.
+- Organize into clean Markdown using ## headings (when multiple topics exist) and concise bullet points (bold key terms, use $...$ LaTeX for spoken math formulas).
+- Keep the same language (or Taglish/code-switching) the student spoke in.
+- Output ONLY the cleaned Markdown note text — no preamble or commentary.`;
+
+  const out = await aiText({
+    system: sys,
+    user: `SUBJECT: ${subject}\n\nRAW TRANSCRIPT:\n---\n${clean.slice(0, 9000)}\n---`,
+    maxTokens: 2000,
+    timeoutMs: 180000,
+    signal,
+  });
+  return stripThinking(out).trim() || clean;
+}

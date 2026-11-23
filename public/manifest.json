@@ -1,7 +1,7 @@
 {
-  "name": "AI Class Notes",
-  "short_name": "Notes",
-  "description": "Offline-first class notes with line-by-line AI explanations, flashcards, quizzes, and exam study packs.",
+  "name": "Notes by Bai",
+  "short_name": "Notes by Bai",
+  "description": "Offline-first AI study notes with line explanations, research, flashcards, voice dictation, and PDF/slide import.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

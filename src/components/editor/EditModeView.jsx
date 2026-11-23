@@ -6,7 +6,7 @@
  *   Code, LaTeX Math $…$, Camera, Gallery, OCR Scan)
  * - Working Undo/Redo with disabled states + Ctrl/Cmd+S shortcut
  */
-import { useEffect } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import {
   ChevronLeft,
   Undo2,
@@ -23,8 +23,22 @@ import {
   Camera,
   Image as ImageIcon,
   ScanText,
+  LayoutTemplate,
+  Mic,
+  MicOff,
+  Pause,
+  Play,
+  Square,
+  Wand2,
 } from 'lucide-react';
 import ImageStrip, { pickImage, compressImage } from '../ImageManager';
+import TemplatePickerSheet from '../TemplatePickerSheet';
+import {
+  DICTATION_LANGS,
+  createDictationSession,
+} from '../../lib/voiceDictation';
+import { cleanDictation } from '../../lib/aiFeatures';
+import { useDialog } from '../ui/DialogProvider';
 
 export default function EditModeView({
   title,
@@ -51,7 +65,95 @@ export default function EditModeView({
   onBackToList,
   onSaveOnly,
   onSaveAndExplain,
+  onApplyTemplate = null,
 }) {
+  const { toast } = useDialog();
+  const [templateSheetOpen, setTemplateSheetOpen] = useState(false);
+
+  // Voice-to-Notes dictation state
+  const [dictState, setDictState] = useState('idle'); // 'idle' | 'listening' | 'paused'
+  const [dictLang, setDictLang] = useState('');
+  const [interimText, setInterimText] = useState('');
+  const [dictError, setDictError] = useState(null);
+  const [hasDictated, setHasDictated] = useState(false);
+  const [cleaningVoice, setCleaningVoice] = useState(false);
+
+  const bodyRef = useRef(body);
+  const onBodyChangeRef = useRef(onBodyChange);
+  const dictSessionRef = useRef(null);
+  const cleanAbortRef = useRef(null);
+
+  useEffect(() => {
+    bodyRef.current = body;
+  }, [body]);
+
+  useEffect(() => {
+    onBodyChangeRef.current = onBodyChange;
+  }, [onBodyChange]);
+
+  useEffect(() => {
+    return () => {
+      dictSessionRef.current?.stop();
+      cleanAbortRef.current?.abort();
+    };
+  }, []);
+
+  const appendDictatedChunk = chunk => {
+    const clean = String(chunk || '').trim();
+    if (!clean) return;
+    const cur = bodyRef.current || '';
+    const sep = !cur ? '' : /[\s\n]$/.test(cur) ? '' : ' ';
+    const next = cur + sep + clean;
+    bodyRef.current = next;
+    onBodyChangeRef.current(next);
+    setHasDictated(true);
+  };
+
+  const handleToggleDictation = async () => {
+    if (dictState !== 'idle') {
+      dictSessionRef.current?.stop();
+      return;
+    }
+    setDictError(null);
+    const session = createDictationSession({
+      lang: dictLang,
+      onInterim: setInterimText,
+      onFinal: appendDictatedChunk,
+      onError: msg => setDictError(msg),
+      onStateChange: setDictState,
+    });
+    dictSessionRef.current = session;
+    await session.start();
+  };
+
+  const handleCleanDictation = async () => {
+    const raw = (bodyRef.current || '').trim();
+    if (!raw || cleaningVoice) return;
+    dictSessionRef.current?.stop();
+    const controller = new AbortController();
+    cleanAbortRef.current = controller;
+    setCleaningVoice(true);
+    setDictError(null);
+    try {
+      const cleaned = await cleanDictation({
+        transcript: raw,
+        subject: subject || 'General',
+        signal: controller.signal,
+      });
+      if (!controller.signal.aborted && cleaned) {
+        bodyRef.current = cleaned;
+        onBodyChange(cleaned);
+        setHasDictated(false);
+        toast('Transcript cleaned — tap Undo if you want the raw text back', { type: 'success' });
+      }
+    } catch (err) {
+      if (!err?.isCancelled) {
+        setDictError(`AI cleanup failed: ${err.message}`);
+      }
+    } finally {
+      setCleaningVoice(false);
+    }
+  };
   // Auto-grow textarea to content height
   useEffect(() => {
     const el = textareaRef.current;
@@ -197,6 +299,116 @@ export default function EditModeView({
           </div>
         )}
 
+        {(dictState !== 'idle' || hasDictated || dictError) && (
+          <div className={`dictation-bar${dictState === 'listening' ? ' is-live' : ''}`}>
+            <div className="dictation-bar-top">
+              <div className="dictation-status">
+                {dictState === 'listening' && <span className="dictation-dot" />}
+                <span>
+                  {dictState === 'listening'
+                    ? 'Listening…'
+                    : dictState === 'paused'
+                      ? 'Dictation paused'
+                      : hasDictated
+                        ? 'Dictation captured'
+                        : 'Voice dictation'}
+                </span>
+              </div>
+              <div className="dictation-controls">
+                <select
+                  className="dictation-lang"
+                  aria-label="Dictation language"
+                  value={dictLang}
+                  onChange={e => {
+                    const next = e.target.value;
+                    setDictLang(next);
+                    dictSessionRef.current?.setLang(next);
+                  }}
+                >
+                  {DICTATION_LANGS.map(l => (
+                    <option key={l.code || 'auto'} value={l.code}>
+                      {l.label}
+                    </option>
+                  ))}
+                </select>
+                {dictState === 'listening' && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    onClick={() => dictSessionRef.current?.pause()}
+                    aria-label="Pause dictation"
+                  >
+                    <Pause size={13} /> Pause
+                  </button>
+                )}
+                {dictState === 'paused' && (
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={() => dictSessionRef.current?.resume()}
+                    aria-label="Resume dictation"
+                  >
+                    <Play size={13} /> Resume
+                  </button>
+                )}
+                {dictState !== 'idle' && (
+                  <button
+                    type="button"
+                    className="btn btn-danger btn-sm"
+                    onClick={() => dictSessionRef.current?.stop()}
+                    aria-label="Stop dictation"
+                  >
+                    <Square size={12} /> Stop
+                  </button>
+                )}
+                {dictState === 'idle' && (
+                  <button
+                    type="button"
+                    className="navbar-btn"
+                    style={{ width: 28, height: 28 }}
+                    onClick={() => {
+                      setHasDictated(false);
+                      setDictError(null);
+                    }}
+                    aria-label="Dismiss dictation bar"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {interimText && (
+              <div className="dictation-interim">“{interimText}…”</div>
+            )}
+
+            {dictError && (
+              <div className="dictation-error">{dictError}</div>
+            )}
+
+            {(hasDictated || (dictError && body.trim())) && (
+              <div style={{ marginTop: 8 }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={cleaningVoice || !body.trim()}
+                  onClick={handleCleanDictation}
+                >
+                  {cleaningVoice ? (
+                    <>
+                      <span className="spinner" style={{ width: 13, height: 13 }} /> Cleaning transcript…
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 size={14} /> Clean transcript with AI
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="editor-meta-bar">
           <span className={`save-status${saveState === 'saved' ? ' saved' : ''}`}>
             {saveState === 'saving' ? (
@@ -232,6 +444,18 @@ export default function EditModeView({
           onChange={e => onSubjectChange(e.target.value)}
           aria-label="Subject"
         />
+
+        {onApplyTemplate && !body.trim() && (
+          <div style={{ marginBottom: 10 }}>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => setTemplateSheetOpen(true)}
+            >
+              <LayoutTemplate size={14} /> Use a note template
+            </button>
+          </div>
+        )}
 
         <ImageStrip
           images={images}
@@ -333,6 +557,16 @@ export default function EditModeView({
         </button>
         <button
           type="button"
+          className={`fmt-btn${dictState !== 'idle' ? ' active-rec' : ''}`}
+          onClick={handleToggleDictation}
+          title={dictState !== 'idle' ? 'Stop voice dictation' : 'Voice dictation'}
+          aria-label={dictState !== 'idle' ? 'Stop voice dictation' : 'Start voice dictation'}
+        >
+          {dictState !== 'idle' ? <MicOff size={17} /> : <Mic size={17} />}
+          <span>{dictState !== 'idle' ? 'Stop' : 'Mic'}</span>
+        </button>
+        <button
+          type="button"
           className="fmt-btn"
           disabled={ocrBusy}
           onClick={onOcrScan}
@@ -347,6 +581,17 @@ export default function EditModeView({
           <span>OCR</span>
         </button>
       </div>
+
+      {templateSheetOpen && (
+        <TemplatePickerSheet
+          title="Apply Template"
+          onPick={id => {
+            setTemplateSheetOpen(false);
+            onApplyTemplate?.(id);
+          }}
+          onClose={() => setTemplateSheetOpen(false)}
+        />
+      )}
     </div>
   );
 }

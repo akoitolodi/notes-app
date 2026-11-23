@@ -18,6 +18,8 @@ import {
   SquarePen,
   MoreHorizontal,
   Check,
+  FileUp,
+  LayoutTemplate,
 } from 'lucide-react';
 import {
   getNotesInFolder,
@@ -28,7 +30,10 @@ import {
   duplicateNote,
   moveNote,
 } from '../store/db';
+import { instantiateTemplate } from '../lib/templates';
 import FolderPickerSheet from './FolderPickerSheet';
+import TemplatePickerSheet from './TemplatePickerSheet';
+import ImportSheet from './ImportSheet';
 import { useDialog } from './ui/DialogProvider';
 
 const SORT_KEY = 'aicn:sort';
@@ -280,6 +285,8 @@ export default function NotesListScreen({
   const [actionNote, setActionNote] = useState(null);
   const [moveTarget, setMoveTarget] = useState(null);
   const [sortOpen, setSortOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   const loadNotes = useCallback(async () => {
     if (query.trim()) {
@@ -324,7 +331,23 @@ export default function NotesListScreen({
       tagPrefix,
       folder.isSmart ? 'General' : folder.name
     );
-    onOpenNote(note);
+    onOpenNote(note, null, { startInEdit: true });
+  };
+
+  const handlePickTemplate = async templateId => {
+    setTemplatesOpen(false);
+    const tagPrefix =
+      typeof folder.id === 'string' && folder.id.startsWith('__tag:')
+        ? `#${folder.id.slice(6)}`
+        : '';
+    const { title, body } = instantiateTemplate(templateId, { tagPrefix });
+    const note = await createNote(
+      typeof folder.id === 'number' ? folder.id : null,
+      title,
+      body,
+      folder.isSmart ? 'General' : folder.name
+    );
+    onOpenNote(note, null, { startInEdit: true });
   };
 
   const handlePin = async (e, note) => {
@@ -391,6 +414,24 @@ export default function NotesListScreen({
           <ChevronLeft size={20} /> Folders
         </button>
         <div className="flex items-center gap-6">
+          <button
+            type="button"
+            className="navbar-btn"
+            aria-label="Import PDF or Slides"
+            title="Import PDF, Slides, or Text"
+            onClick={() => setImportOpen(true)}
+          >
+            <FileUp size={18} />
+          </button>
+          <button
+            type="button"
+            className="navbar-btn"
+            aria-label="New from template"
+            title="New from template"
+            onClick={() => setTemplatesOpen(true)}
+          >
+            <LayoutTemplate size={18} />
+          </button>
           <button
             type="button"
             className="navbar-btn"
@@ -558,6 +599,25 @@ export default function NotesListScreen({
             </button>
           </div>
         </div>
+      )}
+
+      {templatesOpen && (
+        <TemplatePickerSheet
+          onPick={handlePickTemplate}
+          onClose={() => setTemplatesOpen(false)}
+        />
+      )}
+
+      {importOpen && (
+        <ImportSheet
+          defaultFolderId={typeof folder.id === 'number' ? folder.id : null}
+          onImported={(created, targetFolder) => {
+            setImportOpen(false);
+            refresh();
+            onOpenNote(created, targetFolder);
+          }}
+          onClose={() => setImportOpen(false)}
+        />
       )}
 
       <button
