@@ -7,6 +7,7 @@
  * - Zero raw user HTML injection
  */
 import katex from 'katex';
+import { tokenizeCode, isTableDividerRow, splitTableRow } from '../../lib/codeHighlight';
 
 function renderKatex(expr, displayMode = false) {
   try {
@@ -28,12 +29,16 @@ function isSafeUrl(url) {
 /**
  * Render inline markdown + inline math ($...$) + hashtags + citations into React nodes.
  */
-export function renderInlineRich(text, keyBase = 'r', { sources = null, allowHashtags = false, onTagTap = null } = {}) {
+export function renderInlineRich(
+  text,
+  keyBase = 'r',
+  { sources = null, allowHashtags = false, onTagTap = null, onWikiLinkTap = null } = {}
+) {
   const str = String(text || '');
   if (!str) return ['\u00A0'];
 
   const tokenRe =
-    /(\$\$[^$]+\$\$|\$(?!\s)[^$\n]+?(?<!\s)\$|`[^`]+`|\*\*[^*]+\*\*|~~[^~]+~~|\*[^*\s][^*]*\*|\[[^\]]+\]\(https?:\/\/[^)\s]+\)|\[\d+\]|#[A-Za-z0-9_-]+)/g;
+    /(\$\$[^$]+\$\$|\$(?!\s)[^$\n]+?(?<!\s)\$|`[^`]+`|\*\*[^*]+\*\*|~~[^~]+~~|\*[^*\s][^*]*\*|\[\[[^[\]]+\]\]|\[[^\]]+\]\(https?:\/\/[^)\s]+\)|\[\d+\]|#[A-Za-z0-9_-]+)/g;
 
   const parts = str.split(tokenRe);
   if (parts.length === 1) return [str];
@@ -78,6 +83,29 @@ export function renderInlineRich(text, keyBase = 'r', { sources = null, allowHas
 
     if (part.startsWith('*') && part.endsWith('*') && part.length > 2) {
       return <em key={key}>{part.slice(1, -1)}</em>;
+    }
+
+    // [[Wiki-Link]] or [[Wiki-Link|Alias]]
+    if (part.startsWith('[[') && part.endsWith(']]') && part.length > 4) {
+      const inner = part.slice(2, -2);
+      const [rawTarget, rawAlias] = inner.split('|');
+      const target = (rawTarget || '').trim();
+      const label = (rawAlias || rawTarget || '').trim();
+      if (target) {
+        return (
+          <button
+            key={key}
+            type="button"
+            className="wiki-link-pill"
+            onClick={e => {
+              e.stopPropagation();
+              onWikiLinkTap?.(target);
+            }}
+          >
+            {label}
+          </button>
+        );
+      }
     }
 
     // Safe markdown links [label](https://...)
@@ -227,14 +255,66 @@ export default function MarkdownContent({ text, sources = null, className = '' }
   while (i < lines.length) {
     const line = lines[i];
 
-    // Fenced code block
+    // Fenced code block (with lightweight syntax highlighting)
     if (/^```/.test(line)) {
+      const lang = line.slice(3).trim().split(/\s+/)[0] || '';
       const code = [];
       i++;
       while (i < lines.length && !/^```/.test(lines[i])) code.push(lines[i++]);
       i++;
-      out.push(<pre key={k++} className="md-pre"><code>{code.join('\n')}</code></pre>);
+      const toks = tokenizeCode(code.join('\n'), lang);
+      out.push(
+        <pre key={k++} className="md-pre">
+          <code>
+            {toks.map((tk, ti) =>
+              tk.type === 'plain' ? (
+                tk.text
+              ) : (
+                <span key={ti} className={`tok-${tk.type}`}>
+                  {tk.text}
+                </span>
+              )
+            )}
+          </code>
+        </pre>
+      );
       continue;
+    }
+
+    // GFM Markdown Table
+    if (line.includes('|') && i + 1 < lines.length && isTableDividerRow(lines[i + 1])) {
+      const headers = splitTableRow(line);
+      if (headers.length >= 2) {
+        i += 2;
+        const rows = [];
+        while (i < lines.length && lines[i].trim().includes('|')) {
+          rows.push(splitTableRow(lines[i]));
+          i += 1;
+        }
+        out.push(
+          <div key={k++} className="md-table-wrap">
+            <table className="md-table">
+              <thead>
+                <tr>
+                  {headers.map((h, hi) => (
+                    <th key={hi}>{renderInlineRich(h, `th-${k}-${hi}`, { sources })}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, ri) => (
+                  <tr key={ri}>
+                    {headers.map((_, ci) => (
+                      <td key={ci}>{renderInlineRich(r[ci] || '', `td-${k}-${ri}-${ci}`, { sources })}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+        continue;
+      }
     }
 
     // Multi-line display math $$ ... $$

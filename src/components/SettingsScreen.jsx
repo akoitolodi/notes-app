@@ -2,7 +2,7 @@
  * SettingsScreen — Appearance, Reading & AI Style, AI Backend (Direct + Termux),
  * Provider model chips, Key reveal toggles, Backup/Restore JSON, and About.
  */
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   ChevronLeft,
   Eye,
@@ -12,6 +12,11 @@ import {
   Upload,
   ChevronDown,
   ChevronUp,
+  Lock,
+  Unlock,
+  ShieldCheck,
+  Wrench,
+  SpellCheck,
 } from 'lucide-react';
 import {
   THEME_KEY,
@@ -35,6 +40,13 @@ import {
   getAutoFallback,
   setAutoFallback,
   getFallbackProviders,
+  isAiProviderLocked,
+  setAiProviderLocked,
+  isDevToolkitEnabled,
+  setDevToolkitEnabled,
+  getGrammarConfig,
+  setGrammarConfig,
+  maskKey,
   EXPLAIN_STYLES,
   PROVIDERS,
   MODE_KEY,
@@ -47,7 +59,74 @@ import {
 import { createAbortController, testTermuxConnection } from '../lib/aiCore';
 import { getRawApiBaseOverride, setApiBase } from '../config';
 import { exportBackup, importBackup } from '../store/db';
+import { hasVaultPin, lockVault } from '../lib/vault';
+import PinLockSheet from './PinLockSheet';
 import { useDialog } from './ui/DialogProvider';
+
+function HoldToUnlockButton({ onUnlock, durationMs = 1400 }) {
+  const [pct, setPct] = useState(0);
+  const rafRef = useRef(null);
+  const startRef = useRef(null);
+
+  const cancel = () => {
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    startRef.current = null;
+    setPct(0);
+  };
+
+  useEffect(() => () => cancel(), []);
+
+  const begin = e => {
+    e?.preventDefault?.();
+    if (rafRef.current) return;
+    startRef.current = performance.now();
+    const tick = now => {
+      const elapsed = now - startRef.current;
+      const next = Math.min(100, (elapsed / durationMs) * 100);
+      setPct(next);
+      if (next >= 100) {
+        cancel();
+        try {
+          navigator.vibrate?.(25);
+        } catch {
+          // ignore
+        }
+        onUnlock?.();
+        return;
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+  };
+
+  return (
+    <button
+      type="button"
+      className="hold-unlock-btn"
+      onPointerDown={begin}
+      onPointerUp={cancel}
+      onPointerLeave={cancel}
+      onPointerCancel={cancel}
+      onKeyDown={e => {
+        if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) begin(e);
+      }}
+      onKeyUp={e => {
+        if (e.key === ' ' || e.key === 'Enter') cancel();
+      }}
+      onContextMenu={e => e.preventDefault()}
+      aria-label="Press and hold to unlock AI provider settings"
+    >
+      <span className="hold-unlock-fill" style={{ width: `${pct}%` }} />
+      <span className="hold-unlock-content">
+        <Unlock size={15} />
+        <span>{pct > 0 ? 'Keep holding to unlock…' : 'Hold 1.5s to unlock & edit'}</span>
+      </span>
+    </button>
+  );
+}
 
 function Segmented({ options, value, onChange }) {
   return (
@@ -90,6 +169,11 @@ export default function SettingsScreen({ onBack, onDataImported }) {
   const [tavilyKey, setTavilyKey] = useState(() => getTavilyKey());
   const [termuxUrl, setTermuxUrl] = useState(() => getRawApiBaseOverride());
   const [autoFallback, setAutoFallbackState] = useState(() => getAutoFallback());
+  const [aiLocked, setAiLocked] = useState(() => isAiProviderLocked() && Boolean(getKeyForProvider(getProviderId()).trim()));
+  const [devToolkitOn, setDevToolkitOn] = useState(() => isDevToolkitEnabled());
+  const [grammarCfg, setGrammarCfg] = useState(() => getGrammarConfig());
+  const [pinModal, setPinModal] = useState(null); // null | 'setup' | 'change'
+  const [vaultPinExists, setVaultPinExists] = useState(() => hasVaultPin());
 
   const [showKey, setShowKey] = useState(false);
   const [showTavily, setShowTavily] = useState(false);
@@ -208,6 +292,7 @@ export default function SettingsScreen({ onBack, onDataImported }) {
     if (!k) return toast('Enter an API key first', { type: 'error' });
     if (!bUrl || !m) return toast('Base URL or model is missing', { type: 'error' });
     setTesting(true);
+    const t0 = performance.now();
     const ctrl = createAbortController(15000);
     try {
       const res = await fetch(`${bUrl}/chat/completions`, {
@@ -222,7 +307,14 @@ export default function SettingsScreen({ onBack, onDataImported }) {
         signal: ctrl.signal,
       });
       if (res.ok) {
-        toast('Connected to AI provider!', { type: 'success' });
+        const secs = ((performance.now() - t0) / 1000).toFixed(1);
+        setAiProviderLocked(true);
+        setAiLocked(true);
+        setShowKey(false);
+        toast(`Connected in ${secs}s & locked! Hold to unlock anytime.`, {
+          type: 'success',
+          duration: 3800,
+        });
       } else {
         const t = await res.text().catch(() => '');
         toast(`Error ${res.status}: ${t.slice(0, 90)}`, { type: 'error', duration: 4000 });
@@ -419,10 +511,60 @@ export default function SettingsScreen({ onBack, onDataImported }) {
           </>
         )}
 
-        {mode === 'direct' && (
+        {mode === 'direct' && aiLocked && (
+          <div className="ai-locked-card mt-12">
+            <div className="ai-locked-head">
+              <span className="ai-locked-badge">
+                <ShieldCheck size={15} /> Connected &amp; Locked
+              </span>
+              <span className="provider-badge">{preset.name}</span>
+            </div>
+            <div className="ai-locked-meta">
+              <div><strong>Model:</strong> {model || preset.defaultModel || '—'}</div>
+              <div><strong>API Key:</strong> {maskKey(key) || 'Saved'}</div>
+            </div>
+            <div className="flex gap-8 mt-12">
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm flex-1"
+                disabled={testing}
+                onClick={testDirectConnection}
+              >
+                <Plug size={14} /> {testing ? 'Testing…' : 'Re-test'}
+              </button>
+            </div>
+            <div className="mt-8">
+              <HoldToUnlockButton
+                onUnlock={() => {
+                  setAiProviderLocked(false);
+                  setAiLocked(false);
+                  toast('AI provider settings unlocked', { type: 'info' });
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        {mode === 'direct' && !aiLocked && (
           <>
-            <div className="settings-label mt-16">Provider</div>
-            <div className="provider-grid">
+            <div className="flex justify-between items-center mt-16">
+              <div className="settings-label" style={{ marginBottom: 0 }}>Provider</div>
+              {key.trim() && (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => {
+                    setAiProviderLocked(true);
+                    setAiLocked(true);
+                    setShowKey(false);
+                    toast('AI provider settings locked', { type: 'success' });
+                  }}
+                >
+                  <Lock size={13} /> Lock config
+                </button>
+              )}
+            </div>
+            <div className="provider-grid mt-8">
               {Object.entries(PROVIDERS).map(([id, p]) => (
                 <button
                   key={id}
@@ -596,6 +738,168 @@ export default function SettingsScreen({ onBack, onDataImported }) {
         </div>
       </div>
 
+      {/* Optional Add-ons & Private Vault */}
+      <div className="list-group settings-group">
+        <div className="settings-label flex items-center gap-6">
+          <Wrench size={14} /> Optional Add-ons &amp; Privacy
+        </div>
+
+        <label className="ios-switch-row mt-8">
+          <span className="ios-switch-label" style={{ fontSize: 14 }}>
+            Show Dev &amp; IT Toolkit
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+              Separate offline space for Subnet Calc, Base Converter, JSON/JWT, Regex &amp; Tech Templates. Turn off anytime for a pure notes layout.
+            </div>
+          </span>
+          <span className="ios-switch">
+            <input
+              type="checkbox"
+              checked={devToolkitOn}
+              onChange={e => {
+                const v = e.target.checked;
+                setDevToolkitOn(v);
+                setDevToolkitEnabled(v);
+                onDataImported?.();
+                toast(v ? 'Dev & IT Toolkit enabled' : 'Dev & IT Toolkit hidden');
+              }}
+            />
+            <span className="ios-switch-track" />
+          </span>
+        </label>
+
+        <div className="settings-label mt-16">Private Diary Vault PIN</div>
+        <div className="settings-tip">
+          {vaultPinExists
+            ? 'Your PIN protects locked folders and hides them from All Notes, Search, and Daily Review.'
+            : 'Set a 4–6 digit PIN to lock personal journal or rant folders privately on this device.'}
+        </div>
+        <div className="flex gap-8 mt-8">
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm flex-1"
+            onClick={() => setPinModal(vaultPinExists ? 'change' : 'setup')}
+          >
+            <Lock size={14} /> {vaultPinExists ? 'Change Vault PIN' : 'Set Up Vault PIN'}
+          </button>
+          {vaultPinExists && (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => {
+                lockVault();
+                toast('Private vault locked');
+              }}
+            >
+              Lock now
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Pluggable Writing & Grammar Engine (Optional Keys) */}
+      <div className="list-group settings-group">
+        <div className="settings-label flex items-center gap-6">
+          <SpellCheck size={14} /> Writing &amp; Grammar (Optional)
+        </div>
+        <Segmented
+          options={[
+            ['languagetool-free', 'Free (LT)'],
+            ['grammarly', 'Grammarly'],
+            ['languagetool-plus', 'LT Key'],
+            ['sapling', 'Sapling'],
+          ]}
+          value={grammarCfg.provider}
+          onChange={p => setGrammarCfg(setGrammarConfig({ provider: p }))}
+        />
+
+        {grammarCfg.provider === 'languagetool-free' && (
+          <div className="settings-tip">
+            Uses <strong>LanguageTool Free</strong> (0 API key needed) for per-word spelling &amp; grammar checks, plus 1-tap <strong>AI Polish</strong> in Edit mode.
+          </div>
+        )}
+
+        {grammarCfg.provider === 'grammarly' && (
+          <>
+            <div className="settings-tip">
+              Optional connector for school/organization <strong>Grammarly EDU / Enterprise Writing Score API</strong> (OAuth Client ID + Secret or Bearer token). Paired with free LanguageTool for inline fixes.
+            </div>
+            <div className="settings-label mt-12">Grammarly Client ID (optional)</div>
+            <input
+              type="text"
+              className="ai-input"
+              value={grammarCfg.grammarlyClientId}
+              onChange={e => setGrammarCfg(setGrammarConfig({ grammarlyClientId: e.target.value }))}
+              placeholder="OAuth Client ID from school admin"
+              spellCheck="false"
+            />
+            <div className="settings-label mt-12">Grammarly Client Secret (optional)</div>
+            <input
+              type="password"
+              className="ai-input"
+              value={grammarCfg.grammarlyClientSecret}
+              onChange={e => setGrammarCfg(setGrammarConfig({ grammarlyClientSecret: e.target.value }))}
+              placeholder="OAuth Client Secret"
+              spellCheck="false"
+            />
+            <div className="settings-label mt-12">Or direct Access / Bearer Token (optional)</div>
+            <input
+              type="password"
+              className="ai-input"
+              value={grammarCfg.grammarlyToken}
+              onChange={e => setGrammarCfg(setGrammarConfig({ grammarlyToken: e.target.value }))}
+              placeholder="Paste access token if already issued"
+              spellCheck="false"
+            />
+          </>
+        )}
+
+        {grammarCfg.provider === 'languagetool-plus' && (
+          <>
+            <div className="settings-label mt-12">LanguageTool Endpoint URL</div>
+            <input
+              type="url"
+              className="ai-input"
+              value={grammarCfg.ltUrl}
+              onChange={e => setGrammarCfg(setGrammarConfig({ ltUrl: e.target.value }))}
+              placeholder="https://api.languagetoolplus.com/v2/check"
+              spellCheck="false"
+            />
+            <div className="settings-label mt-12">Username / Email</div>
+            <input
+              type="text"
+              className="ai-input"
+              value={grammarCfg.ltUsername}
+              onChange={e => setGrammarCfg(setGrammarConfig({ ltUsername: e.target.value }))}
+              placeholder="Account email"
+              spellCheck="false"
+            />
+            <div className="settings-label mt-12">API Key</div>
+            <input
+              type="password"
+              className="ai-input"
+              value={grammarCfg.ltApiKey}
+              onChange={e => setGrammarCfg(setGrammarConfig({ ltApiKey: e.target.value }))}
+              placeholder="LanguageTool API key"
+              spellCheck="false"
+            />
+          </>
+        )}
+
+        {grammarCfg.provider === 'sapling' && (
+          <>
+            <div className="settings-label mt-12">Sapling API Key</div>
+            <input
+              type="password"
+              className="ai-input"
+              value={grammarCfg.saplingKey}
+              onChange={e => setGrammarCfg(setGrammarConfig({ saplingKey: e.target.value }))}
+              placeholder="Paste Sapling API key (sapling.ai)"
+              spellCheck="false"
+            />
+          </>
+        )}
+      </div>
+
       {/* Data Backup & Restore */}
       <div className="list-group settings-group">
         <div className="settings-label">Backup & Restore</div>
@@ -639,9 +943,21 @@ export default function SettingsScreen({ onBack, onDataImported }) {
           • Press <strong>Ctrl+S</strong> to save immediately or <strong>Ctrl+Shift+S</strong> to save & explain.
         </div>
         <div className="settings-tip" style={{ marginTop: 10, opacity: 0.7 }}>
-          Notes by Bai v1.4.0
+          Notes by Bai v1.5.0
         </div>
       </div>
+
+      {pinModal && (
+        <PinLockSheet
+          mode={pinModal}
+          onSuccess={() => {
+            setPinModal(null);
+            setVaultPinExists(hasVaultPin());
+            toast('Private Vault PIN saved!', { type: 'success' });
+          }}
+          onClose={() => setPinModal(null)}
+        />
+      )}
     </div>
   );
 }

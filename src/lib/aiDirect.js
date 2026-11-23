@@ -2,8 +2,9 @@
  * Client-side AI engine — runs directly against the user's chosen OpenAI-compatible provider.
  * Reuses shared/aiPrompts.js and shared/aiParsers.js for 100% parity with the server engine.
  */
-import { getDirectConfig, getExplainStyle } from './aiConfig';
-import { createAbortController } from './aiCore';
+import { getExplainStyle } from './aiConfig';
+import { aiText } from './aiCore';
+import { getScanModeDirective } from './noteModes';
 import {
   CHUNK_SIZE,
   MAX_CONCURRENT,
@@ -22,63 +23,13 @@ import {
   parseExamResult,
 } from '../../shared/aiParsers.js';
 
-/** Call the configured direct provider with a timeout. */
+/** Call the configured direct provider through aiCore (gains automatic 429 retry & backup failover). */
 export async function callAI({ system, user, maxTokens = 8192, timeoutMs = 180000, signal = null }) {
-  const { baseUrl, key, model } = getDirectConfig();
-
-  if (!key) throw new Error('No API key configured. Set your key in Settings → AI backend.');
-  if (!baseUrl) throw new Error('No base URL configured for the selected provider.');
-  if (!model) throw new Error('No model configured for the selected provider.');
-
-  const ctrl = createAbortController(timeoutMs, signal);
-
-  try {
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${key}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: user },
-        ],
-        temperature: 0.3,
-        max_tokens: maxTokens,
-      }),
-      signal: ctrl.signal,
-    });
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      throw new Error(`AI API error ${response.status}: ${body.slice(0, 300)}`);
-    }
-
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
-    if (!content) throw new Error('AI returned no content');
-    return content;
-  } catch (err) {
-    if (err?.name === 'AbortError') {
-      if (ctrl.wasTimeout()) {
-        const e = new Error('__abort__');
-        e.isAbortTimeout = true;
-        throw e;
-      }
-      const cancelled = new Error('Cancelled');
-      cancelled.isCancelled = true;
-      throw cancelled;
-    }
-    throw err;
-  } finally {
-    ctrl.cleanup();
-  }
+  return aiText({ system, user, maxTokens, timeoutMs, signal });
 }
 
 /** Scan a single chunk using BLOCKS_SYSTEM_PROMPT (never redundantly requesting quiz/cards). */
-async function scanChunk(lines, startIdx, subject, style, targetLines = null, signal = null) {
+async function scanChunk(lines, startIdx, subject, style, targetLines = null, signal = null, noteMode = 'study') {
   const endIdx = Math.min(startIdx + CHUNK_SIZE, lines.length);
   const user = buildScanChunkUserPrompt({
     lines,
@@ -88,9 +39,11 @@ async function scanChunk(lines, startIdx, subject, style, targetLines = null, si
     style,
     targetLines,
   });
+  const modeDir = getScanModeDirective(noteMode);
+  const system = modeDir ? `${BLOCKS_SYSTEM_PROMPT}\n\n${modeDir}` : BLOCKS_SYSTEM_PROMPT;
 
   const raw = await callAI({
-    system: BLOCKS_SYSTEM_PROMPT,
+    system,
     user,
     maxTokens: 4096,
     timeoutMs: 180000,
@@ -98,11 +51,13 @@ async function scanChunk(lines, startIdx, subject, style, targetLines = null, si
   });
   const parsed = parseScanResult(raw);
   const allowed = targetLines ? new Set(targetLines) : null;
-  return parsed.blocks.filter(b => {
-    const n = parseInt(String(b.id).replace('line-', ''), 10);
-    if (!Number.isFinite(n) || n < startIdx + 1 || n > endIdx) return false;
-    return allowed ? allowed.has(n) : true;
-  });
+  return parsed.blocks
+    .filter(b => {
+      const n = parseInt(String(b.id).replace('line-', ''), 10);
+      if (!Number.isFinite(n) || n < startIdx + 1 || n > endIdx) return false;
+      return allowed ? allowed.has(n) : true;
+    })
+    .map(b => (noteMode === 'journal' ? { ...b, mistake: null } : b));
 }
 
 /** Scan a single line (explain simpler / give example). */
@@ -121,8 +76,9 @@ export async function scanLine(note, line, request = 'simpler', style = null) {
 }
 
 /** Scan a full note or changed lines (chunks automatically when > CHUNK_SIZE lines). */
-export async function scanNote({ note, subject, changedLines, style = null, signal = null }) {
+export async function scanNote({ note, subject, changedLines, style = null, noteMode = 'study', signal = null }) {
   const activeStyle = style || getExplainStyle();
+  const modeDir = getScanModeDirective(noteMode);
   const lines = String(note || '').split('\n');
   const validChanged = Array.isArray(changedLines)
     ? [...new Set(changedLines.filter(n => Number.isInteger(n) && n >= 1 && n <= lines.length))].sort((a, b) => a - b)
@@ -139,13 +95,21 @@ export async function scanNote({ note, subject, changedLines, style = null, sign
     const timeoutMs = Math.min(60000 + lines.length * 4000, 480000);
     try {
       const content = await callAI({
-        system: SYSTEM_PROMPT,
+        system: modeDir ? `${SYSTEM_PROMPT}\n\n${modeDir}` : SYSTEM_PROMPT,
         user: userPrompt,
         maxTokens: 8192,
         timeoutMs,
         signal,
       });
-      return parseScanResult(content);
+      const res = parseScanResult(content);
+      if (noteMode === 'journal') {
+        return {
+          blocks: (res.blocks || []).map(b => ({ ...b, mistake: null })),
+          flashcards: [],
+          quiz: [],
+        };
+      }
+      return res;
     } catch (err) {
       if (err.isAbortTimeout) {
         throw new Error(
@@ -177,31 +141,33 @@ export async function scanNote({ note, subject, changedLines, style = null, sign
   const [chunkResults, study] = await Promise.all([
     mapPool(chunkJobs, MAX_CONCURRENT, async job => {
       try {
-        return await scanChunk(lines, job.start, subject, activeStyle, job.targetLines, signal);
+        return await scanChunk(lines, job.start, subject, activeStyle, job.targetLines, signal, noteMode);
       } catch (e) {
         if (e?.isCancelled) throw e;
         try {
-          return await scanChunk(lines, job.start, subject, activeStyle, job.targetLines, signal);
+          return await scanChunk(lines, job.start, subject, activeStyle, job.targetLines, signal, noteMode);
         } catch {
           return null;
         }
       }
     }),
-    (async () => {
-      const numbered = lines.map((l, i) => `${i + 1}: ${l}`).join('\n');
-      try {
-        const raw = await callAI({
-          system: STUDY_SYSTEM_PROMPT,
-          user: `Subject: ${subject || 'General'}\n\nNote:\n---\n${numbered.slice(0, 12000)}\n---\n\nProduce the JSON now.`,
-          maxTokens: 2048,
-          timeoutMs: 240000,
-          signal,
-        });
-        return parseScanResult(raw);
-      } catch {
-        return null;
-      }
-    })(),
+    noteMode === 'journal'
+      ? Promise.resolve({ flashcards: [], quiz: [] })
+      : (async () => {
+          const numbered = lines.map((l, i) => `${i + 1}: ${l}`).join('\n');
+          try {
+            const raw = await callAI({
+              system: STUDY_SYSTEM_PROMPT,
+              user: `Subject: ${subject || 'General'}\n\nNote:\n---\n${numbered.slice(0, 12000)}\n---\n\nProduce the JSON now.`,
+              maxTokens: 2048,
+              timeoutMs: 240000,
+              signal,
+            });
+            return parseScanResult(raw);
+          } catch {
+            return null;
+          }
+        })(),
   ]);
 
   const blocks = chunkResults

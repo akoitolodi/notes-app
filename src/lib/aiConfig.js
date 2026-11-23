@@ -11,6 +11,9 @@ export const REASON_KEY = 'aicn:aiReasonModel'; // reasoning model for Deep Thin
 export const TAVILY_KEY = 'aicn:tavilyKey';     // Tavily API key for web search
 export const STYLE_KEY = 'aicn:explainStyle';   // 'default' | 'simple' | 'exam-prep' | 'detailed'
 export const FALLBACK_KEY = 'aicn:autoFallback'; // boolean string ('true' default)
+export const AI_LOCK_KEY = 'aicn:aiProviderLocked'; // passwordless Hold-to-Unlock safety lock
+export const DEV_TOOLKIT_KEY = 'aicn:addonDevToolkit'; // optional Dev & IT Toolkit add-on ('true' default)
+export const GRAMMAR_CONFIG_KEY = 'aicn:grammarConfig'; // JSON { provider, ltUrl, ltUsername, ltApiKey, grammarlyClientId, grammarlyClientSecret, grammarlyToken, saplingKey }
 
 export const EXPLAIN_STYLES = [
   ['simple', 'Simple'],
@@ -318,4 +321,70 @@ export function maskKey(key) {
   if (!key) return '';
   if (key.length <= 8) return '••••••••';
   return key.slice(0, 4) + '••••••••' + key.slice(-4);
+}
+
+/** Passwordless Hold-to-Unlock safety lock for AI Provider config. */
+export function isAiProviderLocked() {
+  try {
+    return localStorage.getItem(AI_LOCK_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function setAiProviderLocked(locked) {
+  try {
+    localStorage.setItem(AI_LOCK_KEY, locked ? 'true' : 'false');
+  } catch {
+    // non-fatal
+  }
+}
+
+/** Optional Dev & IT Toolkit add-on toggle (defaults ON, hideable anytime). */
+export function isDevToolkitEnabled() {
+  try {
+    const val = localStorage.getItem(DEV_TOOLKIT_KEY);
+    return val === null ? true : val === 'true';
+  } catch {
+    return true;
+  }
+}
+
+export function setDevToolkitEnabled(enabled) {
+  try {
+    localStorage.setItem(DEV_TOOLKIT_KEY, enabled ? 'true' : 'false');
+  } catch {
+    // non-fatal
+  }
+}
+
+/** Pluggable Grammar & Writing Engine config (defaults to zero-key LanguageTool Free). */
+export function getGrammarConfig() {
+  const defaults = {
+    provider: 'languagetool-free', // 'languagetool-free' | 'languagetool-plus' | 'grammarly' | 'sapling'
+    ltUrl: 'https://api.languagetool.org/v2/check',
+    ltUsername: '',
+    ltApiKey: '',
+    grammarlyClientId: '',
+    grammarlyClientSecret: '',
+    grammarlyToken: '',
+    saplingKey: '',
+  };
+  try {
+    const raw = JSON.parse(localStorage.getItem(GRAMMAR_CONFIG_KEY) || 'null');
+    if (raw && typeof raw === 'object') return { ...defaults, ...raw };
+  } catch {
+    // default
+  }
+  return defaults;
+}
+
+export function setGrammarConfig(patch) {
+  const next = { ...getGrammarConfig(), ...(patch || {}) };
+  try {
+    localStorage.setItem(GRAMMAR_CONFIG_KEY, JSON.stringify(next));
+  } catch {
+    // non-fatal
+  }
+  return next;
 }

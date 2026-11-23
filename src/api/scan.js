@@ -6,10 +6,15 @@ import { getApiBase } from '../config';
 import { getAiMode, getExplainStyle } from '../lib/aiConfig';
 import { scanNote as directScanNote } from '../lib/aiDirect';
 
-export async function scanNote(note, subject, changedLines, { style = null, signal = null } = {}) {
+export async function scanNote(
+  note,
+  subject,
+  changedLines,
+  { style = null, noteMode = 'study', signal = null } = {}
+) {
   const activeStyle = style || getExplainStyle();
   if (getAiMode() === 'direct') {
-    return directScanNote({ note, subject, changedLines, style: activeStyle, signal });
+    return directScanNote({ note, subject, changedLines, style: activeStyle, noteMode, signal });
   }
 
   const apiBase = getApiBase();
@@ -18,7 +23,7 @@ export async function scanNote(note, subject, changedLines, { style = null, sign
     res = await fetch(`${apiBase}/api/scan`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ note, subject, changedLines, style: activeStyle }),
+      body: JSON.stringify({ note, subject, changedLines, style: activeStyle, noteMode }),
       signal,
     });
   } catch (err) {

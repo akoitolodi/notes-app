@@ -198,6 +198,62 @@ app.post('/api/chat-stream', async (req, res) => {
   }
 });
 
+// Optional Grammarly EDU / Enterprise Writing Score API relay (avoids browser CORS blocks)
+app.post('/api/grammar', async (req, res) => {
+  try {
+    const { text, clientId, clientSecret, token } = req.body || {};
+    if (!text || typeof text !== 'string') {
+      return res.status(400).json({ error: 'Missing text' });
+    }
+    let accessToken = typeof token === 'string' ? token.trim() : '';
+    if (!accessToken) {
+      if (!clientId || !clientSecret) {
+        return res.status(400).json({ error: 'Provide Grammarly Client ID & Secret or Bearer token.' });
+      }
+      const tokenBody = new URLSearchParams({
+        grant_type: 'client_credentials',
+        client_id: String(clientId).trim(),
+        client_secret: String(clientSecret).trim(),
+        scope: 'scores-api:read,scores-api:write',
+      });
+      const tokRes = await fetch('https://auth.grammarly.com/v4/api/oauth2/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: tokenBody.toString(),
+      });
+      if (!tokRes.ok) {
+        const msg = await tokRes.text().catch(() => '');
+        return res.status(tokRes.status).json({
+          error: `Grammarly auth failed (${tokRes.status}): ${msg.slice(0, 120)}`,
+        });
+      }
+      const tokData = await tokRes.json();
+      accessToken = tokData.access_token || '';
+    }
+    if (!accessToken) {
+      return res.status(401).json({ error: 'No Grammarly access token returned.' });
+    }
+    const scoreRes = await fetch('https://api.grammarly.com/ecosystem/api/v2/scores', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ text: text.slice(0, 10000) }),
+    });
+    if (!scoreRes.ok) {
+      const msg = await scoreRes.text().catch(() => '');
+      return res.status(scoreRes.status).json({
+        error: `Grammarly Writing Score API HTTP ${scoreRes.status}: ${msg.slice(0, 140)}`,
+      });
+    }
+    const scoreData = await scoreRes.json();
+    return res.json({ score: scoreData });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || 'Grammarly relay failed' });
+  }
+});
+
 // Serve built frontend
 const distDir = join(__dirname, 'dist');
 app.use(express.static(distDir));

@@ -3,7 +3,7 @@
  * safe empty-note cleanup (preserving photo/drawing notes), and responsive
  * 2-pane split layout on tablets/desktops (>= 900px).
  */
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { FileText } from 'lucide-react';
@@ -13,10 +13,14 @@ import NoteEditor from './components/NoteEditor';
 import StudyScreen from './components/StudyScreen';
 import ReviewDashboardScreen from './components/ReviewDashboardScreen';
 import ExamSummaryScreen from './components/ExamSummaryScreen';
+import ExamPaperScreen from './components/ExamPaperScreen';
 import TrashScreen from './components/TrashScreen';
 import SettingsScreen from './components/SettingsScreen';
 import { db, ensureSeeded, purgeOldTrash, noteHasContent } from './store/db';
+import { lockVault, subscribeVault } from './lib/vault';
 import { applySettings } from './theme';
+
+const DevToolkitScreen = lazy(() => import('./components/DevToolkitScreen'));
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -24,6 +28,7 @@ export default function App() {
   const [folder, setFolder] = useState(null);
   const [note, setNote] = useState(null);
   const [noteInitialMode, setNoteInitialMode] = useState(null);
+  const [examPaperTarget, setExamPaperTarget] = useState(null); // { sourceNote?, sourceFolder?, returnScreen }
   const [sidebarTick, setSidebarTick] = useState(0);
   const [isWide, setIsWide] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth >= 900 : false
@@ -168,6 +173,33 @@ export default function App() {
     pushHistoryEntry('review');
   }, [pushHistoryEntry]);
 
+  const handleOpenToolkit = useCallback(() => {
+    setScreen('toolkit');
+    pushHistoryEntry('toolkit');
+  }, [pushHistoryEntry]);
+
+  const handleOpenExamPaper = useCallback(
+    ({ sourceNote = null, sourceFolder = null }) => {
+      setExamPaperTarget({
+        sourceNote,
+        sourceFolder,
+        returnScreen: screen,
+      });
+      setScreen('exam-paper');
+      pushHistoryEntry('exam-paper');
+    },
+    [screen, pushHistoryEntry]
+  );
+
+  const handleBackFromExamPaper = useCallback(() => {
+    const prev = examPaperTarget?.returnScreen;
+    setExamPaperTarget(null);
+    if (prev === 'study' && note) setScreen('study');
+    else if (prev === 'editor' && note) setScreen('editor');
+    else if (prev === 'exam' && folder) setScreen('exam');
+    else handleBackToFolders();
+  }, [examPaperTarget, note, folder, handleBackToFolders]);
+
   const handleNoteMoved = useCallback(
     newFolder => {
       if (newFolder) setFolder(newFolder);
@@ -189,6 +221,10 @@ export default function App() {
     if (overlayBackRef.current && overlayBackRef.current() === true) {
       return true;
     }
+    if (screen === 'exam-paper') {
+      handleBackFromExamPaper();
+      return true;
+    }
     if (screen === 'study') {
       await handleBackFromStudy();
       return true;
@@ -201,6 +237,7 @@ export default function App() {
       screen === 'list' ||
       screen === 'exam' ||
       screen === 'review' ||
+      screen === 'toolkit' ||
       screen === 'trash' ||
       screen === 'settings'
     ) {
@@ -208,12 +245,48 @@ export default function App() {
       return true;
     }
     return false;
-  }, [screen, handleBackFromStudy, handleBackFromEditor, handleBackToFolders]);
+  }, [screen, handleBackFromExamPaper, handleBackFromStudy, handleBackFromEditor, handleBackToFolders]);
 
   const logicalBackRef = useRef(handleLogicalBack);
   useEffect(() => {
     logicalBackRef.current = handleLogicalBack;
   }, [handleLogicalBack]);
+
+  // Auto-lock private vault when switching apps / backgrounding tab
+  useEffect(() => {
+    const onHide = () => {
+      if (document.visibilityState === 'hidden') lockVault();
+    };
+    document.addEventListener('visibilitychange', onHide);
+    let capStateListener = null;
+    if (Capacitor.isNativePlatform?.()) {
+      CapApp.addListener('appStateChange', ({ isActive }) => {
+        if (!isActive) lockVault();
+      })
+        .then(h => {
+          capStateListener = h;
+        })
+        .catch(() => {});
+    }
+    const unsub = subscribeVault(unlocked => {
+      if (!unlocked) {
+        setFolder(cur => {
+          if (cur?.locked) {
+            setNote(null);
+            setScreen('folders');
+            return null;
+          }
+          return cur;
+        });
+        bumpSidebar();
+      }
+    });
+    return () => {
+      document.removeEventListener('visibilitychange', onHide);
+      capStateListener?.remove?.();
+      unsub();
+    };
+  }, [bumpSidebar]);
 
   // Android Capacitor hardware back button
   useEffect(() => {
@@ -263,11 +336,13 @@ export default function App() {
           note={note}
           initialMode={noteInitialMode}
           folderName={folder?.name || ''}
+          folderMode={folder?.mode || 'study'}
           onOpenNote={handleOpenNote}
           onNoteMoved={handleNoteMoved}
           onNoteDeleted={handleNoteDeleted}
           onNoteChanged={handleNoteChanged}
           onRegisterBack={registerOverlayBack}
+          onOpenExamPaper={srcNote => handleOpenExamPaper({ sourceNote: srcNote })}
           onOpenStudy={async () => {
             const fresh = await db.notes.get(note.id);
             if (fresh) {
@@ -281,7 +356,22 @@ export default function App() {
       );
     }
     if (screen === 'study' && note) {
-      return <StudyScreen note={note} onBack={handleBackFromStudy} />;
+      return (
+        <StudyScreen
+          note={note}
+          onBack={handleBackFromStudy}
+          onOpenExamPaper={handleOpenExamPaper}
+        />
+      );
+    }
+    if (screen === 'exam-paper' && examPaperTarget) {
+      return (
+        <ExamPaperScreen
+          sourceNote={examPaperTarget.sourceNote}
+          sourceFolder={examPaperTarget.sourceFolder}
+          onBack={handleBackFromExamPaper}
+        />
+      );
     }
     if (screen === 'review') {
       return (
@@ -292,8 +382,29 @@ export default function App() {
         />
       );
     }
+    if (screen === 'toolkit') {
+      return (
+        <Suspense
+          fallback={
+            <div className="screen" style={{ alignItems: 'center', justifyContent: 'center' }}>
+              <div className="scan-indicator">
+                <span className="spinner" /> Loading IT Toolkit…
+              </div>
+            </div>
+          }
+        >
+          <DevToolkitScreen onBack={handleBackToFolders} onOpenNote={handleOpenNote} />
+        </Suspense>
+      );
+    }
     if (screen === 'exam' && folder) {
-      return <ExamSummaryScreen folder={folder} onBack={handleBackToFolders} />;
+      return (
+        <ExamSummaryScreen
+          folder={folder}
+          onBack={handleBackToFolders}
+          onOpenExamPaper={handleOpenExamPaper}
+        />
+      );
     }
     if (screen === 'trash') {
       return <TrashScreen onBack={handleBackToFolders} onChanged={bumpSidebar} />;
@@ -328,6 +439,7 @@ export default function App() {
               onOpenExam={handleOpenExam}
               onOpenNote={handleOpenNote}
               onOpenReview={handleOpenReview}
+              onOpenToolkit={handleOpenToolkit}
               onOpenTrash={handleOpenTrash}
               onOpenSettings={handleOpenSettings}
             />

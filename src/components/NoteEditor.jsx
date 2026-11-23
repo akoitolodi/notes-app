@@ -27,6 +27,8 @@ import {
   Printer,
   ClipboardCopy,
   FileText,
+  FileSpreadsheet,
+  ArrowUpRight,
 } from 'lucide-react';
 import { scanNote } from '../api/scan';
 import { scanLine } from '../api/scanLine';
@@ -44,15 +46,23 @@ import {
   deleteImageAttachment,
   resolveImageDataUrl,
   diffAndRemapBlocks,
+  getHiddenLockedFolderIds,
 } from '../store/db';
 import StrokeLayer, { renderStrokesToCanvas } from './StrokeLayer';
 import ImageStrip, { pickImage, compressImage } from './ImageManager';
 import ChatSheet from './ChatSheet';
 import { summarizeNote, ocrImage, findRelatedNotes } from '../lib/aiFeatures';
 import { instantiateTemplate } from '../lib/templates';
+import { groupNoteLines } from '../lib/codeHighlight';
+import { findBacklinks, findNoteByWikiTitle } from '../lib/wikiLinks';
+import { NOTE_MODE_LIST, resolveNoteMode, getModeMeta } from '../lib/noteModes';
 import SlideUpPanel from './SlideUpPanel';
 import FolderPickerSheet from './FolderPickerSheet';
-import { NoteLine as NoteLineComponent } from './InlineComponents';
+import {
+  NoteLine as NoteLineComponent,
+  CodeBlockCard,
+  MarkdownTableBlock,
+} from './InlineComponents';
 import EditModeView from './editor/EditModeView';
 import AnnotateBar from './editor/AnnotateBar';
 import MarkdownContent from './ui/MarkdownContent';
@@ -69,7 +79,9 @@ export default function NoteEditor({
   note,
   initialMode = null,
   folderName,
+  folderMode = 'study',
   onOpenStudy,
+  onOpenExamPaper,
   onBackToList,
   onOpenNote,
   onNoteMoved,
@@ -80,6 +92,10 @@ export default function NoteEditor({
   const { confirm, toast } = useDialog();
 
   const [mode, setMode] = useState(() => initialMode || (noteHasContent(note) ? 'read' : 'edit'));
+  const [noteModeOverride, setNoteModeOverride] = useState(note?.mode || '');
+  const activeNoteMode = resolveNoteMode({ mode: noteModeOverride }, { mode: folderMode });
+  const activeModeMeta = getModeMeta(activeNoteMode);
+  const [backlinks, setBacklinks] = useState([]);
   const [title, setTitle] = useState(note?.title || '');
   const [body, setBody] = useState(note?.body || '');
   const [subject, setSubject] = useState(
@@ -281,6 +297,59 @@ export default function NoteEditor({
     };
   }, [mode, title, body, subject, note.id, blocks, onNoteChanged]);
 
+  // Refresh cross-folder [[Wiki-Link]] backlinks pointing to this note (excluding locked folders)
+  useEffect(() => {
+    if (!title?.trim()) {
+      setBacklinks([]);
+      return undefined;
+    }
+    let live = true;
+    Promise.all([db.notes.toArray(), getHiddenLockedFolderIds()])
+      .then(([allNotes, hiddenIds]) => {
+        if (!live) return;
+        setBacklinks(findBacklinks({ id: note.id, title }, allNotes, hiddenIds));
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [note.id, title, mode]);
+
+  const handleWikiLinkTap = useCallback(
+    async targetTitle => {
+      const [allNotes, hiddenIds] = await Promise.all([
+        db.notes.toArray(),
+        getHiddenLockedFolderIds(),
+      ]);
+      const existing = findNoteByWikiTitle(targetTitle, allNotes, hiddenIds);
+      if (existing) {
+        onOpenNote?.(existing);
+        return;
+      }
+      const ok = await confirm({
+        title: `Create "${targetTitle}"?`,
+        message: 'No unlocked note with that title exists yet. Create a new linked note now?',
+        confirmLabel: 'Create note',
+      });
+      if (!ok) return;
+      const created = await createNote(folderId, targetTitle, '', subject || 'General');
+      onNoteChanged?.();
+      onOpenNote?.(created, null, { startInEdit: true });
+    },
+    [confirm, folderId, subject, onNoteChanged, onOpenNote]
+  );
+
+  const handleSetNoteMode = async nextMode => {
+    setNoteModeOverride(nextMode);
+    await updateNote(note.id, { mode: nextMode || null });
+    onNoteChanged?.({ mode: nextMode || null });
+    toast(
+      nextMode
+        ? `Note mode: ${getModeMeta(nextMode).label}`
+        : `Using folder mode (${getModeMeta(folderMode).label})`
+    );
+  };
+
   // Cleanup abort controllers & timers on unmount
   useEffect(() => {
     return () => {
@@ -375,7 +444,10 @@ export default function NoteEditor({
     setIsScanning(true);
     setScanError(null);
     try {
-      const result = await scanNote(body, subject, linesToScan, { signal: controller.signal });
+      const result = await scanNote(body, subject, linesToScan, {
+        noteMode: activeNoteMode,
+        signal: controller.signal,
+      });
       const freshBlocks = result.blocks || [];
       const scannedSet = new Set(linesToScan);
 
@@ -993,6 +1065,8 @@ export default function NoteEditor({
         onSaveOnly={handleSaveOnly}
         onSaveAndExplain={handleSaveAndExplain}
         onApplyTemplate={handleApplyTemplate}
+        noteMode={activeNoteMode}
+        currentNoteId={note.id}
       />
     );
   }
@@ -1157,25 +1231,77 @@ export default function NoteEditor({
             />
           )}
 
-          {/* Note Lines */}
+          {/* Note Lines (groups fenced code blocks & Markdown tables cleanly while preserving per-line AI explanations) */}
           <div className="note-lines">
-            {lines.map((_, i) => (
-              <NoteLineComponent
-                key={i}
-                i={i}
-                lines={lines}
-                blockByLine={blockByLine}
-                lineHasExpl={lineHasExpl}
-                lineMistake={lineMistake}
-                onLineTap={handleLineTap}
-                onToggleChecklist={toggleChecklist}
-                applyCorrection={applyCorrection}
-                dismissMistake={dismissMistake}
-                dismissed={dismissed}
-                showHint={showHint}
-              />
-            ))}
+            {groupNoteLines(lines).map(seg => {
+              if (seg.type === 'code') {
+                return (
+                  <CodeBlockCard
+                    key={`code-${seg.startLine}`}
+                    lang={seg.lang}
+                    code={seg.code}
+                    noteContext={`${title} (${subject})`}
+                  />
+                );
+              }
+              if (seg.type === 'table') {
+                return (
+                  <MarkdownTableBlock
+                    key={`tbl-${seg.startLine}`}
+                    headers={seg.headers}
+                    rows={seg.rows}
+                    onWikiLinkTap={handleWikiLinkTap}
+                  />
+                );
+              }
+              return (
+                <NoteLineComponent
+                  key={seg.index}
+                  i={seg.index}
+                  lines={lines}
+                  blockByLine={blockByLine}
+                  lineHasExpl={lineHasExpl}
+                  lineMistake={lineMistake}
+                  onLineTap={handleLineTap}
+                  onToggleChecklist={toggleChecklist}
+                  applyCorrection={applyCorrection}
+                  dismissMistake={dismissMistake}
+                  dismissed={dismissed}
+                  showHint={showHint}
+                  onWikiLinkTap={handleWikiLinkTap}
+                />
+              );
+            })}
           </div>
+
+          {backlinks.length > 0 && (
+            <div className="backlinks-card">
+              <div className="settings-label" style={{ marginBottom: 6 }}>
+                Linked from ({backlinks.length})
+              </div>
+              {backlinks.map(bl => (
+                <button
+                  key={bl.id}
+                  type="button"
+                  className="backlink-row"
+                  onClick={async () => {
+                    const target = await getNote(bl.id);
+                    if (target) onOpenNote?.(target);
+                  }}
+                >
+                  <div className="flex items-center justify-between gap-6">
+                    <span style={{ fontWeight: 650, fontSize: 14 }}>{bl.title}</span>
+                    <ArrowUpRight size={14} style={{ color: 'var(--accent-ink)', flexShrink: 0 }} />
+                  </div>
+                  {bl.snippet && (
+                    <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginTop: 2 }}>
+                      {bl.snippet}
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
 
           {body.trim() && (
             <button
@@ -1247,6 +1373,43 @@ export default function NoteEditor({
         <div className="export-overlay" onClick={() => setMoreOpen(false)}>
           <div className="export-sheet" onClick={e => e.stopPropagation()}>
             <div className="export-title">{title || 'Note Options'}</div>
+
+            <div className="settings-label" style={{ marginBottom: 6 }}>
+              AI Mode ({noteModeOverride ? activeModeMeta.label : `Folder: ${getModeMeta(folderMode).label}`})
+            </div>
+            <div className="mode-picker-row" style={{ marginBottom: 12 }}>
+              <button
+                type="button"
+                className={`mode-pick-chip${!noteModeOverride ? ' active' : ''}`}
+                onClick={() => handleSetNoteMode('')}
+              >
+                Auto
+              </button>
+              {NOTE_MODE_LIST.map(m => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={`mode-pick-chip${noteModeOverride === m.id ? ' active' : ''}`}
+                  onClick={() => handleSetNoteMode(m.id)}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+
+            {onOpenExamPaper && activeNoteMode !== 'journal' && (
+              <button
+                type="button"
+                className="export-btn"
+                onClick={() => {
+                  setMoreOpen(false);
+                  onOpenExamPaper({ ...note, title, body, subject });
+                }}
+              >
+                <FileSpreadsheet size={18} /> Build Exam Paper (Bond Paper)
+              </button>
+            )}
+
             <button
               type="button"
               className="export-btn"
@@ -1265,7 +1428,7 @@ export default function NoteEditor({
                 handleSaveAndExplain();
               }}
             >
-              <Sparkles size={18} /> Re-scan with AI
+              <Sparkles size={18} /> Re-scan ({activeModeMeta.actionLabel})
             </button>
             <button type="button" className="export-btn" onClick={handleTogglePin}>
               {pinned ? <PinOff size={18} /> : <Pin size={18} />}
@@ -1405,6 +1568,7 @@ export default function NoteEditor({
         <ChatSheet
           note={{ ...note, body, title, subject, chat: chatMsgs }}
           subject={subject}
+          noteMode={activeNoteMode}
           onClose={() => setChatOpen(false)}
           onAppendToNote={text => {
             appendTextToNote(text);

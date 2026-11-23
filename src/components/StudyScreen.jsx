@@ -21,6 +21,7 @@ import {
   ShieldAlert,
   Lightbulb,
   MessageCircleQuestion,
+  FileSpreadsheet,
 } from 'lucide-react';
 import {
   generateCloze,
@@ -482,7 +483,7 @@ function PracticeGrader({ note }) {
   );
 }
 
-export default function StudyScreen({ note, onBack }) {
+export default function StudyScreen({ note, onBack, onOpenExamPaper = null }) {
   const { toast } = useDialog();
   const [tab, setTab] = useState('cards'); // cards | quiz | blanks | think
   const flashcards = note?.flashcards || [];
@@ -599,7 +600,18 @@ export default function StudyScreen({ note, onBack }) {
           <ChevronLeft size={20} /> Note
         </button>
         <span className="navbar-title">Study</span>
-        <span style={{ width: 64 }} />
+        {onOpenExamPaper ? (
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => onOpenExamPaper({ sourceNote: note })}
+            title="Convert this note into an answerable & printable bond-paper exam"
+          >
+            <FileSpreadsheet size={14} /> Exam Paper
+          </button>
+        ) : (
+          <span style={{ width: 64 }} />
+        )}
       </header>
 
       <div className="large-title">{note?.title || 'Study Mode'}</div>

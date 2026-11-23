@@ -22,6 +22,9 @@ import {
   LayoutTemplate,
   Flame,
   Brain,
+  Lock,
+  Unlock,
+  Wrench,
 } from 'lucide-react';
 import {
   db,
@@ -29,13 +32,23 @@ import {
   createFolder,
   deleteFolder,
   renameFolder,
+  updateFolder,
   searchNotes,
   createNote,
 } from '../store/db';
 import { instantiateTemplate } from '../lib/templates';
 import { getReviewStats } from '../lib/spacedRepetition';
+import { NOTE_MODE_LIST, getModeMeta } from '../lib/noteModes';
+import { isDevToolkitEnabled } from '../lib/aiConfig';
+import {
+  isVaultUnlocked,
+  hasVaultPin,
+  lockVault,
+  subscribeVault,
+} from '../lib/vault';
 import TemplatePickerSheet from './TemplatePickerSheet';
 import ImportSheet from './ImportSheet';
+import PinLockSheet from './PinLockSheet';
 import { useDialog } from './ui/DialogProvider';
 
 function highlightMatch(text, query) {
@@ -59,6 +72,7 @@ export default function FoldersScreen({
   onOpenExam,
   onOpenNote,
   onOpenReview,
+  onOpenToolkit,
   onOpenTrash,
   onOpenSettings,
 }) {
@@ -70,9 +84,13 @@ export default function FoldersScreen({
     trashCount: 0,
     dueCardsCount: 0,
     totalCardsCount: 0,
+    hasLockedFolders: false,
     tags: [],
   });
   const [reviewStats, setReviewStats] = useState(() => getReviewStats());
+  const [vaultUnlocked, setVaultUnlocked] = useState(() => isVaultUnlocked());
+  const [pinRequest, setPinRequest] = useState(null); // { mode: 'unlock'|'setup', onDone }
+  const [showToolkit, setShowToolkit] = useState(() => isDevToolkitEnabled());
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
@@ -105,11 +123,20 @@ export default function FoldersScreen({
   const refresh = useCallback(async () => {
     setSummary(await getHomeSummary());
     setReviewStats(getReviewStats());
+    setShowToolkit(isDevToolkitEnabled());
+    setVaultUnlocked(isVaultUnlocked());
   }, []);
 
   useEffect(() => {
     refresh();
   }, [refresh, refreshKey]);
+
+  useEffect(() => {
+    return subscribeVault(unlocked => {
+      setVaultUnlocked(unlocked);
+      getHomeSummary().then(setSummary).catch(() => {});
+    });
+  }, []);
 
   // Debounced global search across all folders (title, body, AI explanations & terms)
   useEffect(() => {
@@ -214,13 +241,86 @@ export default function FoldersScreen({
     onOpenNote(created, defaultFolder || { id: '__all__', name: 'All Notes' }, { startInEdit: true });
   };
 
-  const { folders, totalNotes, pinnedCount, trashCount, dueCardsCount = 0, totalCardsCount = 0, tags } = summary;
+  const handleFolderClick = folder => {
+    if (folder.locked && !isVaultUnlocked()) {
+      setPinRequest({
+        mode: hasVaultPin() ? 'unlock' : 'setup',
+        title: `Unlock "${folder.name}"`,
+        onDone: () => {
+          refresh();
+          onOpenFolder(folder);
+        },
+      });
+      return;
+    }
+    onOpenFolder(folder);
+  };
+
+  const handleSetFolderMode = async (folder, nextMode) => {
+    setMenuFolder(null);
+    await updateFolder(folder.id, { mode: nextMode });
+    toast(`"${folder.name}" set to ${getModeMeta(nextMode).label} mode`);
+    refresh();
+  };
+
+  const handleToggleFolderLock = async folder => {
+    setMenuFolder(null);
+    if (folder.locked) {
+      const doUnlock = async () => {
+        await updateFolder(folder.id, { locked: false });
+        toast(`Removed PIN lock from "${folder.name}"`);
+        refresh();
+      };
+      if (!isVaultUnlocked() && hasVaultPin()) {
+        setPinRequest({
+          mode: 'unlock',
+          title: `Unlock "${folder.name}"`,
+          onDone: doUnlock,
+        });
+      } else {
+        await doUnlock();
+      }
+      return;
+    }
+
+    const doLock = async () => {
+      await updateFolder(folder.id, { locked: true });
+      lockVault();
+      toast(`"${folder.name}" locked & hidden from All Notes & Search`, { type: 'success' });
+      refresh();
+    };
+    if (!hasVaultPin()) {
+      setPinRequest({
+        mode: 'setup',
+        title: `Lock "${folder.name}"`,
+        onDone: doLock,
+      });
+    } else {
+      await doLock();
+    }
+  };
+
+  const { folders, totalNotes, pinnedCount, trashCount, dueCardsCount = 0, totalCardsCount = 0, hasLockedFolders = false, tags } = summary;
 
   return (
     <div className="screen list-pad-bottom">
       <header className="navbar">
         <span className="navbar-title" style={{ opacity: 0 }}>Folders</span>
         <div className="flex items-center gap-6">
+          {hasLockedFolders && vaultUnlocked && (
+            <button
+              type="button"
+              className="navbar-btn"
+              aria-label="Lock private vault"
+              title="Lock private vault now"
+              onClick={() => {
+                lockVault();
+                toast('Private vault locked');
+              }}
+            >
+              <Lock size={18} />
+            </button>
+          )}
           <button
             className={`navbar-btn${searching ? ' navbar-btn-active' : ''}`}
             aria-label="Search all notes"
@@ -398,6 +498,24 @@ export default function FoldersScreen({
         </button>
       </div>
 
+      {/* Optional Dev & IT Toolkit Add-on (toggleable in Settings) */}
+      {showToolkit && (
+        <div className="list-group" style={{ marginTop: 8, marginBottom: 8 }}>
+          <button type="button" className="list-item" onClick={onOpenToolkit}>
+            <span className="list-item-icon">
+              <Wrench size={17} />
+            </span>
+            <div className="list-item-body">
+              <div className="list-item-title">Dev &amp; IT Toolkit</div>
+              <div className="list-item-subtitle">
+                Offline IT tools &amp; cheat sheets
+              </div>
+            </div>
+            <ChevronRight size={17} className="list-item-chevron" />
+          </button>
+        </div>
+      )}
+
       {/* Subject Folders */}
       <div className="section-heading">Subjects</div>
       <div className="list-group">
@@ -417,12 +535,12 @@ export default function FoldersScreen({
                   longPressedRef.current = false;
                   return;
                 }
-                onOpenFolder(folder);
+                handleFolderClick(folder);
               }}
               onKeyDown={e => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault();
-                  onOpenFolder(folder);
+                  handleFolderClick(folder);
                 }
               }}
               onTouchStart={() => startLongPress(folder)}
@@ -434,16 +552,25 @@ export default function FoldersScreen({
               }}
             >
               <span className="list-item-icon">
-                <Folder size={17} />
+                {folder.locked && !vaultUnlocked ? <Lock size={16} /> : <Folder size={17} />}
               </span>
               <div className="list-item-body">
-                <div className="list-item-title">{folder.name}</div>
+                <div className="list-item-title">
+                  <span>{folder.name}</span>
+                  {folder.mode && folder.mode !== 'study' && (
+                    <span className={`mode-badge mode-${folder.mode}`}>
+                      {getModeMeta(folder.mode).badge}
+                    </span>
+                  )}
+                </div>
                 <div className="list-item-subtitle">
-                  {folder.noteCount} note{folder.noteCount === 1 ? '' : 's'}
+                  {folder.locked && !vaultUnlocked
+                    ? 'Private · PIN locked'
+                    : `${folder.noteCount} note${folder.noteCount === 1 ? '' : 's'}`}
                 </div>
               </div>
               <div className="list-item-meta">
-                {folder.noteCount > 0 && (
+                {folder.noteCount > 0 && !(folder.locked && !vaultUnlocked) && folder.mode !== 'journal' && (
                   <button
                     type="button"
                     className="row-action-chip"
@@ -451,7 +578,7 @@ export default function FoldersScreen({
                       e.stopPropagation();
                       onOpenExam?.(folder);
                     }}
-                    title="Exam summary"
+                    title="Exam summary & paper builder"
                   >
                     <GraduationCap size={14} /> Exam
                   </button>
@@ -519,7 +646,31 @@ export default function FoldersScreen({
         <div className="export-overlay" onClick={() => setMenuFolder(null)}>
           <div className="export-sheet" onClick={e => e.stopPropagation()}>
             <div className="export-title">{menuFolder.name}</div>
-            {menuFolder.noteCount > 0 && (
+
+            <div className="settings-label" style={{ marginBottom: 6 }}>Folder Mode</div>
+            <div className="mode-picker-row" style={{ marginBottom: 12 }}>
+              {NOTE_MODE_LIST.map(m => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={`mode-pick-chip${(menuFolder.mode || 'study') === m.id ? ' active' : ''}`}
+                  onClick={() => handleSetFolderMode(menuFolder, m.id)}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              className="export-btn"
+              onClick={() => handleToggleFolderLock(menuFolder)}
+            >
+              {menuFolder.locked ? <Unlock size={18} /> : <Lock size={18} />}
+              {menuFolder.locked ? 'Remove PIN lock' : 'Lock folder with PIN (Private)'}
+            </button>
+
+            {menuFolder.noteCount > 0 && menuFolder.mode !== 'journal' && (
               <button
                 type="button"
                 className="export-btn"
@@ -529,7 +680,7 @@ export default function FoldersScreen({
                   onOpenExam?.(f);
                 }}
               >
-                <GraduationCap size={18} /> Exam Summary
+                <GraduationCap size={18} /> Exam Summary &amp; Paper
               </button>
             )}
             <button
@@ -572,6 +723,19 @@ export default function FoldersScreen({
             onOpenNote(created, targetFolder);
           }}
           onClose={() => setImportOpen(false)}
+        />
+      )}
+
+      {pinRequest && (
+        <PinLockSheet
+          mode={pinRequest.mode}
+          title={pinRequest.title}
+          onSuccess={() => {
+            const done = pinRequest.onDone;
+            setPinRequest(null);
+            done?.();
+          }}
+          onClose={() => setPinRequest(null)}
         />
       )}
 

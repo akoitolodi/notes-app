@@ -2,8 +2,130 @@
  * Read-mode note line components — rich Markdown + KaTeX rendering per line,
  * interactive checklists, mistake boxes, and tap-to-explain margin indicators.
  */
-import { Check, AlertTriangle } from 'lucide-react';
-import { renderRichNoteLine, renderInlineRich } from './ui/MarkdownContent';
+import { useState } from 'react';
+import { Check, AlertTriangle, Copy, Bug, ChevronUp } from 'lucide-react';
+import MarkdownContent, { renderRichNoteLine, renderInlineRich } from './ui/MarkdownContent';
+import { tokenizeCode } from '../lib/codeHighlight';
+import { debugCodeWithAI } from '../lib/aiFeatures';
+
+/** Interactive syntax-highlighted fenced code card for Read Mode (Copy + 1-tap Debug/Trace). */
+export function CodeBlockCard({ lang = '', code = '', noteContext = '' }) {
+  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [analysis, setAnalysis] = useState('');
+  const [err, setErr] = useState('');
+  const tokens = tokenizeCode(code, lang);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleDebug = async () => {
+    if (busy) return;
+    if (analysis) {
+      setAnalysis('');
+      return;
+    }
+    setBusy(true);
+    setErr('');
+    try {
+      const res = await debugCodeWithAI({
+        code,
+        lang,
+        noteContext,
+        onToken: partial => setAnalysis(partial),
+      });
+      setAnalysis(res);
+    } catch (e) {
+      setErr(e?.message || 'Code analysis failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="code-card">
+      <div className="code-card-head">
+        <span className="code-card-lang">{lang || 'code'}</span>
+        <div className="flex items-center gap-6">
+          <button
+            type="button"
+            className="code-card-btn"
+            onClick={handleDebug}
+            disabled={busy}
+            title="Trace execution, spot bugs & Big-O"
+          >
+            {busy ? (
+              <span className="spinner" style={{ width: 12, height: 12 }} />
+            ) : analysis ? (
+              <ChevronUp size={13} />
+            ) : (
+              <Bug size={13} />
+            )}
+            <span>{busy ? 'Tracing…' : analysis ? 'Hide trace' : 'Trace / Debug'}</span>
+          </button>
+          <button type="button" className="code-card-btn" onClick={handleCopy}>
+            {copied ? <Check size={13} /> : <Copy size={13} />}
+            <span>{copied ? 'Copied' : 'Copy'}</span>
+          </button>
+        </div>
+      </div>
+      <pre className="code-card-pre">
+        <code>
+          {tokens.map((tk, idx) =>
+            tk.type === 'plain' ? (
+              tk.text
+            ) : (
+              <span key={idx} className={`tok-${tk.type}`}>
+                {tk.text}
+              </span>
+            )
+          )}
+        </code>
+      </pre>
+      {err && <div className="inline-mistake" style={{ margin: '8px 10px' }}>{err}</div>}
+      {analysis && (
+        <div className="code-card-analysis">
+          <MarkdownContent text={analysis} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Clean responsive GFM table card for Read Mode. */
+export function MarkdownTableBlock({ headers = [], rows = [], onWikiLinkTap = null }) {
+  return (
+    <div className="md-table-wrap" style={{ margin: '10px 0' }}>
+      <table className="md-table">
+        <thead>
+          <tr>
+            {headers.map((h, hi) => (
+              <th key={hi}>{renderInlineRich(h, `rth-${hi}`, { allowHashtags: true, onWikiLinkTap })}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, ri) => (
+            <tr key={ri}>
+              {headers.map((_, ci) => (
+                <td key={ci}>
+                  {renderInlineRich(r[ci] || '', `rtd-${ri}-${ci}`, { allowHashtags: true, onWikiLinkTap })}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 /** Which explanation variant text to show for a block. */
 export function activeVariant(block) {
@@ -61,6 +183,7 @@ export function NoteLine({
   dismissMistake,
   dismissed,
   showHint = false,
+  onWikiLinkTap = null,
 }) {
   const raw = lines[i] || '';
   const b = blockByLine[i];
@@ -93,7 +216,7 @@ export function NoteLine({
           <span
             style={checked ? { textDecoration: 'line-through', opacity: 0.55 } : null}
           >
-            {renderInlineRich(checkMatch[4] || '\u00A0', `chk-${i}`, { allowHashtags: true })}
+            {renderInlineRich(checkMatch[4] || '\u00A0', `chk-${i}`, { allowHashtags: true, onWikiLinkTap })}
           </span>
         </div>
         {hint && (
@@ -114,7 +237,7 @@ export function NoteLine({
     );
   }
 
-  const parsed = renderRichNoteLine(raw, `ln-${i}`);
+  const parsed = renderRichNoteLine(raw, `ln-${i}`, { onWikiLinkTap });
   const indentStyle = parsed.indent ? { paddingLeft: 6 + parsed.indent * 16 } : undefined;
 
   return (

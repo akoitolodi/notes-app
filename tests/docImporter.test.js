@@ -101,8 +101,10 @@ describe('Document Importer (.pptx, .md, .txt)', () => {
 });
 
 describe('Note Templates', () => {
-  it('exposes 6 study templates including Cornell Notes and Formula Sheet with LaTeX', () => {
-    expect(NOTE_TEMPLATES.length).toBe(6);
+  it('exposes categorized general (8) and optional tech (4) templates including Cornell & Formula Sheet', () => {
+    expect(NOTE_TEMPLATES.length).toBe(12);
+    expect(NOTE_TEMPLATES.filter(t => t.category !== 'tech').length).toBe(8);
+    expect(NOTE_TEMPLATES.filter(t => t.category === 'tech').length).toBe(4);
     const cornell = instantiateTemplate('cornell');
     expect(cornell.title).toContain('Cornell');
     expect(cornell.body).toContain('## Key Cues & Questions');

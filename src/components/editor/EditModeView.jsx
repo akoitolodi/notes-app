@@ -30,6 +30,8 @@ import {
   Play,
   Square,
   Wand2,
+  SpellCheck,
+  Link2,
 } from 'lucide-react';
 import ImageStrip, { pickImage, compressImage } from '../ImageManager';
 import TemplatePickerSheet from '../TemplatePickerSheet';
@@ -37,7 +39,10 @@ import {
   DICTATION_LANGS,
   createDictationSession,
 } from '../../lib/voiceDictation';
-import { cleanDictation } from '../../lib/aiFeatures';
+import { cleanDictation, polishWritingWithAI } from '../../lib/aiFeatures';
+import { runGrammarCheck, applyGrammarFix } from '../../lib/grammarCheck';
+import { getModeMeta } from '../../lib/noteModes';
+import { db, getHiddenLockedFolderIds } from '../../store/db';
 import { useDialog } from '../ui/DialogProvider';
 
 export default function EditModeView({
@@ -66,9 +71,120 @@ export default function EditModeView({
   onSaveOnly,
   onSaveAndExplain,
   onApplyTemplate = null,
+  noteMode = 'study',
+  currentNoteId = null,
 }) {
   const { toast } = useDialog();
+  const modeMeta = getModeMeta(noteMode);
   const [templateSheetOpen, setTemplateSheetOpen] = useState(false);
+
+  // [[Wiki-Link]] autocomplete state
+  const [allNoteTitles, setAllNoteTitles] = useState([]);
+  const [wikiSuggest, setWikiSuggest] = useState(null); // { query, startIdx, cursorIdx }
+
+  // Writing & Grammar Polish tray state
+  const [grammarOpen, setGrammarOpen] = useState(false);
+  const [grammarBusy, setGrammarBusy] = useState(false);
+  const [grammarResult, setGrammarResult] = useState(null);
+  const [grammarError, setGrammarError] = useState('');
+  const [polishBusy, setPolishBusy] = useState('');
+
+  useEffect(() => {
+    let live = true;
+    Promise.all([db.notes.toArray(), getHiddenLockedFolderIds()])
+      .then(([allNotes, hiddenIds]) => {
+        if (!live) return;
+        const titles = allNotes
+          .filter(
+            n =>
+              n &&
+              !n.trashed &&
+              n.id !== currentNoteId &&
+              !hiddenIds.has(n.folderId) &&
+              (n.title || '').trim()
+          )
+          .map(n => n.title.trim());
+        setAllNoteTitles([...new Set(titles)].sort((a, b) => a.localeCompare(b)));
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [currentNoteId]);
+
+  const detectWikiTrigger = (val, cursorPos) => {
+    const before = String(val || '').slice(0, cursorPos);
+    const m = /\[\[([^[\]\n]*)$/.exec(before);
+    if (!m) {
+      setWikiSuggest(null);
+      return;
+    }
+    setWikiSuggest({
+      query: m[1].toLowerCase(),
+      startIdx: before.length - m[0].length,
+      cursorIdx: cursorPos,
+    });
+  };
+
+  const insertWikiSuggestion = targetTitle => {
+    if (!wikiSuggest) return;
+    const { startIdx, cursorIdx } = wikiSuggest;
+    const next = `${body.slice(0, startIdx)}[[${targetTitle}]]${body.slice(cursorIdx)}`;
+    onBodyChange(next);
+    setWikiSuggest(null);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (el) {
+        const pos = startIdx + targetTitle.length + 4;
+        el.focus();
+        el.setSelectionRange(pos, pos);
+      }
+    });
+  };
+
+  const handleRunGrammar = async () => {
+    if (!body.trim() || grammarBusy) return;
+    setGrammarOpen(true);
+    setGrammarBusy(true);
+    setGrammarError('');
+    try {
+      const res = await runGrammarCheck(body);
+      setGrammarResult(res);
+    } catch (e) {
+      setGrammarError(e?.message || 'Grammar check failed');
+    } finally {
+      setGrammarBusy(false);
+    }
+  };
+
+  const handleApplyGrammarIssue = (issue, replacement) => {
+    const updated = applyGrammarFix(body, issue, replacement);
+    if (updated !== body) {
+      onBodyChange(updated);
+      setGrammarResult(prev =>
+        prev ? { ...prev, issues: prev.issues.filter(x => x.id !== issue.id) } : prev
+      );
+      toast('Applied grammar fix');
+    }
+  };
+
+  const handleAiPolish = async goal => {
+    if (!body.trim() || polishBusy) return;
+    setPolishBusy(goal);
+    setGrammarError('');
+    try {
+      const revised = await polishWritingWithAI({ text: body, goal, subject });
+      if (revised) {
+        onBodyChange(revised);
+        setGrammarResult(null);
+        toast('Polished — tap Undo anytime to revert', { type: 'success' });
+      }
+    } catch (e) {
+      setGrammarError(e?.message || 'AI polish failed');
+    } finally {
+      setPolishBusy('');
+    }
+  };
 
   // Voice-to-Notes dictation state
   const [dictState, setDictState] = useState('idle'); // 'idle' | 'listening' | 'paused'
@@ -278,9 +394,9 @@ export default function EditModeView({
                 type="button"
                 className="btn btn-primary btn-sm"
                 onClick={onSaveAndExplain}
-                title="Save and explain with AI (Ctrl+Shift+S)"
+                title={`Save and ${modeMeta.actionLabel.toLowerCase()} with AI (Ctrl+Shift+S)`}
               >
-                <Sparkles size={14} /> Explain
+                <Sparkles size={14} /> {modeMeta.actionLabel}
               </button>
             </>
           )}
@@ -467,12 +583,160 @@ export default function EditModeView({
           showAdd={false}
         />
 
+        {grammarOpen && (
+          <div className="grammar-bar">
+            <div className="flex justify-between items-center" style={{ marginBottom: 8 }}>
+              <span className="flex items-center gap-6" style={{ fontSize: 13, fontWeight: 700 }}>
+                <SpellCheck size={15} style={{ color: 'var(--accent-ink)' }} />
+                Writing &amp; Grammar Polish
+              </span>
+              <button
+                type="button"
+                className="navbar-btn"
+                style={{ width: 28, height: 28 }}
+                aria-label="Close grammar tray"
+                onClick={() => setGrammarOpen(false)}
+              >
+                <X size={14} />
+              </button>
+            </div>
+
+            <div className="flex gap-6" style={{ flexWrap: 'wrap', marginBottom: 8 }}>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                disabled={grammarBusy || !body.trim()}
+                onClick={handleRunGrammar}
+              >
+                {grammarBusy ? (
+                  <>
+                    <span className="spinner" style={{ width: 12, height: 12 }} /> Checking…
+                  </>
+                ) : (
+                  <>
+                    <SpellCheck size={13} /> Check Grammar (Free)
+                  </>
+                )}
+              </button>
+              {[
+                ['grammar', 'AI Fix'],
+                ['clearer', 'Clearer'],
+                ['academic', 'Academic'],
+                ['concise', 'Concise'],
+              ].map(([g, label]) => (
+                <button
+                  key={g}
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={Boolean(polishBusy) || !body.trim()}
+                  onClick={() => handleAiPolish(g)}
+                >
+                  {polishBusy === g ? (
+                    <span className="spinner" style={{ width: 12, height: 12 }} />
+                  ) : (
+                    <Wand2 size={12} />
+                  )}
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {grammarError && <div className="inline-mistake">{grammarError}</div>}
+
+            {grammarResult && (
+              <div style={{ marginTop: 6 }}>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                  Engine: <strong>{grammarResult.engine}</strong>
+                  {grammarResult.writingScore && (
+                    <span className="tag-pill" style={{ marginLeft: 8 }}>
+                      Grammarly Score: {JSON.stringify(grammarResult.writingScore.score ?? grammarResult.writingScore).slice(0, 48)}
+                    </span>
+                  )}
+                </div>
+                {grammarResult.notice && (
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                    {grammarResult.notice}
+                  </div>
+                )}
+                {grammarResult.issues.length === 0 ? (
+                  <div style={{ fontSize: 13, color: 'var(--ok)', fontWeight: 600 }}>
+                    No grammar or spelling issues found!
+                  </div>
+                ) : (
+                  <div className="grammar-issue-list">
+                    {grammarResult.issues.slice(0, 8).map(iss => (
+                      <div key={iss.id} className="grammar-issue-item">
+                        <div style={{ fontSize: 12.5, fontWeight: 600 }}>
+                          “{iss.badText || '…'}” — <span style={{ fontWeight: 400 }}>{iss.message}</span>
+                        </div>
+                        {iss.replacements.length > 0 && (
+                          <div className="flex gap-6 mt-8" style={{ flexWrap: 'wrap' }}>
+                            {iss.replacements.map(rep => (
+                              <button
+                                key={rep}
+                                type="button"
+                                className="tag-pill"
+                                style={{ cursor: 'pointer', background: 'var(--ok-bg)', color: 'var(--ok)' }}
+                                onClick={() => handleApplyGrammarIssue(iss, rep)}
+                              >
+                                Apply “{rep}”
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {wikiSuggest && (
+          <div className="wiki-suggest-tray">
+            <div className="flex items-center gap-6" style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginBottom: 4 }}>
+              <Link2 size={12} /> Link to note:
+            </div>
+            {(() => {
+              const matches = allNoteTitles
+                .filter(t => !wikiSuggest.query || t.toLowerCase().includes(wikiSuggest.query))
+                .slice(0, 5);
+              if (matches.length === 0) {
+                return (
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                    Type any title + <code>]]</code> to create a new link
+                  </div>
+                );
+              }
+              return (
+                <div className="flex gap-6" style={{ flexWrap: 'wrap' }}>
+                  {matches.map(t => (
+                    <button
+                      key={t}
+                      type="button"
+                      className="wiki-link-pill"
+                      onClick={() => insertWikiSuggestion(t)}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
         <textarea
           ref={textareaRef}
           className="editor-body"
-          placeholder="Start typing… Supports Markdown (# headings, **bold**), - [ ] checklists, #tags, and $LaTeX$ math."
+          placeholder="Start typing… Supports Markdown (# headings, **bold**, tables, ```code```), [[Wiki-Links]], - [ ] checklists, #tags, and $LaTeX$ math."
           value={body}
-          onChange={e => onBodyChange(e.target.value)}
+          onChange={e => {
+            onBodyChange(e.target.value);
+            detectWikiTrigger(e.target.value, e.target.selectionStart ?? e.target.value.length);
+          }}
+          onKeyUp={e => detectWikiTrigger(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
           aria-label="Note body"
           autoFocus
         />
@@ -554,6 +818,17 @@ export default function EditModeView({
           aria-label="Add image from gallery"
         >
           <ImageIcon size={17} />
+        </button>
+        <button
+          type="button"
+          className={`fmt-btn${grammarOpen ? ' active-rec' : ''}`}
+          style={grammarOpen ? { background: 'var(--accent)', color: 'var(--accent-text)' } : undefined}
+          onClick={() => setGrammarOpen(o => !o)}
+          title="Grammar check & AI writing polish"
+          aria-label="Grammar and writing polish"
+        >
+          <SpellCheck size={17} />
+          <span>Polish</span>
         </button>
         <button
           type="button"

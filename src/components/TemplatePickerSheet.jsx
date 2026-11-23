@@ -10,9 +10,16 @@ import {
   Sigma,
   FlaskConical,
   Zap,
+  Heart,
+  Compass,
+  Bug,
+  Code2,
+  Database,
+  Layers,
   X,
 } from 'lucide-react';
 import { NOTE_TEMPLATES } from '../lib/templates';
+import { isDevToolkitEnabled } from '../lib/aiConfig';
 
 const ICONS = {
   file: FileText,
@@ -21,9 +28,39 @@ const ICONS = {
   sigma: Sigma,
   flask: FlaskConical,
   zap: Zap,
+  heart: Heart,
+  compass: Compass,
+  bug: Bug,
+  code: Code2,
+  database: Database,
+  layers: Layers,
 };
 
 export default function TemplatePickerSheet({ onPick, onClose, title = 'New Note from Template' }) {
+  const showTech = isDevToolkitEnabled();
+  const generalTemplates = NOTE_TEMPLATES.filter(t => t.category !== 'tech');
+  const techTemplates = showTech ? NOTE_TEMPLATES.filter(t => t.category === 'tech') : [];
+
+  const renderCard = tpl => {
+    const Icon = ICONS[tpl.icon] || FileText;
+    return (
+      <button
+        key={tpl.id}
+        type="button"
+        className="template-card"
+        onClick={() => onPick(tpl.id)}
+      >
+        <span className="template-card-icon">
+          <Icon size={18} />
+        </span>
+        <div className="template-card-body">
+          <div className="template-card-name">{tpl.name}</div>
+          <div className="template-card-desc">{tpl.description}</div>
+        </div>
+      </button>
+    );
+  };
+
   const modal = (
     <div className="export-overlay" onClick={onClose}>
       <div
@@ -48,25 +85,17 @@ export default function TemplatePickerSheet({ onPick, onClose, title = 'New Note
         </div>
 
         <div className="template-grid">
-          {NOTE_TEMPLATES.map(tpl => {
-            const Icon = ICONS[tpl.icon] || FileText;
-            return (
-              <button
-                key={tpl.id}
-                type="button"
-                className="template-card"
-                onClick={() => onPick(tpl.id)}
-              >
-                <span className="template-card-icon">
-                  <Icon size={18} />
-                </span>
-                <div className="template-card-body">
-                  <div className="template-card-name">{tpl.name}</div>
-                  <div className="template-card-desc">{tpl.description}</div>
-                </div>
-              </button>
-            );
-          })}
+          <div className="settings-label" style={{ marginBottom: 2 }}>General, Study &amp; Reflection</div>
+          {generalTemplates.map(renderCard)}
+
+          {techTemplates.length > 0 && (
+            <>
+              <div className="settings-label" style={{ marginTop: 10, marginBottom: 2 }}>
+                Tech &amp; Coding (Optional Add-on)
+              </div>
+              {techTemplates.map(renderCard)}
+            </>
+          )}
         </div>
 
         <button

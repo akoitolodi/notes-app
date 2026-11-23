@@ -7,6 +7,7 @@ import { aiText, aiTextStream, aiVision } from './aiCore';
 import { getReasonModel, getExplainStyle } from './aiConfig';
 import { extractRelevantLines, retrieveCrossNoteContext } from './localRag';
 import { runMultiSourceResearch } from './research';
+import { getChatModeDirective } from './noteModes';
 import { parseJsonObject, stripThinking } from '../../shared/aiParsers.js';
 import { styleLine } from '../../shared/aiPrompts.js';
 
@@ -39,6 +40,7 @@ export async function chatWithNote({
   note,
   title,
   subject,
+  noteMode = 'study',
   siblingNotes = [],
   history = [],
   question,
@@ -55,6 +57,7 @@ export async function chatWithNote({
   const truncated = fullNote.length > 8000;
   const noteSlice = fullNote.slice(0, 8000);
   const sLine = getStyleLine(style);
+  const modeDirective = getChatModeDirective(noteMode);
   const lang = "Reply in the note's language.";
 
   const cleanHistory = history
@@ -125,6 +128,7 @@ ${researchBlock}`;
       timeoutMs: 180000,
       signal,
       onToken,
+      onStatus,
       onFallback,
     });
     return {
@@ -205,6 +209,7 @@ Write ONLY the verified, clear final answer now.`;
         timeoutMs: 180000,
         signal,
         onToken,
+        onStatus,
         onFallback,
       });
 
@@ -263,6 +268,7 @@ ${researchBlock || '(No external sources returned — answer from the notes and 
       timeoutMs: 180000,
       signal,
       onToken,
+      onStatus,
       onFallback,
     });
 
@@ -277,23 +283,38 @@ ${researchBlock || '(No external sources returned — answer from the notes and 
     };
   }
 
-  // ---- Quick Mode (1 single API call! Uses local BM25 grounding + Cross-Note RAG) ----
-  const relevantLines = extractRelevantLines(noteSlice, question, { maxLines: 12 });
-  const focusHint =
-    relevantLines.length > 0 && noteSlice.length > 1400
-      ? `MOST RELEVANT LINES IN THIS NOTE:\n${relevantLines.map(l => `- ${l}`).join('\n')}\n\nFULL NOTE CONTEXT:\n---\n${noteSlice.slice(0, 5000)}\n---`
-      : `NOTE:\n---\n${noteSlice}\n---`;
+  // ---- Quick Mode (1 single API call! Deduplicated prompt context for faster TTFT, zero quality loss) ----
+  let focusHint;
+  if (noteSlice.length <= 4500) {
+    focusHint = `NOTE:\n---\n${noteSlice}\n---`;
+  } else {
+    const relevantLines = extractRelevantLines(noteSlice, question, { maxLines: 16 });
+    const introSlice = noteSlice.slice(0, 1600);
+    focusHint =
+      relevantLines.length > 0
+        ? `MOST RELEVANT LINES IN THIS NOTE:\n${relevantLines.map(l => `- ${l}`).join('\n')}\n\nNOTE OPENING CONTEXT:\n---\n${introSlice}\n---`
+        : `NOTE:\n---\n${noteSlice.slice(0, 5000)}\n---`;
+  }
 
-  const sys = `You are a sharp, rigorous study tutor. ${sLine} ${lang}
+  const sys = `${
+    modeDirective
+      ? modeDirective
+      : 'You are a sharp, rigorous study tutor.'
+  } ${sLine} ${lang}
 NOTE TITLE: ${title || 'Untitled'} (${subject || 'General'})
 ${focusHint}
 ${crossBlock}
 
 GUIDELINES:
-- Ground claims in the note (and related folder notes when relevant). Clearly distinguish note facts from general knowledge.
+${
+  noteMode === 'journal'
+    ? `- Ground your response in what the user actually shared. Never lecture, quiz, or treat personal feelings as factual mistakes.
+- Keep your reply warm, clear, and concise (under 180 words) using clean Markdown.`
+    : `- Ground claims in the note (and related notes when relevant). Clearly distinguish note facts from general knowledge.
 - Think critically before answering: verify any math/logic internally, challenge flawed premises respectfully, and note key assumptions.
-- Keep answers crisp and clear (under 160 words) using clean Markdown (bold, bullets, inline math $...$).
-- If the note doesn't cover the question, answer helpfully from general knowledge while explicitly noting it's outside the note (and suggest toggling **Research** for cited sources).`;
+- Keep answers crisp and clear (under 180 words) using clean Markdown (bold, bullets, code blocks, inline math $...$).
+- If the note doesn't cover the question, answer helpfully from general knowledge while explicitly noting it's outside the note (and suggest toggling **Research** for cited sources).`
+}`;
 
   const text = await aiTextStream({
     system: sys,
@@ -303,6 +324,7 @@ GUIDELINES:
     timeoutMs: 180000,
     signal,
     onToken,
+    onStatus,
     onFallback,
   });
 
@@ -621,4 +643,53 @@ RULES:
     signal,
   });
   return stripThinking(out).trim() || clean;
+}
+
+// ---------------- 14. 1-Tap AI Writing Polish ----------------
+export async function polishWritingWithAI({ text, goal = 'grammar', subject = 'General', signal = null }) {
+  const clean = String(text || '').trim();
+  if (!clean) return '';
+  const goalDirectives = {
+    grammar: 'Fix spelling, grammar, punctuation, and awkward phrasing while preserving the author’s voice, structure, Markdown, code blocks, and math formulas.',
+    clearer: 'Improve clarity, flow, and readability while preserving all facts, Markdown headings, code blocks, and math formulas.',
+    academic: 'Elevate the tone to clear, formal academic writing suitable for university reports and papers while keeping exact meaning, Markdown, and math.',
+    concise: 'Tighten wordiness and remove repetition while keeping every key fact, definition, code block, and formula intact.',
+  };
+  const sys = `You are a careful writing editor.
+TASK: ${goalDirectives[goal] || goalDirectives.grammar}
+RULES:
+- Preserve Markdown formatting, [[wiki-links]], #tags, fenced code blocks, and $LaTeX$ math exactly.
+- Keep the original language (including English or Taglish if used).
+- Output ONLY the revised text — no intro, no explanations, no markdown fence wrapping the whole reply.`;
+
+  const out = await aiText({
+    system: sys,
+    user: `CONTEXT: ${subject}\n\nTEXT TO POLISH:\n---\n${clean.slice(0, 9000)}\n---`,
+    maxTokens: 2400,
+    timeoutMs: 180000,
+    signal,
+  });
+  return stripThinking(out).trim() || clean;
+}
+
+// ---------------- 15. Explain / Trace / Debug Code Block (Live Streaming!) ----------------
+export async function debugCodeWithAI({ code, lang = '', noteContext = '', onToken = null, signal = null }) {
+  const src = String(code || '').trim();
+  if (!src) return '';
+  const sys = `You are a sharp computer science & programming mentor reviewing a code snippet from a student's note.
+Provide a crisp, high-signal Markdown analysis (under 240 words):
+- **What It Does**: 1–2 sentences explaining the intent.
+- **Step-by-Step Trace**: Brief dry run of key variables / execution flow.
+- **Bugs & Edge Cases**: Flag any syntax/logic bugs, off-by-one errors, null/empty pitfalls, or security issues (or state "Looks solid" if clean).
+- **Complexity & Tip**: Time/Space Big-O (when applicable) and 1 practical improvement.`;
+
+  const out = await aiTextStream({
+    system: sys,
+    user: `LANGUAGE: ${lang || 'auto-detect'}\n${noteContext ? `NOTE CONTEXT: ${noteContext.slice(0, 600)}\n\n` : ''}CODE:\n\`\`\`${lang}\n${src.slice(0, 5000)}\n\`\`\``,
+    maxTokens: 1200,
+    timeoutMs: 180000,
+    onToken,
+    signal,
+  });
+  return stripThinking(out).trim();
 }

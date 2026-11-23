@@ -155,6 +155,7 @@ export async function aiTextStream({
   useReasoning = false,
   signal = null,
   onToken = null,
+  onStatus = null,
   onFallback = null,
 }) {
   if (!onToken) {
@@ -170,18 +171,26 @@ export async function aiTextStream({
       headers: { 'Content-Type': 'application/json' },
       bodyObj: { messages, maxTokens, modelOverride },
       timeoutMs,
+      firstByteTimeoutMs: 0,
       signal,
       onToken,
+      onStatus,
       fallbackTextFn: () => termuxChat(messages, maxTokens, timeoutMs, modelOverride, signal),
     });
   }
 
   const candidates = getDirectCandidates(modelOverride, useReasoning);
+  const hasFallbacks = candidates.length > 1;
   let lastErr = null;
 
   for (let idx = 0; idx < candidates.length; idx++) {
     const c = candidates[idx];
+    const moreLeft = idx < candidates.length - 1;
     if (c.isFallback) onFallback?.(c.name);
+
+    // If a backup provider exists and primary stalls with 0 bytes for 18s (25s for reasoning), fail over fast!
+    const ttftWatchdogMs =
+      hasFallbacks && moreLeft ? (useReasoning ? 28000 : 18000) : 0;
 
     for (let attempt = 0; attempt < (c.isFallback ? 1 : 2); attempt++) {
       try {
@@ -190,19 +199,28 @@ export async function aiTextStream({
           headers: { Authorization: `Bearer ${c.key}`, 'Content-Type': 'application/json' },
           bodyObj: { model: c.model, messages, temperature: 0.4, max_tokens: maxTokens, stream: true },
           timeoutMs,
+          firstByteTimeoutMs: ttftWatchdogMs,
           signal,
           onToken,
+          onStatus,
           fallbackTextFn: () => directSingleCall(c, messages, maxTokens, timeoutMs, signal),
         });
       } catch (err) {
         if (err?.isCancelled) throw err;
         lastErr = err;
-        if (err?.retryable && attempt === 0 && !c.isFallback) {
-          await sleep(1200, signal);
+        if (err?.retryable && !err?.isFirstByteStall && attempt === 0 && !c.isFallback) {
+          await sleep(750, signal);
           continue;
         }
-        // Only try next fallback provider on rate-limit / server error / retired model
-        if (!(err?.retryable || err?.httpStatus === 404 || err?.httpStatus === 410)) {
+        // Fail over to backup provider on rate-limit / server error / stall / retired model
+        if (
+          !(
+            err?.retryable ||
+            err?.isFirstByteStall ||
+            err?.httpStatus === 404 ||
+            err?.httpStatus === 410
+          )
+        ) {
           throw err;
         }
         break;
@@ -213,15 +231,49 @@ export async function aiTextStream({
   throw lastErr || new Error('AI request failed');
 }
 
-async function streamRequest({ url, headers, bodyObj, timeoutMs, signal, onToken, fallbackTextFn }) {
+async function streamRequest({
+  url,
+  headers,
+  bodyObj,
+  timeoutMs,
+  firstByteTimeoutMs = 0,
+  signal,
+  onToken,
+  onStatus = null,
+  fallbackTextFn,
+}) {
   const ctrl = createAbortController(timeoutMs, signal);
+  let stalledFirstByte = false;
+  let ttftTimer = null;
+
+  const clearTtft = () => {
+    if (ttftTimer) {
+      clearTimeout(ttftTimer);
+      ttftTimer = null;
+    }
+  };
+
+  // Dedicated controller so TTFT watchdog can abort fetch without firing parent signal
+  const innerCtrl = new AbortController();
+  const onOuterAbort = () => innerCtrl.abort();
+  ctrl.signal.addEventListener('abort', onOuterAbort, { once: true });
+
+  if (firstByteTimeoutMs > 0) {
+    ttftTimer = setTimeout(() => {
+      stalledFirstByte = true;
+      innerCtrl.abort();
+    }, firstByteTimeoutMs);
+  }
+
   try {
     const res = await fetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(bodyObj),
-      signal: ctrl.signal,
+      signal: innerCtrl.signal,
     });
+
+    clearTtft();
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
@@ -242,6 +294,8 @@ async function streamRequest({ url, headers, bodyObj, timeoutMs, signal, onToken
     const decoder = new TextDecoder('utf-8');
     let buffer = '';
     let rawAccum = '';
+    let reasoningChars = 0;
+    let lastStatusTs = 0;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -258,11 +312,34 @@ async function streamRequest({ url, headers, bodyObj, timeoutMs, signal, onToken
         try {
           const parsed = JSON.parse(payload);
           if (parsed.error) throw new Error(parsed.error?.message || String(parsed.error));
-          const delta = parsed.choices?.[0]?.delta?.content;
+          const deltaObj = parsed.choices?.[0]?.delta || {};
+
+          // Surface live thinking activity for reasoning models (Nemotron / DeepSeek-R1 / Qwen3)
+          const rDelta = deltaObj.reasoning_content || deltaObj.reasoning || '';
+          if (typeof rDelta === 'string' && rDelta) {
+            reasoningChars += rDelta.length;
+            const now = Date.now();
+            if (onStatus && now - lastStatusTs > 450) {
+              lastStatusTs = now;
+              const estToks = Math.max(1, Math.round(reasoningChars / 4));
+              onStatus(`Reasoning… (~${estToks} tokens)`);
+            }
+          }
+
+          const delta = deltaObj.content;
           if (typeof delta === 'string' && delta) {
             rawAccum += delta;
             const visible = hideLiveThinking(rawAccum);
-            if (visible) onToken(visible);
+            if (visible) {
+              onToken(visible);
+            } else if (rawAccum.toLowerCase().includes('<think>') && onStatus) {
+              const now = Date.now();
+              if (now - lastStatusTs > 450) {
+                lastStatusTs = now;
+                const estToks = Math.max(1, Math.round(rawAccum.length / 4));
+                onStatus(`Reasoning… (~${estToks} tokens)`);
+              }
+            }
           }
         } catch (parseErr) {
           if (parseErr instanceof SyntaxError) continue;
@@ -278,6 +355,12 @@ async function streamRequest({ url, headers, bodyObj, timeoutMs, signal, onToken
     onToken(finalClean);
     return finalClean;
   } catch (err) {
+    if (stalledFirstByte) {
+      const stallErr = new Error('Primary AI provider stalled — trying backup provider…');
+      stallErr.isFirstByteStall = true;
+      stallErr.retryable = true;
+      throw stallErr;
+    }
     if (err?.name === 'AbortError') {
       if (ctrl.wasTimeout()) throw new Error('The AI took too long to answer. Tap Retry.');
       const cancelled = new Error('Cancelled');
@@ -286,6 +369,8 @@ async function streamRequest({ url, headers, bodyObj, timeoutMs, signal, onToken
     }
     throw err;
   } finally {
+    clearTtft();
+    ctrl.signal.removeEventListener('abort', onOuterAbort);
     ctrl.cleanup();
   }
 }

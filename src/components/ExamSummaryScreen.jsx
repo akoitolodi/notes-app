@@ -15,6 +15,7 @@ import {
   Sparkles,
   Eye,
   EyeOff,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { getNotesInFolder, db } from '../store/db';
 import { examSummary } from '../api/examSummary';
@@ -79,7 +80,7 @@ function PredictedQuestionCard({ item, index }) {
   );
 }
 
-export default function ExamSummaryScreen({ folder, onBack }) {
+export default function ExamSummaryScreen({ folder, onBack, onOpenExamPaper = null }) {
   const { toast } = useDialog();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -260,6 +261,18 @@ export default function ExamSummaryScreen({ folder, onBack }) {
       </header>
 
       <div className="large-title">{folder.name}</div>
+
+      {onOpenExamPaper && (
+        <div style={{ margin: '0 var(--gutter) 12px' }}>
+          <button
+            type="button"
+            className="btn btn-primary w-full"
+            onClick={() => onOpenExamPaper({ sourceFolder: folder })}
+          >
+            <FileSpreadsheet size={16} /> Build Answerable &amp; Printable Bond-Paper Exam
+          </button>
+        </div>
+      )}
 
       {isStale && !loading && (
         <div className="banner-stale">

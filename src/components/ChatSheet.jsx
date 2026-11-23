@@ -28,16 +28,11 @@ import {
   Link2,
 } from 'lucide-react';
 import { chatWithNote } from '../lib/aiFeatures';
-import { db } from '../store/db';
+import { getModeMeta } from '../lib/noteModes';
+import { resolveLinkedNotes } from '../lib/wikiLinks';
+import { db, getHiddenLockedFolderIds } from '../store/db';
 import MarkdownContent from './ui/MarkdownContent';
 import { useDialog } from './ui/DialogProvider';
-
-const STARTER_PROMPTS = [
-  'Explain the main idea simply',
-  'What assumptions or gaps are in these notes?',
-  'Quiz me with 3 reasoning questions',
-  'Research recent evidence on this topic',
-];
 
 function friendlyError(err) {
   const m = String(err?.message || err || '');
@@ -102,6 +97,7 @@ function ReasoningDrawer({ reasoning, verified }) {
 export default function ChatSheet({
   note,
   subject,
+  noteMode = 'study',
   style,
   onClose,
   onSave,
@@ -109,6 +105,8 @@ export default function ChatSheet({
   onCreateNoteFromChat,
 }) {
   const { confirm, toast } = useDialog();
+  const modeMeta = getModeMeta(noteMode);
+  const starterPrompts = modeMeta.chatStarters;
   const [messages, setMessages] = useState(() => cleanHistory(note?.chat));
   const [siblingNotes, setSiblingNotes] = useState([]);
   const [pending, setPending] = useState(null);
@@ -125,22 +123,32 @@ export default function ChatSheet({
   const inputRef = useRef(null);
   const abortRef = useRef(null);
 
-  // Load sibling notes in this folder once for instant offline Cross-Note Local RAG
+  // Load sibling folder notes + explicitly [[Wiki-Linked]] notes across unlocked folders for Cross-Note RAG
   useEffect(() => {
-    if (typeof note?.folderId !== 'number') return undefined;
     let live = true;
-    db.notes
-      .where('folderId')
-      .equals(note.folderId)
-      .toArray()
-      .then(list => {
-        if (live) setSiblingNotes(list.filter(n => n.id !== note.id && !n.trashed));
+    Promise.all([db.notes.toArray(), getHiddenLockedFolderIds()])
+      .then(([allNotes, hiddenIds]) => {
+        if (!live) return;
+        const siblings =
+          typeof note?.folderId === 'number'
+            ? allNotes.filter(
+                n =>
+                  n.folderId === note.folderId &&
+                  n.id !== note.id &&
+                  !n.trashed &&
+                  !hiddenIds.has(n.folderId)
+              )
+            : [];
+        const linked = resolveLinkedNotes(note, allNotes, hiddenIds);
+        const byId = new Map();
+        [...linked, ...siblings].forEach(n => byId.set(n.id, n));
+        setSiblingNotes([...byId.values()]);
       })
       .catch(() => {});
     return () => {
       live = false;
     };
-  }, [note?.folderId, note?.id]);
+  }, [note?.folderId, note?.id, note?.body]);
 
   useEffect(() => {
     listRef.current?.scrollTo?.({ top: listRef.current.scrollHeight, behavior: 'smooth' });
@@ -199,6 +207,7 @@ export default function ChatSheet({
         note: note.body,
         title: note.title,
         subject: note.subject || subject,
+        noteMode,
         siblingNotes,
         history: messages,
         question,
@@ -315,18 +324,28 @@ export default function ChatSheet({
             <div className="empty-icon">
               <MessageSquare size={26} />
             </div>
-            <div className="empty-title">Think deeper & research your notes</div>
+            <div className="empty-title">
+              {noteMode === 'journal'
+                ? 'A calm space to unpack your thoughts'
+                : noteMode === 'explore'
+                  ? 'Explore mechanisms, myths & deeper questions'
+                  : noteMode === 'code'
+                    ? 'Trace, debug & sharpen your technical notes'
+                    : 'Think deeper & research your notes'}
+            </div>
             <div className="empty-text">
-              Automatically connects related notes in this folder. Use <strong>Deep Think</strong> for 2-pass verified logic, <strong>Research</strong> for Wikipedia & academic papers, or <strong>Socratic</strong> to practice reasoning.
+              {noteMode === 'journal'
+                ? 'No quizzes, grading, or mistake flags — just a grounded conversation about what you wrote.'
+                : 'Connects related & [[linked]] notes automatically. Use Deep Think for 2-pass verified logic, Research for Wikipedia & papers, or Socratic mode.'}
             </div>
             <div className="chat-starters">
-              {STARTER_PROMPTS.map(promptText => (
+              {starterPrompts.map(promptText => (
                 <button
                   key={promptText}
                   type="button"
                   className="chat-starter-btn"
                   onClick={() => {
-                    const isRes = promptText.toLowerCase().startsWith('research');
+                    const isRes = promptText.toLowerCase().includes('research');
                     if (isRes) setResearchOn(true);
                     ask(promptText, isRes ? { research: true } : {});
                   }}

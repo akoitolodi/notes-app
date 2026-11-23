@@ -3,7 +3,7 @@
  * Single source of truth for both server (lib/) and direct client (src/lib/).
  */
 
-export const CHUNK_SIZE = 20;
+export const CHUNK_SIZE = 35;
 export const MAX_CONCURRENT = 4;
 
 export const STYLE_DIRECTIVES = {

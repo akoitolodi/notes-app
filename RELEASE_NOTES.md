@@ -1,23 +1,28 @@
-## What's New in Notes by Bai v1.4.0
+## What's New in Notes by Bai v1.5.0
 
-### Brand-New Name & Native Android Look
-- **Renamed to Notes by Bai**: Updated launcher name, manifest, splash screens, and in-app branding while keeping your app ID & database identical — install directly over `v1.3.0` to keep all notes and API keys intact.
-- **Custom Golden Notepad + AI Sparkle Icon**: Replaced the stock green Android robot icon with a custom vector adaptive icon and high-DPI launcher icons across all densities.
-- **Day & Night Splash Screens + System Bars**: Warm off-white splash & status bar in Light Mode and pure obsidian `#000000` splash & status bar in Dark Mode.
+### Multi-Life Modes & PIN-Locked Private Diary Vault
+- **4 Universal Folder & Note Modes**: Switch any folder (or override per note) between **Study** (default), **Journal** (empathetic reflection for personal rants — zero mistake flags or quizzes!), **Explore** (curiosity deep-dives for brain science, psychology & philosophy with myth-checking and follow-up questions), and **Code** (technical logic tracing, bug spotting & Big-O).
+- **PIN-Locked Private Vault**: Lock personal/diary folders behind a local salted SHA-256 4–6 digit PIN (with optional memory hint). Locked folders are strictly hidden from **All Notes**, **Pinned**, **Tags**, **Daily Review**, **Search**, and **Cross-Note RAG**, and auto-lock when switching apps.
+- **Passwordless AI Provider Lock (Hold-to-Unlock)**: Auto-locks your working AI provider & API key after a verified **Test Connection** (with exact `Connected in X.Xs` speed readout!). Unlock anytime by pressing & holding for 1.5 seconds — zero extra passwords to memorize.
 
-### PDF & PowerPoint (`.pdf` / `.pptx`) to Notes Importer
-- **100% On-Device Extraction**: Import `.pdf` documents, `.pptx` PowerPoint slides (titles, bullets, and speaker notes!), `.md`, and `.txt` files completely offline with zero server required.
-- **2 Import Modes**: Choose **Instant Clean Import** (0 API calls) or **Structure with AI** to automatically condense raw slides/PDFs into crisp Markdown headings, formulas, definitions, and `#tags`.
+### Answerable & Printable Bond-Paper Exam Builder
+- **Convert Any Note or Subject Folder into a Real Exam Paper**: Mix & match any combination and item count of **8 classic test types**: **Multiple Choice**, **True or False**, **Identification**, **Matching Type** (Column A ↔ B), **Enumeration**, **Problem Solving (Math/Coding)**, **Scenario Analysis**, and **Short Answer / Essay**.
+- **Answerable Directly On-Screen**: Authentic white short bond-paper sheet (`Name / Section / Date / Score`) with instant **offline auto-grading (0 API calls)** for objective items + partial credit on Enumeration, plus rubric self-scoring & optional 1-tap **AI Grade Written Answers**.
+- **Printable Short Bond Paper (`8.5" × 11"`) PDF & Direct Print**: Export as **Blank Exam + Separate Answer Key Page**, **Blank Exam Only**, or **My Answered & Graded Copy**.
 
-### Spaced Repetition Dashboard (SM-2 & Study Streaks)
-- **Daily Review Queue Across All Folders**: New **Daily Review** card on the Home screen tracks cards due today and your consecutive study streak.
-- **Real SM-2 Scheduling**: Rate flashcards as **Again**, **Hard**, **Good**, or **Easy** with exact calculated review intervals (`10m`, `1d`, `3d`, `6d+`) synced between the Dashboard and per-note Study Mode.
+### Universal Rich Writing, Second-Brain `[[Wiki-Links]]` & Writing Polish
+- **Syntax-Highlighted Code Cards**: Multi-line fenced code blocks render cleanly with language badge, 1-tap **Copy**, and live-streaming **Trace / Debug with AI**.
+- **Markdown Tables**: Clean scrollable GFM tables across Read Mode & Chat.
+- **`[[Wiki-Links]]` & Cross-Folder Backlinks**: Type `[[` in Edit Mode for autocomplete across unlocked folders, tap links to jump/create notes, view collapsible **Linked from** backlinks, and let AI Chat automatically pull linked cross-folder context.
+- **Pluggable Writing & Grammar Polish**: Free zero-key **LanguageTool** grammar check + **1-Tap AI Polish** (`AI Fix`, `Clearer`, `Academic`, `Concise`, supports Taglish!), plus optional **Grammarly EDU/Enterprise Writing Score** OAuth, **LanguageTool Plus**, and **Sapling AI** credential fields in Settings.
 
-### Voice-to-Notes & Lecture Dictation
-- **Live Speech-to-Text**: Tap the Mic button in Edit mode for continuous voice dictation with live preview, multi-language support (English, Filipino/Tagalog, etc.), and Pause/Resume.
-- **1-Tap AI Dictation Cleanup**: Automatically cleans spoken punctuation, removes filler words, and organizes your transcript into structured headings and bullet points.
+### Optional Dev & IT Toolkit Add-on (Clean Separate Space)
+- **Toggleable in Settings** (*Optional Add-ons → Show Dev & IT Toolkit* — hide anytime for a pure general-purpose notes layout!).
+- **100% Offline, 0 API Calls**: IPv4/CIDR Subnet Calculator, Binary/Octal/Decimal/Hex & Bitwise Converter, JSON Formatter / Base64 / URL / Offline JWT Decoder, Live Regex Tester, and 5 searchable IT Cheat Sheets (Git, SQL Joins, Linux CLI, HTTP Codes, Big-O) with 1-tap **Save as Note** + optional Tech templates.
 
-### Note Templates
-- Start notes fast with built-in academic templates: **Cornell Notes**, **Lecture Outline**, **Formula & Concept Sheet (LaTeX)**, **Lab Report**, and **Exam Cheat Sheet**.
+### Faster AI Responses (Zero Quality / Length Loss)
+- **TTFT Stall Watchdog**: Automatically fails over to a saved backup provider if a free-tier queue freezes for 18s with zero bytes — while keeping the full 180s window once streaming starts so long, thorough answers are never truncated.
+- **Live Reasoning Progress**: Shows active `Reasoning… (~N tokens)` status for hybrid thinking models (Nemotron, DeepSeek-R1, Qwen3) instead of a silent frozen spinner.
+- **Smarter Single-Pass Explain Scanning & Deduplicated Prompts**: Upgraded chunk window (35 lines) + `aiCore` retry/failover on Explain + live streaming on Code Trace & Summary.
 
-> **Update Note**: Install `Notes-by-Bai.apk` directly over your previous version (do not uninstall) so all existing notes, drawings, photos, and API keys stay intact.
+> **Update Note**: Install `Notes-by-Bai.apk` directly over `v1.4.0` (do not uninstall) — all your notes, flashcards, photos, drawings, and API keys stay 100% intact.

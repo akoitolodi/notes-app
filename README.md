@@ -1,22 +1,16 @@
-# Notes by Bai (v1.4.0)
+# Notes by Bai (v1.5.0)
 
-An offline-first Android, desktop & web study notes app styled like iOS Notes, enhanced with an AI study layer that explains your notes line by line, imports PDFs & PowerPoint slides offline, schedules flashcards with SM-2 spaced repetition, transcribes voice lectures, and generates quizzes, blanks, mnemonics, and exam packs.
+An offline-first Android, desktop & web notes app styled like iOS Notes — universal enough for class study, personal journaling, curiosity deep-dives, and coding — enhanced with a fast AI layer, answerable & printable bond-paper exams, PDF/PPTX importing, SM-2 spaced repetition, voice dictation, and an optional offline Dev & IT Toolkit.
 
 ## Features
 
-- **Offline-first & Safe**: Notes, SM-2 review progress, drawings, and image Blob attachments live locally in IndexedDB (Dexie v4), with auto-save, 30-day Trash recovery, and full JSON Backup & Restore.
-- **PDF, PowerPoint & Text Importer**: Import `.pdf`, `.pptx` (including slide bullets & speaker notes), `.md`, and `.txt` files 100% offline with 0 API calls — or toggle optional **Structure with AI** for clean Markdown study notes.
-- **SM-2 Spaced Repetition Dashboard**: Cross-folder **Daily Review** banner with Anki-style **Again / Hard / Good / Easy** intervals, live daily streak counter, and per-note Study Mode sync.
-- **Voice-to-Notes & Lecture Dictation**: Continuous live speech-to-text in Edit mode with multi-language presets (Auto, English, Filipino, Español, 日本語, 中文), Pause/Resume, and 1-tap **Clean transcript with AI**.
-- **6 Built-In Note Templates**: Start instantly from Blank, Cornell Notes, Lecture Outline, Formula & Concept Sheet (with `$LaTeX$`), Lab Report, or Exam Cheat Sheet.
-- **Rich Markdown + LaTeX Math**: Headings, bold/italic, code, interactive `- [ ]` checklists, `#tags`, and KaTeX equations (`$E = mc^2$` / `$$...$$`), plus a mobile formatting toolbar.
-- **Explain on Demand**: Smart LCS line diffing remaps existing explanations when you insert/move lines and scans only changed lines. Re-explain any line **Simpler** or with an **Example**, or accept/ignore mistake suggestions.
-- **Streaming AI Tutor & Multi-Step Research**: Grounded in your note **and** sibling folder notes (offline Cross-Note Local RAG), with **Deep Think** (2-pass Solve → Skeptical Verify), **Research** (zero-key Wikipedia + OpenAlex academic papers + optional Tavily with clickable citations & 1-tap Save as Note), and **Socratic** coaching mode.
-- **Vision OCR & Photo Explanations**: Snap or attach photos, zoom full-screen, extract text via OCR, or ask AI to explain diagrams and slides.
-- **Annotations**: Pen, highlighter, eraser, arrows, lines, and inline text labels with adaptive light/dark ink and Undo/Redo/Clear.
-- **Critical Thinking & Study Mode**: Interactive Flashcard Flip Deck with SM-2 scheduling, higher-order scored Quizzes, type-to-check Fill-in-the-Blank Cloze, **Challenge My Notes** logical & assumption audit, **Feynman Technique Coach**, Mnemonics, Answer Grader, Weakness Detection, and Folder Exam Summaries + Predicted Exam Questions.
-- **Free-Tier Resilient AI Backends**: Run directly against Groq, Google Gemini (AI Studio free tier), OpenRouter, OpenAI, Cerebras, Mistral, NVIDIA, Kilo, or any OpenAI-compatible API with automatic 429 retry & backup-provider auto-failover — or relay through your own local/Termux Express server or Vercel serverless functions.
-- **Unicode PDF Export & Native Android Polish**: Export notes or exam study packs to A4 PDF, with automatic 2-pane split view on tablets/desktops, Dark Mode, custom adaptive APK icon & Day/Night splash screen, and 5 WCAG-accessible accents.
+- **Multi-Life Modes & PIN-Locked Private Vault**: Switch folders or notes between **Study**, **Journal** (calm reflection, zero quizzes/mistake flags), **Explore** (curiosity & myth-checking), and **Code**, plus a salted SHA-256 PIN lock hiding private folders from Search, All Notes & Daily Review.
+- **Passwordless AI Provider Lock**: Auto-locks your verified AI provider & key (with `Connected in X.Xs` latency check) and unlocks via a tactile 1.5s Press-and-Hold — no extra password needed.
+- **Answerable & Printable Bond-Paper Exam Builder**: Convert any note or folder into an authentic `8.5" × 11"` exam paper combining any mix & count of 8 test types (MC, True/False, Identification, Matching, Enumeration, Problem Solving/Code, Scenario, Essay) — answerable right on screen with instant offline auto-grading + exportable to PDF/Print with a separate Answer Key page.
+- **Universal Rich Writing & Second-Brain Links**: Syntax-highlighted fenced code blocks (with 1-tap Copy & live-streaming Trace/Debug), Markdown tables, `[[Wiki-Links]]` with autocomplete & cross-folder backlinks, KaTeX math (`$E = mc^2$`), and pluggable Grammar & AI Writing Polish (free zero-key LanguageTool, optional Grammarly EDU Writing Score / Sapling keys, and 1-tap AI Polish).
+- **Optional Dev & IT Toolkit Add-on**: Clean, separate, toggleable offline toolkit (IPv4/CIDR Subnet Calculator, Base/Bitwise Converter, JSON/Base64/URL/JWT Inspector, Live Regex Tester, IT Cheat Sheets & Tech templates).
+- **Fast Free-Tier Resilient AI**: TTFT stall watchdog with automatic backup-provider failover, live reasoning progress indicator, single-pass 35-line scanning, Cross-Note Local RAG, Deep Think (Solve → Verify), zero-key Research (Wikipedia + OpenAlex), and Socratic coaching.
+- **Offline-First Core**: Dexie v4 IndexedDB storage, PDF/PPTX offline importer, SM-2 Daily Review & streaks, Voice-to-Notes dictation, OCR & photo explanations, Annotations, JSON Backup/Restore, custom adaptive Android icon, and Day/Night splashes.
 
 ## Quick Start
 

@@ -11,6 +11,7 @@
  */
 import Dexie from 'dexie';
 import { isCardDue, isCardMastered, normalizeCardState } from '../lib/spacedRepetition.js';
+import { isVaultUnlocked } from '../lib/vault.js';
 export { diffLines, diffAndRemapBlocks } from '../../shared/lineDiff.js';
 
 export const db = new Dexie('ai-class-notes');
@@ -87,8 +88,23 @@ export async function getFoldersWithCounts() {
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Return Set of folder IDs currently hidden because they are locked and vault is locked. */
+export async function getHiddenLockedFolderIds({ forceAll = false } = {}) {
+  if (!forceAll && isVaultUnlocked()) return new Set();
+  const folders = await db.folders.toArray();
+  return new Set(folders.filter(f => Boolean(f.locked)).map(f => f.id));
+}
+
 export async function getHomeSummary() {
   const folders = await db.folders.toArray();
+  const unlocked = isVaultUnlocked();
+  const hiddenIds = new Set(
+    unlocked ? [] : folders.filter(f => Boolean(f.locked)).map(f => f.id)
+  );
+  const journalFolderIds = new Set(
+    folders.filter(f => f.mode === 'journal').map(f => f.id)
+  );
+
   const counts = {};
   let totalNotes = 0;
   let pinnedCount = 0;
@@ -103,11 +119,16 @@ export async function getHomeSummary() {
       trashCount += 1;
       return;
     }
-    totalNotes += 1;
-    if (note.pinned) pinnedCount += 1;
     counts[note.folderId] = (counts[note.folderId] || 0) + 1;
 
-    if (Array.isArray(note.flashcards) && note.flashcards.length > 0) {
+    // Strictly hide locked folders' notes from smart views, tags, and Daily Review
+    if (hiddenIds.has(note.folderId)) return;
+
+    totalNotes += 1;
+    if (note.pinned) pinnedCount += 1;
+
+    const isJournal = note.mode === 'journal' || journalFolderIds.has(note.folderId);
+    if (!isJournal && Array.isArray(note.flashcards) && note.flashcards.length > 0) {
       const progress = note.studyData?.cardProgress || {};
       for (let i = 0; i < note.flashcards.length; i++) {
         totalCardsCount += 1;
@@ -142,14 +163,20 @@ export async function getHomeSummary() {
     trashCount,
     dueCardsCount,
     totalCardsCount,
+    hasLockedFolders: folders.some(f => Boolean(f.locked)),
     tags,
   };
 }
 
-export async function createFolder(name) {
+export async function createFolder(name, opts = {}) {
   const trimmed = String(name || '').trim();
   if (!trimmed) throw new Error('Folder name cannot be empty');
-  const id = await db.folders.add({ name: trimmed, createdAt: Date.now() });
+  const id = await db.folders.add({
+    name: trimmed,
+    mode: opts.mode || 'study',
+    locked: Boolean(opts.locked),
+    createdAt: Date.now(),
+  });
   return id;
 }
 
@@ -157,6 +184,12 @@ export async function renameFolder(id, name) {
   const trimmed = String(name || '').trim();
   if (!trimmed) return;
   await db.folders.update(id, { name: trimmed });
+}
+
+export async function updateFolder(id, patch) {
+  if (!id || !patch || typeof patch !== 'object') return null;
+  await db.folders.update(id, patch);
+  return db.folders.get(id);
 }
 
 /**
@@ -188,23 +221,25 @@ export async function deleteFolder(id, { permanent = false } = {}) {
 /** Notes inside a folder, or smart virtual views ('__all__', '__pinned__', '__tag:<name>'). */
 export async function getNotesInFolder(folderId, sort = 'edited') {
   let notes;
-  if (folderId === '__all__') {
-    notes = (await db.notes.toArray()).filter(n => !n.trashed);
-  } else if (folderId === '__pinned__') {
-    notes = (await db.notes.toArray()).filter(n => !n.trashed && n.pinned);
-  } else if (typeof folderId === 'string' && folderId.startsWith('__tag:')) {
-    const tag = folderId.slice(6).toLowerCase();
-    const re = new RegExp(`#${tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_-])`, 'i');
-    notes = (await db.notes.toArray()).filter(
-      n => !n.trashed && re.test(`${n.title || ''} ${n.body || ''}`)
-    );
+  if (folderId === '__all__' || folderId === '__pinned__' || (typeof folderId === 'string' && folderId.startsWith('__tag:'))) {
+    const hiddenIds = await getHiddenLockedFolderIds();
+    const pool = (await db.notes.toArray()).filter(n => !n.trashed && !hiddenIds.has(n.folderId));
+    if (folderId === '__all__') {
+      notes = pool;
+    } else if (folderId === '__pinned__') {
+      notes = pool.filter(n => n.pinned);
+    } else {
+      const tag = folderId.slice(6).toLowerCase();
+      const re = new RegExp(`#${tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![A-Za-z0-9_-])`, 'i');
+      notes = pool.filter(n => re.test(`${n.title || ''} ${n.body || ''}`));
+    }
   } else {
     notes = (await db.notes.where('folderId').equals(folderId).toArray()).filter(n => !n.trashed);
   }
   return sortNotes(notes, sort);
 }
 
-/** Search notes across title, body, AI explanations, and terms (sorted, trashed excluded). */
+/** Search notes across title, body, AI explanations, and terms (sorted, trashed & locked excluded). */
 export async function searchNotes(query, folderId = null, sort = 'edited') {
   const q = String(query || '').trim().toLowerCase();
   if (!q) return [];
@@ -212,7 +247,8 @@ export async function searchNotes(query, folderId = null, sort = 'edited') {
   if (folderId != null && typeof folderId === 'number') {
     pool = await db.notes.where('folderId').equals(folderId).toArray();
   } else {
-    pool = await db.notes.toArray();
+    const hiddenIds = await getHiddenLockedFolderIds();
+    pool = (await db.notes.toArray()).filter(n => !hiddenIds.has(n.folderId));
   }
   const matches = pool.filter(n => {
     if (n.trashed) return false;
@@ -564,7 +600,8 @@ export async function importBackup(payload, { mode = 'merge' } = {}) {
  */
 export async function getDueFlashcards(now = Date.now()) {
   const [folders, notes] = await Promise.all([db.folders.toArray(), db.notes.toArray()]);
-  const folderNames = new Map(folders.map(f => [f.id, f.name]));
+  const unlocked = isVaultUnlocked();
+  const folderById = new Map(folders.map(f => [f.id, f]));
 
   const dueCards = [];
   const allCards = [];
@@ -573,8 +610,12 @@ export async function getDueFlashcards(now = Date.now()) {
 
   for (const note of notes) {
     if (note.trashed || !Array.isArray(note.flashcards) || note.flashcards.length === 0) continue;
+    const f = folderById.get(note.folderId);
+    if (!unlocked && f?.locked) continue;
+    if (note.mode === 'journal' || f?.mode === 'journal') continue;
+
     const progress = note.studyData?.cardProgress || {};
-    const folderName = folderNames.get(note.folderId) || note.subject || 'General';
+    const folderName = f?.name || note.subject || 'General';
 
     for (let i = 0; i < note.flashcards.length; i++) {
       const card = note.flashcards[i];
