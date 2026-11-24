@@ -8,8 +8,80 @@ export const THEME_PRESET_KEY = 'aicn:themePreset'; // 'default' | preset id
 export const ACCENT_KEY = 'aicn:accent';           // key into ACCENTS
 export const SIZE_KEY = 'aicn:size';               // 'small' | 'medium' | 'large'
 export const PAPER_KEY = 'aicn:paper';             // 'blank' | 'ruled' | 'dot' | 'grid'
+export const FONT_KEY = 'aicn:font';               // key into FONT_PRESETS
 export const HINT_KEY = 'aicn:showHint';           // boolean string
 export const REDUCE_MOTION_KEY = 'aicn:reduceMotion'; // 'true' | 'false'
+
+export const FONT_PRESETS = [
+  {
+    id: 'system',
+    name: 'Clean Sans',
+    sample: 'Modern legible clarity',
+    category: 'Sans-Serif',
+    stack: "'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif",
+    pdfFont: 'helvetica',
+  },
+  {
+    id: 'times',
+    name: 'Times New Roman',
+    sample: 'Classic academic serif',
+    category: 'Serif',
+    stack: "'Times New Roman', Times, 'Liberation Serif', 'Noto Serif', Georgia, serif",
+    pdfFont: 'times',
+  },
+  {
+    id: 'georgia',
+    name: 'Georgia',
+    sample: 'Warm editorial book print',
+    category: 'Serif',
+    stack: "Georgia, Cambria, 'Noto Serif', 'Times New Roman', serif",
+    pdfFont: 'times',
+  },
+  {
+    id: 'garamond',
+    name: 'Garamond',
+    sample: 'Refined classic literature',
+    category: 'Serif',
+    stack: "Garamond, 'EB Garamond', 'Palatino Linotype', 'Book Antiqua', Georgia, serif",
+    pdfFont: 'times',
+  },
+  {
+    id: 'palatino',
+    name: 'Palatino',
+    sample: 'Crisp thesis & essay type',
+    category: 'Serif',
+    stack: "'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif",
+    pdfFont: 'times',
+  },
+  {
+    id: 'rounded',
+    name: 'Friendly Rounded',
+    sample: 'Soft casual study feel',
+    category: 'Rounded',
+    stack: "ui-rounded, 'SF Pro Rounded', 'Trebuchet MS', 'Segoe UI', sans-serif",
+    pdfFont: 'helvetica',
+  },
+  {
+    id: 'typewriter',
+    name: 'Courier Typewriter',
+    sample: 'Draft & outline typewriter',
+    category: 'Monospace',
+    stack: "'Courier New', Courier, 'Liberation Mono', monospace",
+    pdfFont: 'courier',
+  },
+  {
+    id: 'mono',
+    name: 'Code Mono',
+    sample: 'Aligned CS & math tables',
+    category: 'Monospace',
+    stack: "ui-monospace, 'SF Mono', Menlo, Consolas, 'Roboto Mono', monospace",
+    pdfFont: 'courier',
+  },
+];
+
+export function getFontPreset(id) {
+  return FONT_PRESETS.find(f => f.id === id) || FONT_PRESETS[0];
+}
 
 export const PAPER_STYLES = [
   ['blank', 'Blank'],
@@ -266,6 +338,7 @@ export function getSettings() {
       accent: localStorage.getItem(ACCENT_KEY) || 'indigo',
       size: localStorage.getItem(SIZE_KEY) || 'medium',
       paper: localStorage.getItem(PAPER_KEY) || 'blank',
+      font: localStorage.getItem(FONT_KEY) || 'system',
       reduceMotion: localStorage.getItem(REDUCE_MOTION_KEY) === 'true',
     };
   } catch {
@@ -275,6 +348,7 @@ export function getSettings() {
       accent: 'indigo',
       size: 'medium',
       paper: 'blank',
+      font: 'system',
       reduceMotion: false,
     };
   }
@@ -315,7 +389,7 @@ let mediaListenerAttached = false;
 export function applySettings() {
   if (typeof document === 'undefined') return;
   const root = document.documentElement;
-  const { theme, themePreset, accent, size, paper, reduceMotion } = getSettings();
+  const { theme, themePreset, accent, size, paper, font, reduceMotion } = getSettings();
   const preset = THEME_PRESETS.find(p => p.id === themePreset) || null;
 
   if (preset) {
@@ -361,6 +435,10 @@ export function applySettings() {
 
   root.classList.remove('fs-small', 'fs-large');
   if (size !== 'medium') root.classList.add('fs-' + size);
+
+  const fontPreset = getFontPreset(font);
+  root.style.setProperty('--font-note', fontPreset.stack);
+  root.dataset.font = fontPreset.id;
 
   updateMetaThemeColor(dark, theme, preset);
 

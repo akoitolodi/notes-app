@@ -20,6 +20,7 @@ import { Share } from '@capacitor/share';
 import { renderStrokesToCanvas } from '../components/StrokeLayer';
 import { resolveImageDataUrl } from '../store/db';
 import { PDF_STYLES, detectPdfStyle } from './pdfThemes';
+import { getSettings, getFontPreset } from '../theme';
 
 export { PDF_STYLES, detectPdfStyle };
 
@@ -619,7 +620,13 @@ export async function buildNotePDF({
       : PDF_THEME_SPECS[pdfStyle]
         ? pdfStyle
         : 'academic';
-  const theme = PDF_THEME_SPECS[resolvedStyleId] || PDF_THEME_SPECS.academic;
+  const baseTheme = PDF_THEME_SPECS[resolvedStyleId] || PDF_THEME_SPECS.academic;
+  const userFont = getFontPreset(getSettings().font);
+  const theme =
+    userFont.id !== 'system' &&
+    (!pdfStyle || pdfStyle === 'auto' || ['minimal', 'academic', 'editorial'].includes(resolvedStyleId))
+      ? { ...baseTheme, font: userFont.pdfFont }
+      : baseTheme;
 
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const yRef = { y: M };

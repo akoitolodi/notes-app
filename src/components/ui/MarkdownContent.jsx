@@ -6,20 +6,13 @@
  * - Inline **bold**, *italic*, ~~strike~~, `code`, [links](https://...), #hashtags, [1] citations
  * - Zero raw user HTML injection
  */
-import katex from 'katex';
+import { memo } from 'react';
+import 'katex/dist/katex.min.css';
+import { renderKatexCached } from '../../lib/katexRender';
 import { tokenizeCode, isTableDividerRow, splitTableRow } from '../../lib/codeHighlight';
 
 function renderKatex(expr, displayMode = false) {
-  try {
-    return katex.renderToString(expr.trim(), {
-      displayMode,
-      throwOnError: false,
-      strict: false,
-      trust: false,
-    });
-  } catch {
-    return null;
-  }
+  return renderKatexCached(expr, displayMode);
 }
 
 function isSafeUrl(url) {
@@ -246,7 +239,7 @@ export function renderRichNoteLine(rawLine, keyBase = 'ln', opts = {}) {
 /**
  * Full multi-line Markdown + KaTeX component (used in Chat, Summaries, Exam Summary, Study).
  */
-export default function MarkdownContent({ text, sources = null, className = '' }) {
+const MarkdownContent = memo(function MarkdownContent({ text, sources = null, className = '' }) {
   const lines = String(text || '').replace(/\r/g, '').split('\n');
   const out = [];
   let i = 0;
@@ -442,4 +435,6 @@ export default function MarkdownContent({ text, sources = null, className = '' }
   }
 
   return <div className={`md-root ${className}`.trim()}>{out}</div>;
-}
+});
+
+export default MarkdownContent;

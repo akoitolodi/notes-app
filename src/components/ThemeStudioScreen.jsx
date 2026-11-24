@@ -12,8 +12,11 @@ import {
   ACCENT_KEY,
   SIZE_KEY,
   PAPER_KEY,
+  FONT_KEY,
   PAPER_STYLES,
   THEME_PRESETS,
+  FONT_PRESETS,
+  getFontPreset,
   ACCENTS,
   getSettings,
   applySettings,
@@ -29,6 +32,7 @@ export default function ThemeStudioScreen({ onBack }) {
   const [accent, setAccent] = useState(initial.accent);
   const [size, setSize] = useState(initial.size);
   const [paper, setPaper] = useState(initial.paper);
+  const [font, setFont] = useState(initial.font || 'system');
 
   const persistAndApply = patch => {
     try {
@@ -51,6 +55,10 @@ export default function ThemeStudioScreen({ onBack }) {
       if (patch.paper !== undefined) {
         localStorage.setItem(PAPER_KEY, patch.paper);
         setPaper(patch.paper);
+      }
+      if (patch.font !== undefined) {
+        localStorage.setItem(FONT_KEY, patch.font);
+        setFont(patch.font);
       }
     } catch {
       // ignore storage errors
@@ -77,6 +85,7 @@ export default function ThemeStudioScreen({ onBack }) {
       accent: 'indigo',
       size: 'medium',
       paper: 'blank',
+      font: 'system',
     });
     toast('Reset to default Studio theme');
   };
@@ -84,6 +93,7 @@ export default function ThemeStudioScreen({ onBack }) {
   const lightPresets = THEME_PRESETS.filter(p => p.mode === 'light');
   const darkPresets = THEME_PRESETS.filter(p => p.mode === 'dark');
   const activeAccentMeta = ACCENTS[accent] || ACCENTS.indigo;
+  const activeFontMeta = getFontPreset(font);
 
   return (
     <div className="screen list-pad-bottom">
@@ -130,7 +140,7 @@ export default function ThemeStudioScreen({ onBack }) {
             <div className="theme-preview-actions">
               <span className="theme-preview-cta">Explain Note</span>
               <span className="theme-preview-chip">#exam-prep</span>
-              <span className="theme-preview-chip">Paper: {paper}</span>
+              <span className="theme-preview-chip">{activeFontMeta.name}</span>
             </div>
           </div>
         </div>
@@ -288,6 +298,32 @@ export default function ThemeStudioScreen({ onBack }) {
                 {label}
               </button>
             ))}
+          </div>
+
+          <div className="settings-label mt-16">Note Typeface / Font ({FONT_PRESETS.length})</div>
+          <div className="font-picker-grid">
+            {FONT_PRESETS.map(f => {
+              const active = font === f.id;
+              return (
+                <button
+                  key={f.id}
+                  type="button"
+                  className={`font-pick-card${active ? ' active' : ''}`}
+                  aria-pressed={active}
+                  onClick={() => persistAndApply({ font: f.id })}
+                >
+                  <span className="font-pick-aa" style={{ fontFamily: f.stack }}>
+                    Aa
+                  </span>
+                  <span style={{ minWidth: 0, textAlign: 'left', flex: 1 }}>
+                    <span className="font-pick-name" style={{ fontFamily: f.stack }}>
+                      {f.name}
+                    </span>
+                    <span className="font-pick-cat">{f.category}</span>
+                  </span>
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>

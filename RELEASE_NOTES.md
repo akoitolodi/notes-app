@@ -1,17 +1,17 @@
-## What's New in Notes by Bai v2.0.3
+## What's New in Notes by Bai v2.0.4
 
-### 1. Human-Like Reverse Feynman Personas + Taglish Toggle
-- **Choose Who You're Teaching**: Explain concepts to **Close Friend** (*Mika · Barkada*), **Friend / Classmate** (*Liam*), **Junior** (*Bea*), **Curious Kid** (*Toby, 9 y/o*), **Your Teacher** (*Prof. Reyes*), or **Panicking Groupmate** (*Gio · Quiz in 1hr*) — each with their own tone, opening line, and believable beginner misconceptions.
-- **English (Default) & Taglish Toggle**: Switch smoothly between natural English and casual Filipino college Taglish right inside the Reverse Feynman header.
-- **3-Axis Teaching Rubric (`Audience Fit`)**: Grades **Clarity**, **Accuracy**, and **Audience Fit** (how well you tailored your phrasing and analogies for that listener) with animated score bars, 3-dot typing indicator, and DeepTutor Learner Memory sync.
+### 1. Major App & Bundle Optimization
+- **~70% Smaller Initial Launch**: Code-split secondary screens, modals, `NotesListScreen`, `NoteEditor`, and KaTeX out of the initial boot path + idle-prefetch after Home loads so opening the app feels crisp and instant.
+- **Asset & Dead-Weight Removal (~1.15 MB pruned)**: Stripped redundant legacy KaTeX `.ttf`/`.woff` fonts (keeping modern `.woff2` only), stubbed unused optional jsPDF dependencies (`html2canvas` & `canvg`), and targeted `es2020`.
+- **Android R8 Shrinking (`versionCode 56`)**: Enabled `minifyEnabled true` + `shrinkResources true` in release Gradle builds with ProGuard keep rules protecting `BaiNativeTts`, `BaiNativeSpeech`, and Capacitor plugins.
+- **Zero-Lag Editor & Lightweight DB Index**: Added shared `getNoteIndexLite()` cache, stopped full `db.notes` scans while typing, stopped triggering full Home refreshes during paragraph autosaves, memoized Markdown/code cards + `250`-entry KaTeX LRU cache, used `useDeferredValue` for global search, deduplicated `plannerItems` reads, and added `content-visibility: auto` on long lists.
 
-### 2. Visual 30-Minute Timetable Grid & Study Load inside Course Dashboard
-- **Aesthetic Weekly Schedule Section (`Courses | Schedule`)**: Built directly into **Course Dashboard**! Automatically plots every course's meeting days (`MWF`, `TTh`, Sat/Sun), times, **Room** (`007-1B`, `207-B`, `503C`), **Teacher / Instructor**, and `LEC`/`LAB` badges onto a crisp 30-minute visual timetable (`Studio Gold` or `Course Colors` styles).
-- **Live Now / Up Next Tracker & Conflict Guard**: Shows your current running class (`LIVE NOW`) or countdown to your next class, draws a pulsing live time line across today's column, flags overlapping classes automatically, and offers a full **Study Load** view with **Total Units** and weekly class hours.
-- **Easy Class Meetings & Units Editor**: Assign `M T W Th F S Su` day pills, start/end times, `LEC`/`LAB`, room, teacher, and units cleanly inside the Add/Edit Course bottom sheet.
+### 2. Improved Annotate Colorization
+- **Studio Ink vs. Pastel Highlighter Palettes**: Separate curated palettes for ink (`Pen`, `Arrow`, `Line`, `Text`) and luminous pastel `Highlighter`, each with **remembered tool colors** so switching between Highlighter and Pen keeps your color!
+- **Adjustable Stroke Opacity & Recent Custom Colors**: Pick `25% | 40% | 65%` Highlighter opacity (`50% | 80% | 100%` for ink), save up to 5 recent custom hex colors, and view an active-color indicator pill in the toolbar.
 
-### 3. Cleaned-Up Course Dashboard & Subtle Micro-Animations
-- **Decluttered Layout**: Segmented `Courses | Schedule` switch, 3-tile Semester Summary Strip (`Subjects · Tasks Due · PH GWA / US GPA`), equal-height course cards showing Teacher, Next Class & Room, study progress bar, and clean `Modules · Tasks · AI` footer actions, plus a smooth bottom-sheet Add/Edit modal.
-- **Purposeful Animations + Reduce Motion Toggle**: Fast launch splash (<0.8s), subtle staggered Home/Course card entrance, 3-dot chat typing animation, pulsing live schedule indicator, and a new **Reduce animations** toggle in **Settings → Appearance**.
+### 3. Custom Note Fonts (`Times New Roman`, `Georgia`, `Garamond`, etc.)
+- **8 Zero-Download Note Typefaces**: Choose **Clean Sans**, **Times New Roman**, **Georgia**, **Garamond**, **Palatino**, **Friendly Rounded**, **Courier Typewriter**, or **Code Mono** inside **Themes & Palettes Studio** or **Settings → Appearance**.
+- **Applied Everywhere + PDF Support**: Updates Editor, Clean Visual Edit Mode, Read Mode, Theme Live Preview, and Note PDF exports cleanly while keeping code blocks monospace.
 
 > **Update Note**: Install `Notes-by-Bai.apk` directly over your current version (do not uninstall).

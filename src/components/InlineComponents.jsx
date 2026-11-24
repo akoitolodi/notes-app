@@ -2,14 +2,14 @@
  * Read-mode note line components — rich Markdown + KaTeX rendering per line,
  * interactive checklists, mistake boxes, and tap-to-explain margin indicators.
  */
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { Check, AlertTriangle, Copy, Bug, ChevronUp } from 'lucide-react';
 import MarkdownContent, { renderRichNoteLine, renderInlineRich } from './ui/MarkdownContent';
 import { tokenizeCode } from '../lib/codeHighlight';
 import { debugCodeWithAI } from '../lib/aiFeatures';
 
 /** Interactive syntax-highlighted fenced code card for Read Mode (Copy + 1-tap Debug/Trace). */
-export function CodeBlockCard({ lang = '', code = '', noteContext = '', zeroAi = false }) {
+export const CodeBlockCard = memo(function CodeBlockCard({ lang = '', code = '', noteContext = '', zeroAi = false }) {
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [analysis, setAnalysis] = useState('');
@@ -99,10 +99,10 @@ export function CodeBlockCard({ lang = '', code = '', noteContext = '', zeroAi =
       )}
     </div>
   );
-}
+});
 
 /** Clean responsive GFM table card for Read Mode. */
-export function MarkdownTableBlock({ headers = [], rows = [], onWikiLinkTap = null }) {
+export const MarkdownTableBlock = memo(function MarkdownTableBlock({ headers = [], rows = [], onWikiLinkTap = null }) {
   return (
     <div className="md-table-wrap" style={{ margin: '10px 0' }}>
       <table className="md-table">
@@ -127,7 +127,7 @@ export function MarkdownTableBlock({ headers = [], rows = [], onWikiLinkTap = nu
       </table>
     </div>
   );
-}
+});
 
 /** Which explanation variant text to show for a block. */
 export function activeVariant(block) {
@@ -138,7 +138,7 @@ export function activeVariant(block) {
 }
 
 /** Mistake reason + Accept fix / Ignore buttons. */
-export function MistakeBox({ mistake, block, onApplyCorrection, onDismissMistake }) {
+export const MistakeBox = memo(function MistakeBox({ mistake, block, onApplyCorrection, onDismissMistake }) {
   return (
     <div className="inline-mistake">
       <div className="flex items-center gap-6" style={{ fontWeight: 600 }}>
@@ -168,12 +168,12 @@ export function MistakeBox({ mistake, block, onApplyCorrection, onDismissMistake
       </div>
     </div>
   );
-}
+});
 
 const CHECK_RE = /^(\s*-\s\[)( |x|X)(\]\s*)(.*)$/;
 
 /** One rendered note line (used in read mode). */
-export function NoteLine({
+export const NoteLine = memo(function NoteLine({
   i,
   lines,
   blockByLine,
@@ -272,4 +272,4 @@ export function NoteLine({
       )}
     </div>
   );
-}
+});

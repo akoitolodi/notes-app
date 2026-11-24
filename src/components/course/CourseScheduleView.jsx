@@ -368,6 +368,7 @@ export default function CourseScheduleView({
                             (block.durationMin / 30) * SLOT_HEIGHT - 4
                           );
                           const lane = layoutByKey.get(block);
+                          const isSplitLane = Boolean(lane && lane.cols > 1);
                           const widthPct = lane ? 100 / lane.cols : 100;
                           const leftPct = lane ? lane.col * widthPct : 0;
                           const isLiveNow = nowState.currentClass?.id === block.id;
@@ -402,7 +403,7 @@ export default function CourseScheduleView({
                             >
                               <div className="timetable-block-head">
                                 <span className="timetable-block-code">{block.code}</span>
-                                {!compactBlock && block.kind === 'LAB' && (
+                                {!compactBlock && !isSplitLane && block.kind === 'LAB' && (
                                   <span className="timetable-block-badge">LAB</span>
                                 )}
                               </div>

@@ -8,7 +8,7 @@
  * - Instant offline Math, Algebra, Units, Chemistry, Physics, Stats, Subnets, Deadlines,
  *   Offline Flashcards, Error Debugging, Google Docs Import, and Filipino/Bisaya <-> English Translation!
  */
-import { useState, useEffect, useMemo } from 'react';
+import { memo, lazy, Suspense, useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Play,
@@ -39,10 +39,11 @@ import { classifyFolderNaiveBayes, findSimilarNotesOffline } from '../../lib/use
 import { executeCode } from '../../lib/codeRunner';
 import { aiText } from '../../lib/aiCore';
 import { importPublicGoogleLink } from '../../lib/courseExtras';
-import { db } from '../../store/db';
+import { db, getNoteIndexLite } from '../../store/db';
 import { syncDeadlineNotifications } from '../../lib/notifications';
-import MathGrapherTab from '../toolkit/MathGrapherTab';
 import { useDialog } from '../ui/DialogProvider';
+
+const MathGrapherTab = lazy(() => import('../toolkit/MathGrapherTab'));
 
 const KIND_ICONS = {
   code: Code2,
@@ -61,7 +62,7 @@ const KIND_ICONS = {
   similar_note: Link2,
 };
 
-export default function SmartDetectBar({
+const SmartDetectBar = memo(function SmartDetectBar({
   title = '',
   body,
   subject = 'General',
@@ -92,14 +93,14 @@ export default function SmartDetectBar({
     return () => clearTimeout(t);
   }, [body]);
 
-  // Load non-vault folders & notes once for 100% offline Naive Bayes & similarity pattern matching
+  // Load non-vault folders & lightweight note index once note has >= 20 chars
   useEffect(() => {
-    if (isZeroAi || !enabled) {
-      setCorpus(null);
+    if (isZeroAi || !enabled || debouncedBody.trim().length < 20) {
       return undefined;
     }
+    if (corpus) return undefined;
     let live = true;
-    Promise.all([db.folders.toArray(), db.notes.toArray()])
+    Promise.all([db.folders.toArray(), getNoteIndexLite()])
       .then(([folders, notes]) => {
         if (!live) return;
         setCorpus({ folders, notes });
@@ -108,7 +109,7 @@ export default function SmartDetectBar({
     return () => {
       live = false;
     };
-  }, [isZeroAi, enabled]);
+  }, [isZeroAi, enabled, debouncedBody, corpus]);
 
   const detections = useMemo(() => {
     const base = detectBlankNoteIntents(debouncedBody, { isZeroAi, enabled });
@@ -712,11 +713,15 @@ export default function SmartDetectBar({
                   <X size={17} />
                 </button>
               </div>
-              <MathGrapherTab initialExpr={graphModalExpr} />
+              <Suspense fallback={<div className="scan-indicator"><span className="spinner" /> Loading grapher…</div>}>
+                <MathGrapherTab initialExpr={graphModalExpr} />
+              </Suspense>
             </div>
           </div>,
           document.body
         )}
     </div>
   );
-}
+});
+
+export default SmartDetectBar;

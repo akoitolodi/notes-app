@@ -6,7 +6,7 @@
  * underneath for Read Mode, AI line explanations, Wiki-Links, Checklists, Tables,
  * Code Cards, Exam Paper Builder, and PDF export.
  */
-import katex from 'katex';
+import { renderKatexCached } from './katexRender.js';
 import { isTableDividerRow, splitTableRow } from './codeHighlight.js';
 
 export function escapeHtml(str) {
@@ -18,16 +18,7 @@ export function escapeHtml(str) {
 }
 
 function renderMathHtml(tex, displayMode = false) {
-  try {
-    return katex.renderToString(String(tex || '').trim(), {
-      displayMode,
-      throwOnError: false,
-      strict: false,
-      trust: false,
-    });
-  } catch {
-    return escapeHtml(tex);
-  }
+  return renderKatexCached(tex, displayMode) || escapeHtml(tex);
 }
 
 /** Convert inline Markdown (**bold**, *italic*, ~~strike~~, `code`, $math$, [[wiki]]) to clean HTML. */

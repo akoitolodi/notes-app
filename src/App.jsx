@@ -8,27 +8,37 @@ import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { FileText } from 'lucide-react';
 import FoldersScreen from './components/FoldersScreen';
-import NotesListScreen from './components/NotesListScreen';
-import NoteEditor from './components/NoteEditor';
-import StudyScreen from './components/StudyScreen';
-import ReviewDashboardScreen from './components/ReviewDashboardScreen';
-import ExamSummaryScreen from './components/ExamSummaryScreen';
-import ExamPaperScreen from './components/ExamPaperScreen';
-import TrashScreen from './components/TrashScreen';
-import SettingsScreen from './components/SettingsScreen';
-import ImportSheet from './components/ImportSheet';
 import { db, ensureSeeded, purgeOldTrash, noteHasContent } from './store/db';
 import { autoSyncCanvasIfStale } from './lib/canvasSync';
 import { syncDeadlineNotifications } from './lib/notifications';
 import { lockVault, subscribeVault } from './lib/vault';
 import { REDUCE_MOTION_KEY, applySettings } from './theme';
 
+const NotesListScreen = lazy(() => import('./components/NotesListScreen'));
+const NoteEditor = lazy(() => import('./components/NoteEditor'));
+const StudyScreen = lazy(() => import('./components/StudyScreen'));
+const ReviewDashboardScreen = lazy(() => import('./components/ReviewDashboardScreen'));
+const ExamSummaryScreen = lazy(() => import('./components/ExamSummaryScreen'));
+const ExamPaperScreen = lazy(() => import('./components/ExamPaperScreen'));
+const TrashScreen = lazy(() => import('./components/TrashScreen'));
+const SettingsScreen = lazy(() => import('./components/SettingsScreen'));
+const ImportSheet = lazy(() => import('./components/ImportSheet'));
 const DevToolkitScreen = lazy(() => import('./components/DevToolkitScreen'));
 const LearnCodingScreen = lazy(() => import('./components/LearnCodingScreen'));
 const StudentHubScreen = lazy(() => import('./components/StudentHubScreen'));
 const CoursesDashboardScreen = lazy(() => import('./components/CoursesDashboardScreen'));
 const AnnouncementsScreen = lazy(() => import('./components/AnnouncementsScreen'));
 const ThemeStudioScreen = lazy(() => import('./components/ThemeStudioScreen'));
+
+function ScreenLoading({ label = 'Loading…' }) {
+  return (
+    <div className="screen" style={{ alignItems: 'center', justifyContent: 'center' }}>
+      <div className="scan-indicator">
+        <span className="spinner" /> {label}
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -62,8 +72,8 @@ export default function App() {
   const bumpSidebar = useCallback(() => setSidebarTick(t => t + 1), []);
 
   const handleNoteChanged = useCallback(
-    updatedPatch => {
-      bumpSidebar();
+    (updatedPatch, opts = {}) => {
+      if (opts?.metadataChanged !== false) bumpSidebar();
       if (updatedPatch && typeof updatedPatch === 'object') {
         setNote(prev => (prev ? { ...prev, ...updatedPatch } : prev));
       }
@@ -114,6 +124,21 @@ export default function App() {
       clearTimeout(tGone);
     };
   }, [ready, splashPhase]);
+
+  // Idle-prefetch list & editor chunks once Home is interactive so tapping a note feels instant
+  useEffect(() => {
+    if (!ready || typeof window === 'undefined') return undefined;
+    const warm = () => {
+      import('./components/NotesListScreen').catch(() => {});
+      import('./components/NoteEditor').catch(() => {});
+    };
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(warm, { timeout: 2200 });
+      return () => window.cancelIdleCallback?.(id);
+    }
+    const t = setTimeout(warm, 900);
+    return () => clearTimeout(t);
+  }, [ready]);
 
   // Android "Share to Notes by Bai" Intent Receiver (PDF, PPTX, DOCX, image, or text/link)
   useEffect(() => {
@@ -463,99 +488,83 @@ export default function App() {
   const renderMainPanel = () => {
     if (screen === 'editor' && note) {
       return (
-        <NoteEditor
-          key={note.id}
-          note={note}
-          initialMode={noteInitialMode}
-          folderName={folder?.name || ''}
-          folderMode={folder?.mode || 'study'}
-          onOpenNote={handleOpenNote}
-          onNoteMoved={handleNoteMoved}
-          onNoteDeleted={handleNoteDeleted}
-          onNoteChanged={handleNoteChanged}
-          onRegisterBack={registerOverlayBack}
-          onOpenExamPaper={srcNote => handleOpenExamPaper({ sourceNote: srcNote })}
-          onOpenStudy={async () => {
-            const fresh = await db.notes.get(note.id);
-            if (fresh) {
-              setNote(fresh);
-              setScreen('study');
-              pushHistoryEntry('study');
-            }
-          }}
-          onBackToList={handleBackFromEditor}
-        />
+        <Suspense fallback={<ScreenLoading label="Opening Note…" />}>
+          <NoteEditor
+            key={note.id}
+            note={note}
+            initialMode={noteInitialMode}
+            folderName={folder?.name || ''}
+            folderMode={folder?.mode || 'study'}
+            onOpenNote={handleOpenNote}
+            onNoteMoved={handleNoteMoved}
+            onNoteDeleted={handleNoteDeleted}
+            onNoteChanged={handleNoteChanged}
+            onRegisterBack={registerOverlayBack}
+            onOpenExamPaper={srcNote => handleOpenExamPaper({ sourceNote: srcNote })}
+            onOpenStudy={async () => {
+              const fresh = await db.notes.get(note.id);
+              if (fresh) {
+                setNote(fresh);
+                setScreen('study');
+                pushHistoryEntry('study');
+              }
+            }}
+            onBackToList={handleBackFromEditor}
+          />
+        </Suspense>
       );
     }
     if (screen === 'study' && note) {
       return (
-        <StudyScreen
-          note={note}
-          onBack={handleBackFromStudy}
-          onOpenExamPaper={handleOpenExamPaper}
-        />
+        <Suspense fallback={<ScreenLoading label="Loading Study Mode…" />}>
+          <StudyScreen
+            note={note}
+            onBack={handleBackFromStudy}
+            onOpenExamPaper={handleOpenExamPaper}
+          />
+        </Suspense>
       );
     }
     if (screen === 'exam-paper' && examPaperTarget) {
       return (
-        <ExamPaperScreen
-          sourceNote={examPaperTarget.sourceNote}
-          sourceFolder={examPaperTarget.sourceFolder}
-          sourceCourse={examPaperTarget.sourceCourse}
-          onBack={handleBackFromExamPaper}
-        />
+        <Suspense fallback={<ScreenLoading label="Loading Exam Builder…" />}>
+          <ExamPaperScreen
+            sourceNote={examPaperTarget.sourceNote}
+            sourceFolder={examPaperTarget.sourceFolder}
+            sourceCourse={examPaperTarget.sourceCourse}
+            onBack={handleBackFromExamPaper}
+          />
+        </Suspense>
       );
     }
     if (screen === 'review') {
       return (
-        <ReviewDashboardScreen
-          onBack={handleBackToFolders}
-          onOpenNote={handleOpenNote}
-          onChanged={bumpSidebar}
-        />
+        <Suspense fallback={<ScreenLoading label="Loading Daily Review…" />}>
+          <ReviewDashboardScreen
+            onBack={handleBackToFolders}
+            onOpenNote={handleOpenNote}
+            onChanged={bumpSidebar}
+          />
+        </Suspense>
       );
     }
     if (screen === 'toolkit') {
       return (
-        <Suspense
-          fallback={
-            <div className="screen" style={{ alignItems: 'center', justifyContent: 'center' }}>
-              <div className="scan-indicator">
-                <span className="spinner" /> Loading IT Toolkit…
-              </div>
-            </div>
-          }
-        >
+        <Suspense fallback={<ScreenLoading label="Loading IT Toolkit…" />}>
           <DevToolkitScreen onBack={handleBackToFolders} onOpenNote={handleOpenNote} />
         </Suspense>
       );
     }
     if (screen === 'coding') {
       return (
-        <Suspense
-          fallback={
-            <div className="screen" style={{ alignItems: 'center', justifyContent: 'center' }}>
-              <div className="scan-indicator">
-                <span className="spinner" /> Loading Learn Coding Studio…
-              </div>
-            </div>
-          }
-        >
+        <Suspense fallback={<ScreenLoading label="Loading Learn Coding Studio…" />}>
           <LearnCodingScreen onBack={handleBackToFolders} onOpenNote={handleOpenNote} />
         </Suspense>
       );
     }
     if (screen === 'planner') {
       return (
-        <Suspense
-          fallback={
-            <div className="screen" style={{ alignItems: 'center', justifyContent: 'center' }}>
-              <div className="scan-indicator">
-                <span className="spinner" /> Loading School Planner…
-              </div>
-            </div>
-          }
-        >
+        <Suspense fallback={<ScreenLoading label="Loading School Planner…" />}>
           <StudentHubScreen
             onBack={handleBackToFolders}
             onOpenNote={handleOpenNote}
@@ -568,15 +577,7 @@ export default function App() {
     }
     if (screen === 'courses') {
       return (
-        <Suspense
-          fallback={
-            <div className="screen" style={{ alignItems: 'center', justifyContent: 'center' }}>
-              <div className="scan-indicator">
-                <span className="spinner" /> Loading Course Dashboard…
-              </div>
-            </div>
-          }
-        >
+        <Suspense fallback={<ScreenLoading label="Loading Course Dashboard…" />}>
           <CoursesDashboardScreen
             onBack={handleBackToFolders}
             onOpenNote={handleOpenNote}
@@ -590,15 +591,7 @@ export default function App() {
     }
     if (screen === 'announcements') {
       return (
-        <Suspense
-          fallback={
-            <div className="screen" style={{ alignItems: 'center', justifyContent: 'center' }}>
-              <div className="scan-indicator">
-                <span className="spinner" /> Loading Announcements…
-              </div>
-            </div>
-          }
-        >
+        <Suspense fallback={<ScreenLoading label="Loading Announcements…" />}>
           <AnnouncementsScreen
             onBack={handleBackToFolders}
             onOpenNote={handleOpenNote}
@@ -609,36 +602,36 @@ export default function App() {
     }
     if (screen === 'exam' && folder) {
       return (
-        <ExamSummaryScreen
-          folder={folder}
-          onBack={handleBackToFolders}
-          onOpenExamPaper={handleOpenExamPaper}
-        />
+        <Suspense fallback={<ScreenLoading label="Loading Exam Summary…" />}>
+          <ExamSummaryScreen
+            folder={folder}
+            onBack={handleBackToFolders}
+            onOpenExamPaper={handleOpenExamPaper}
+          />
+        </Suspense>
       );
     }
     if (screen === 'trash') {
-      return <TrashScreen onBack={handleBackToFolders} onChanged={bumpSidebar} />;
+      return (
+        <Suspense fallback={<ScreenLoading label="Loading Trash…" />}>
+          <TrashScreen onBack={handleBackToFolders} onChanged={bumpSidebar} />
+        </Suspense>
+      );
     }
     if (screen === 'settings') {
       return (
-        <SettingsScreen
-          onBack={handleBackToFolders}
-          onDataImported={bumpSidebar}
-          onOpenThemes={() => handleOpenThemes('settings')}
-        />
+        <Suspense fallback={<ScreenLoading label="Loading Settings…" />}>
+          <SettingsScreen
+            onBack={handleBackToFolders}
+            onDataImported={bumpSidebar}
+            onOpenThemes={() => handleOpenThemes('settings')}
+          />
+        </Suspense>
       );
     }
     if (screen === 'themes') {
       return (
-        <Suspense
-          fallback={
-            <div className="screen" style={{ alignItems: 'center', justifyContent: 'center' }}>
-              <div className="scan-indicator">
-                <span className="spinner" /> Loading Themes…
-              </div>
-            </div>
-          }
-        >
+        <Suspense fallback={<ScreenLoading label="Loading Themes…" />}>
           <ThemeStudioScreen
             onBack={() =>
               themesReturnTo === 'settings' ? setScreen('settings') : handleBackToFolders()
@@ -660,13 +653,15 @@ export default function App() {
       <div className={`split-shell${isWide ? ' is-wide' : ''}`}>
         <aside className={`split-sidebar${!isWide && showingMainOnMobile ? ' pane-hidden' : ''}`}>
           {showingSidebarList ? (
-            <NotesListScreen
-              folder={folder}
-              activeNoteId={note?.id || null}
-              refreshKey={sidebarTick}
-              onOpenNote={handleOpenNote}
-              onBack={handleBackToFolders}
-            />
+            <Suspense fallback={<ScreenLoading label="Loading Notes…" />}>
+              <NotesListScreen
+                folder={folder}
+                activeNoteId={note?.id || null}
+                refreshKey={sidebarTick}
+                onOpenNote={handleOpenNote}
+                onBack={handleBackToFolders}
+              />
+            </Suspense>
           ) : (
             <FoldersScreen
               refreshKey={sidebarTick}
@@ -700,22 +695,24 @@ export default function App() {
         </main>
       </div>
       {sharedImport && (
-        <ImportSheet
-          initialFile={sharedImport.file || null}
-          initialPastedText={sharedImport.text || ''}
-          initialTitle={sharedImport.title || ''}
-          onImported={(createdNote, targetFolder) => {
-            setSharedImport(null);
-            bumpSidebar();
-            handleOpenNote(createdNote, targetFolder);
-          }}
-          onImportedToCourse={() => {
-            setSharedImport(null);
-            bumpSidebar();
-            handleOpenCourses();
-          }}
-          onClose={() => setSharedImport(null)}
-        />
+        <Suspense fallback={null}>
+          <ImportSheet
+            initialFile={sharedImport.file || null}
+            initialPastedText={sharedImport.text || ''}
+            initialTitle={sharedImport.title || ''}
+            onImported={(createdNote, targetFolder) => {
+              setSharedImport(null);
+              bumpSidebar();
+              handleOpenNote(createdNote, targetFolder);
+            }}
+            onImportedToCourse={() => {
+              setSharedImport(null);
+              bumpSidebar();
+              handleOpenCourses();
+            }}
+            onClose={() => setSharedImport(null)}
+          />
+        </Suspense>
       )}
       {splashPhase !== 'gone' && (
         <div

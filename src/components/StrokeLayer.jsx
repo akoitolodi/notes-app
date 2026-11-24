@@ -15,20 +15,68 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { isDarkTheme } from '../theme';
 
-export const PALETTE = [
-  '#000000',
+export const PEN_PALETTE = [
+  '#14151a',
   '#ffffff',
-  '#8e8e93',
-  '#ff3b30',
-  '#ff9500',
-  '#ffcc00',
-  '#34c759',
-  '#00c7be',
-  '#007aff',
-  '#5856d6',
-  '#af52de',
-  '#ff2d55',
+  '#64748b',
+  '#e11d48',
+  '#ea580c',
+  '#d97706',
+  '#16a34a',
+  '#0d9488',
+  '#2563eb',
+  '#4f46e5',
+  '#9333ea',
+  '#db2777',
 ];
+
+export const HIGHLIGHTER_PALETTE = [
+  '#fde047',
+  '#bef264',
+  '#6ee7b7',
+  '#7dd3fc',
+  '#c4b5fd',
+  '#f9a8d4',
+  '#fdba74',
+  '#fda4af',
+];
+
+export const PALETTE = PEN_PALETTE;
+
+export const OPACITY_PRESETS = [
+  { id: 'soft', label: '25%', value: 0.25 },
+  { id: 'med', label: '40%', value: 0.4 },
+  { id: 'bold', label: '65%', value: 0.65 },
+];
+
+export const PEN_OPACITY_PRESETS = [
+  { id: 'soft', label: '50%', value: 0.5 },
+  { id: 'med', label: '80%', value: 0.8 },
+  { id: 'bold', label: '100%', value: 1 },
+];
+
+export const ANNOTATE_RECENT_COLORS_KEY = 'aicn:annotateRecentColors';
+
+export function getRecentAnnotateColors() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ANNOTATE_RECENT_COLORS_KEY) || '[]');
+    return Array.isArray(raw) ? raw.filter(c => /^#[0-9a-f]{6}$/i.test(String(c))).slice(0, 5) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveRecentAnnotateColor(hex) {
+  const clean = String(hex || '').trim().toLowerCase();
+  if (!/^#[0-9a-f]{6}$/.test(clean)) return [];
+  const next = [clean, ...getRecentAnnotateColors().filter(c => c.toLowerCase() !== clean)].slice(0, 5);
+  try {
+    localStorage.setItem(ANNOTATE_RECENT_COLORS_KEY, JSON.stringify(next));
+  } catch {
+    // ignore
+  }
+  return next;
+}
 
 export const TOOLS = [
   ['pen', 'Pen'],
@@ -57,7 +105,7 @@ export function toolWidth(tool, size) {
 /** Adapt pure black/white strokes so they stay readable in both Light & Dark themes. */
 export function resolveStrokeColor(rawColor, dark = false) {
   const c = String(rawColor || '#000000').toLowerCase();
-  if (dark && (c === '#000' || c === '#000000')) return '#f5f5f7';
+  if (dark && (c === '#000' || c === '#000000' || c === '#14151a')) return '#f5f5f7';
   if (!dark && (c === '#fff' || c === '#ffffff')) return '#111113';
   return rawColor || (dark ? '#f5f5f7' : '#111113');
 }
@@ -108,10 +156,17 @@ export function drawStroke(ctx, s, { dark = false } = {}) {
   if (!pts.length) return;
   const strokeColor = resolveStrokeColor(s.color, dark);
 
+  const strokeAlpha =
+    typeof s.alpha === 'number' && Number.isFinite(s.alpha)
+      ? Math.max(0.15, Math.min(1, s.alpha))
+      : s.tool === 'highlighter'
+        ? 0.38
+        : 1;
+
   ctx.save();
   if (s.tool === 'text') {
     const p = pts[0];
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = strokeAlpha;
     ctx.fillStyle = strokeColor;
     ctx.font = `600 ${s.fontSize || 20}px -apple-system, 'Helvetica Neue', Arial, sans-serif`;
     ctx.textBaseline = 'top';
@@ -127,7 +182,7 @@ export function drawStroke(ctx, s, { dark = false } = {}) {
     }
     const a = pts[0];
     const b = pts[1];
-    ctx.globalAlpha = 1;
+    ctx.globalAlpha = strokeAlpha;
     ctx.strokeStyle = strokeColor;
     ctx.lineWidth = s.width || 3.5;
     ctx.lineCap = 'round';
@@ -152,13 +207,10 @@ export function drawStroke(ctx, s, { dark = false } = {}) {
 
   // Freehand: pen | highlighter (quadratic Bezier midpoint smoothing)
   const isHl = s.tool === 'highlighter';
-  ctx.globalAlpha = isHl ? 0.36 : 1;
-  if (isHl) {
-    ctx.globalCompositeOperation = dark ? 'screen' : 'multiply';
-  }
+  ctx.globalAlpha = strokeAlpha;
   ctx.strokeStyle = strokeColor;
   ctx.lineWidth = s.width || 4.5;
-  ctx.lineCap = isHl ? 'butt' : 'round';
+  ctx.lineCap = isHl ? 'round' : 'round';
   ctx.lineJoin = 'round';
 
   if (pts.length === 1) {
@@ -224,8 +276,9 @@ export default function StrokeLayer({
   drawing,
   editable = false,
   tool = 'pen',
-  color = '#000000',
+  color = '#14151a',
   size = 'medium',
+  opacity = null,
   onChange,
 }) {
   const anchorRef = useRef(null);
@@ -427,6 +480,7 @@ export default function StrokeLayer({
     currentRef.current = {
       tool,
       color,
+      alpha: typeof opacity === 'number' ? opacity : tool === 'highlighter' ? 0.4 : 1,
       width: toolWidth(tool, size),
       fontSize: toolWidth('text', size),
       points: tool === 'arrow' || tool === 'line' ? [p, p] : [p],

@@ -32,6 +32,8 @@ import {
   SIZE_KEY,
   PAPER_KEY,
   PAPER_STYLES,
+  FONT_KEY,
+  FONT_PRESETS,
   HINT_KEY,
   REDUCE_MOTION_KEY,
   ACCENTS,
@@ -190,6 +192,7 @@ export default function SettingsScreen({ onBack, onDataImported, onOpenThemes })
   const [accent, setAccent] = useState(initial.accent);
   const [size, setSize] = useState(initial.size);
   const [paper, setPaper] = useState(initial.paper || 'blank');
+  const [font, setFont] = useState(initial.font || 'system');
   const [explainStyle, setStyleState] = useState(() => getExplainStyle());
   const [showHint, setShowHint] = useState(() => {
     try {
@@ -556,6 +559,20 @@ export default function SettingsScreen({ onBack, onDataImported, onOpenThemes })
           value={size}
           onChange={v => setPref(SIZE_KEY, v, setSize)}
         />
+
+        <div className="settings-label mt-16">Note font</div>
+        <select
+          className="input-field"
+          value={font}
+          aria-label="Note font"
+          onChange={e => setPref(FONT_KEY, e.target.value, setFont)}
+        >
+          {FONT_PRESETS.map(f => (
+            <option key={f.id} value={f.id}>
+              {f.name} ({f.category})
+            </option>
+          ))}
+        </select>
 
         <div className="settings-label mt-16">AI Explanation Style</div>
         <Segmented
@@ -1356,7 +1373,7 @@ export default function SettingsScreen({ onBack, onDataImported, onOpenThemes })
           • Press <strong>Ctrl+S</strong> to save immediately or <strong>Ctrl+Shift+S</strong> to save & explain.
         </div>
         <div className="settings-tip" style={{ marginTop: 10, opacity: 0.7 }}>
-          Notes by Bai v2.0.3
+          Notes by Bai v2.0.4
         </div>
       </div>
 

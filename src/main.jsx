@@ -1,9 +1,8 @@
 /**
- * App entry point — safe ErrorBoundary + DialogProvider + KaTeX CSS + SW registration.
+ * App entry point — safe ErrorBoundary + DialogProvider + theme init + SW registration.
  */
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import 'katex/dist/katex.min.css';
 import App from './App';
 import { applySettings } from './theme';
 import ErrorBoundary from './components/ui/ErrorBoundary';

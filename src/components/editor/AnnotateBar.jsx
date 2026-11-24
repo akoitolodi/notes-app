@@ -1,7 +1,8 @@
 /**
- * AnnotateBar — fixed bottom drawing toolbar with crisp SVG icons, stroke
- * Undo/Redo/Clear All, sizes, adaptive palette, and Done button.
+ * AnnotateBar — adaptive bottom drawing toolbar with separate curated Studio Ink
+ * & Pastel Highlighter palettes, opacity presets, saved custom colors, sizes, Undo/Redo/Clear.
  */
+import { useState } from 'react';
 import {
   Pen,
   Highlighter,
@@ -13,7 +14,16 @@ import {
   Redo2,
   Trash2,
 } from 'lucide-react';
-import { PALETTE, SIZES, SIZE_LABEL } from '../StrokeLayer';
+import {
+  PEN_PALETTE,
+  HIGHLIGHTER_PALETTE,
+  OPACITY_PRESETS,
+  PEN_OPACITY_PRESETS,
+  SIZES,
+  SIZE_LABEL,
+  getRecentAnnotateColors,
+  saveRecentAnnotateColor,
+} from '../StrokeLayer';
 
 const TOOL_ITEMS = [
   ['pen', Pen, 'Pen'],
@@ -31,6 +41,8 @@ export default function AnnotateBar({
   onSize,
   color,
   onColor,
+  opacity,
+  onOpacity,
   canUndo,
   canRedo,
   hasStrokes,
@@ -39,6 +51,21 @@ export default function AnnotateBar({
   onClear,
   onDone,
 }) {
+  const [recentColors, setRecentColors] = useState(() => getRecentAnnotateColors());
+
+  const isHighlighter = tool === 'highlighter';
+  const isEraser = tool === 'eraser';
+  const swatches = isHighlighter ? HIGHLIGHTER_PALETTE : PEN_PALETTE;
+  const opacityOptions = isHighlighter ? OPACITY_PRESETS : PEN_OPACITY_PRESETS;
+  const activeAlpha = typeof opacity === 'number' ? opacity : isHighlighter ? 0.4 : 1;
+
+  const pickColor = hex => {
+    onColor(hex);
+    if (!swatches.some(s => s.toLowerCase() === String(hex).toLowerCase())) {
+      setRecentColors(saveRecentAnnotateColor(hex));
+    }
+  };
+
   return (
     <div className="annotate-bar" role="toolbar" aria-label="Annotation tools">
       <div className="tool-group">
@@ -104,26 +131,67 @@ export default function AnnotateBar({
         ))}
       </div>
 
-      <div className="tool-group">
-        {PALETTE.map(c => (
-          <button
-            key={c}
-            type="button"
-            className={`color-swatch${color.toLowerCase() === c ? ' active' : ''}`}
-            style={{ background: c }}
-            onClick={() => onColor(c)}
-            aria-label={`Color ${c}`}
+      {!isEraser && onOpacity && (
+        <div className="tool-group" aria-label="Stroke opacity">
+          {opacityOptions.map(opt => (
+            <button
+              key={opt.id}
+              type="button"
+              className={`size-btn annotate-alpha-btn${Math.abs(activeAlpha - opt.value) < 0.04 ? ' active' : ''}`}
+              onClick={() => onOpacity(opt.value)}
+              title={`Opacity ${opt.label}`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!isEraser && (
+        <div className="tool-group">
+          <span
+            className="annotate-active-pill"
+            title={isHighlighter ? 'Highlighter color' : 'Ink color'}
+          >
+            <span
+              className="annotate-active-dot"
+              style={{ background: color, opacity: isHighlighter ? Math.max(0.45, activeAlpha) : activeAlpha }}
+            />
+            <span className="annotate-mode-tag">{isHighlighter ? 'HL' : 'Ink'}</span>
+          </span>
+          {swatches.map(c => (
+            <button
+              key={c}
+              type="button"
+              className={`color-swatch${color.toLowerCase() === c.toLowerCase() ? ' active' : ''}`}
+              style={{ background: c }}
+              onClick={() => pickColor(c)}
+              aria-label={`Color ${c}`}
+            />
+          ))}
+          {recentColors
+            .filter(rc => !swatches.some(s => s.toLowerCase() === rc.toLowerCase()))
+            .map(rc => (
+              <button
+                key={`recent-${rc}`}
+                type="button"
+                className={`color-swatch${color.toLowerCase() === rc.toLowerCase() ? ' active' : ''}`}
+                style={{ background: rc }}
+                onClick={() => pickColor(rc)}
+                title="Recent custom color"
+                aria-label={`Recent color ${rc}`}
+              />
+            ))}
+          <input
+            type="color"
+            value={color}
+            onChange={e => pickColor(e.target.value)}
+            title="Pick custom hex color"
+            aria-label="Custom color"
+            className="color-input"
           />
-        ))}
-        <input
-          type="color"
-          value={color}
-          onChange={e => onColor(e.target.value)}
-          title="Custom color"
-          aria-label="Custom color"
-          className="color-input"
-        />
-      </div>
+        </div>
+      )}
 
       <span className="annotate-hint">2 fingers = scroll</span>
       <button

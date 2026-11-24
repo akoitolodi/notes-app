@@ -322,13 +322,15 @@ export async function notifyNewCanvasAnnouncements(newAnnouncements = []) {
 }
 
 /** Compute live urgent deadlines & unread announcements for the persistent in-app banner. */
-export async function getInAppAlertSummary() {
+export async function getInAppAlertSummary(prefetchedItems = null) {
   const todayKey = localDateKey();
   const tom = new Date();
   tom.setDate(tom.getDate() + 1);
   const tomorrowKey = localDateKey(tom);
 
-  const items = await db.plannerItems.toArray().catch(() => []);
+  const items = Array.isArray(prefetchedItems)
+    ? prefetchedItems
+    : await db.plannerItems.toArray().catch(() => []);
   const readSet = getReadAnnouncementSet();
   let snoozeUntil = 0;
   try {

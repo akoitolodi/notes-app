@@ -3,7 +3,7 @@
  * subject folders, quick New Note FAB, debounced global search with match
  * highlighting, and Recently Deleted at the bottom.
  */
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useDeferredValue, lazy, Suspense } from 'react';
 import {
   Search,
   Settings,
@@ -63,10 +63,11 @@ import {
   snoozeInAppBanner,
 } from '../lib/notifications';
 import { markPastTasksDone, autoSyncCanvasIfStale } from '../lib/canvasSync';
-import TemplatePickerSheet from './TemplatePickerSheet';
-import ImportSheet from './ImportSheet';
-import PinLockSheet from './PinLockSheet';
 import { useDialog } from './ui/DialogProvider';
+
+const TemplatePickerSheet = lazy(() => import('./TemplatePickerSheet'));
+const ImportSheet = lazy(() => import('./ImportSheet'));
+const PinLockSheet = lazy(() => import('./PinLockSheet'));
 
 function getStudioGreeting() {
   const hr = new Date().getHours();
@@ -140,6 +141,7 @@ export default function FoldersScreen({
   const [alertSummary, setAlertSummary] = useState(null);
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState('');
+  const deferredQuery = useDeferredValue(query);
   const [results, setResults] = useState([]);
   const [folderMap, setFolderMap] = useState({});
   const [menuFolder, setMenuFolder] = useState(null);
@@ -183,11 +185,11 @@ export default function FoldersScreen({
     setShowCoding(isLearnCodingEnabled());
     setVaultUnlocked(isVaultUnlocked());
     try {
-      const [pItems, crs, alerts] = await Promise.all([
+      const [pItems, crs] = await Promise.all([
         db.plannerItems.toArray(),
         db.courses.toArray().catch(() => []),
-        getInAppAlertSummary(),
       ]);
+      const alerts = await getInAppAlertSummary(pItems);
       setPlannerDueCount(pItems.filter(it => !it.done && it.type !== 'announcement').length);
       setCourseCount(crs.length);
       setAlertSummary(alerts);
@@ -228,12 +230,13 @@ export default function FoldersScreen({
   // Debounced global search across all folders (title, body, AI explanations & terms)
   useEffect(() => {
     let live = true;
-    if (!searching || !query.trim()) {
+    const q = deferredQuery.trim();
+    if (!searching || !q) {
       setResults([]);
       return undefined;
     }
     const t = setTimeout(() => {
-      searchNotes(query, null, 'edited').then(async r => {
+      searchNotes(q, null, 'edited').then(async r => {
         if (!live) return;
         const fm = {};
         (await db.folders.toArray()).forEach(f => {
@@ -247,7 +250,7 @@ export default function FoldersScreen({
       live = false;
       clearTimeout(t);
     };
-  }, [query, searching]);
+  }, [deferredQuery, searching]);
 
   const toggleSearch = () => {
     setSearching(prev => {
@@ -1231,34 +1234,40 @@ export default function FoldersScreen({
       )}
 
       {templatesOpen && (
-        <TemplatePickerSheet
-          onPick={handlePickTemplate}
-          onClose={() => setTemplatesOpen(false)}
-        />
+        <Suspense fallback={null}>
+          <TemplatePickerSheet
+            onPick={handlePickTemplate}
+            onClose={() => setTemplatesOpen(false)}
+          />
+        </Suspense>
       )}
 
       {importOpen && (
-        <ImportSheet
-          onImported={(created, targetFolder) => {
-            setImportOpen(false);
-            refresh();
-            onOpenNote(created, targetFolder);
-          }}
-          onClose={() => setImportOpen(false)}
-        />
+        <Suspense fallback={null}>
+          <ImportSheet
+            onImported={(created, targetFolder) => {
+              setImportOpen(false);
+              refresh();
+              onOpenNote(created, targetFolder);
+            }}
+            onClose={() => setImportOpen(false)}
+          />
+        </Suspense>
       )}
 
       {pinRequest && (
-        <PinLockSheet
-          mode={pinRequest.mode}
-          title={pinRequest.title}
-          onSuccess={() => {
-            const done = pinRequest.onDone;
-            setPinRequest(null);
-            done?.();
-          }}
-          onClose={() => setPinRequest(null)}
-        />
+        <Suspense fallback={null}>
+          <PinLockSheet
+            mode={pinRequest.mode}
+            title={pinRequest.title}
+            onSuccess={() => {
+              const done = pinRequest.onDone;
+              setPinRequest(null);
+              done?.();
+            }}
+            onClose={() => setPinRequest(null)}
+          />
+        </Suspense>
       )}
 
       {/* Quick New Note Pill FAB */}

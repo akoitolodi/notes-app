@@ -408,6 +408,44 @@ export async function getHiddenLockedFolderIds({ forceAll = false } = {}) {
   return new Set(folders.filter(f => Boolean(f.locked)).map(f => f.id));
 }
 
+let _noteIndexCache = null;
+
+/** Invalidate in-memory lightweight note index cache after any note/folder mutation. */
+export function invalidateNoteIndexCache() {
+  _noteIndexCache = null;
+}
+
+/**
+ * Shared lightweight note metadata index (excludes heavy AI blocks, flashcards,
+ * quizzes, drawings, images & long chat transcripts from RAM).
+ */
+export async function getNoteIndexLite() {
+  if (Array.isArray(_noteIndexCache)) return _noteIndexCache;
+  const rows = [];
+  await db.notes.each(note => {
+    const rawBody = String(note.body || '');
+    const wikiMatches = rawBody.match(/\[\[[^[\]]+\]\]/g);
+    const compactBody =
+      rawBody.length <= 1400
+        ? rawBody
+        : `${rawBody.slice(0, 1400)}${wikiMatches ? `\n${wikiMatches.join(' ')}` : ''}`;
+    rows.push({
+      id: note.id,
+      folderId: note.folderId,
+      title: note.title || '',
+      subject: note.subject || 'General',
+      body: compactBody,
+      snippet: rawBody.slice(0, 260),
+      trashed: Boolean(note.trashed),
+      pinned: Boolean(note.pinned),
+      updatedAt: note.updatedAt || note.createdAt || 0,
+      mode: note.mode || null,
+    });
+  });
+  _noteIndexCache = rows;
+  return rows;
+}
+
 /** Return Set of folder IDs that are Zero-AI Vault folders (never sent to AI even when unlocked). */
 export async function getZeroAiFolderIds() {
   const folders = await db.folders.toArray();
@@ -564,6 +602,7 @@ export async function deleteFolder(id, { permanent = false } = {}) {
     await db.examCache.delete(id);
     await db.folders.delete(id);
   });
+  invalidateNoteIndexCache();
 }
 
 /** Notes inside a folder, or smart virtual views ('__all__', '__pinned__', '__tag:<name>'). */
@@ -650,6 +689,7 @@ export async function createNote(folderId, title = '', body = '', subject = '') 
     updatedAt: now,
     lastScanAt: null,
   });
+  invalidateNoteIndexCache();
   return db.notes.get(id);
 }
 
@@ -659,6 +699,7 @@ export async function getNote(id) {
 
 export async function updateNote(id, patch) {
   await db.notes.update(id, { ...patch, updatedAt: Date.now() });
+  invalidateNoteIndexCache();
   return db.notes.get(id);
 }
 
@@ -666,10 +707,12 @@ export async function togglePin(id) {
   const note = await db.notes.get(id);
   if (!note) return;
   await db.notes.update(id, { pinned: !note.pinned });
+  invalidateNoteIndexCache();
 }
 
 export async function moveNote(id, folderId) {
   await db.notes.update(id, { folderId, updatedAt: Date.now() });
+  invalidateNoteIndexCache();
 }
 
 /** Duplicate a note (including cloned attachments in db.attachments). */
@@ -711,6 +754,7 @@ export async function duplicateNote(id) {
     await db.notes.update(newId, { images: clonedImages });
   }
 
+  invalidateNoteIndexCache();
   return db.notes.get(newId);
 }
 
@@ -786,6 +830,7 @@ export async function deleteImageAttachment(imgId) {
 
 export async function deleteNote(id) {
   await db.notes.update(id, { trashed: true, trashedAt: Date.now(), pinned: false });
+  invalidateNoteIndexCache();
 }
 
 /** Restore a note; if its original folder was deleted, reassign to General / first folder. */
@@ -800,6 +845,7 @@ export async function restoreNote(id) {
     folderId = general?.id;
   }
   await db.notes.update(id, { trashed: false, trashedAt: null, folderId });
+  invalidateNoteIndexCache();
 }
 
 export async function purgeNote(id) {
@@ -807,6 +853,7 @@ export async function purgeNote(id) {
     await db.attachments.where('noteId').equals(id).delete();
     await db.notes.delete(id);
   });
+  invalidateNoteIndexCache();
 }
 
 export async function getTrash() {
@@ -826,6 +873,7 @@ export async function emptyTrash() {
     }
     await db.notes.filter(n => n.trashed).delete();
   });
+  invalidateNoteIndexCache();
 }
 
 /** Hard-delete trashed notes older than `days` (default 30). */
@@ -839,6 +887,7 @@ export async function purgeOldTrash(days = 30) {
       await db.notes.delete(n.id);
     }
   });
+  invalidateNoteIndexCache();
 }
 
 // ---------- Full Backup & Restore ----------
@@ -960,6 +1009,7 @@ export async function importBackup(payload, { mode = 'merge' } = {}) {
   });
 
   await ensureSeeded();
+  invalidateNoteIndexCache();
   return { foldersAdded, notesAdded };
 }
 

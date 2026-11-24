@@ -60,6 +60,7 @@
   --gutter: max(16px, calc((100% - var(--content-max)) / 2));
   --nav-h: 52px;
   --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --font-note: var(--font-ui);
   --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 }
 
@@ -7385,5 +7386,133 @@ a:hover {
     border-color: rgba(236, 160, 56, 0.48);
     color: #fef3c7;
   }
+}
+
+/* ============================================================
+   v2.0.4 — Custom Note Fonts, Annotate Colorization UI &
+            CSS Render Acceleration (content-visibility)
+   ============================================================ */
+
+/* Apply user-selected note font across editor, clean visual editor, read mode & theme preview */
+.editor-title,
+.editor-subject,
+.editor-body,
+.read-title,
+.note-line,
+.ce-editor,
+.ce-h,
+.ce-p,
+.ce-li,
+.ce-quote,
+.md-root,
+.theme-preview-title,
+.theme-preview-body {
+  font-family: var(--font-note, var(--font-ui));
+}
+
+/* Preserve strictly monospace code blocks regardless of selected prose font */
+.code-card-pre,
+.code-card-pre code,
+.md-pre,
+.md-pre code,
+.ce-code,
+.ce-code-pre {
+  font-family: var(--font-mono) !important;
+}
+
+/* Offscreen layout & paint skipping for long note/course lists */
+.list-group > .list-item,
+.course-card,
+.ann-card,
+.study-load-card,
+.note-line-wrap {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 72px;
+}
+
+/* Note Font Gallery Cards (Themes & Palettes Studio) */
+.font-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 8px;
+}
+.font-pick-card {
+  appearance: none;
+  -webkit-appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 10px;
+  border-radius: 12px;
+  border: 1.5px solid var(--divider);
+  background: var(--fill);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease, transform 0.1s ease;
+}
+.font-pick-card:active {
+  transform: scale(0.97);
+}
+.font-pick-card.active {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+}
+.font-pick-aa {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--card-bg);
+  border: 1px solid var(--divider);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  flex-shrink: 0;
+}
+.font-pick-name {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.font-pick-cat {
+  display: block;
+  font-size: 10.5px;
+  color: var(--text-secondary);
+}
+
+/* Annotate Bar Colorization & Opacity Polish */
+.annotate-alpha-btn {
+  min-width: 34px;
+  font-size: 10.5px;
+  padding: 0 6px;
+}
+.annotate-active-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px 2px 4px;
+  border-radius: 999px;
+  background: var(--fill);
+  border: 1px solid var(--divider);
+  flex-shrink: 0;
+}
+.annotate-active-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+}
+.annotate-mode-tag {
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--text-secondary);
 }
 

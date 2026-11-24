@@ -2,7 +2,7 @@
  * NoteEditor — modular orchestrator for Edit Mode, Read Mode, AI explanations,
  * Chat, Annotations (with Undo/Redo/Clear), Images, Export/PDF, and Note actions.
  */
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import { Capacitor } from '@capacitor/core';
 import {
@@ -50,21 +50,18 @@ import {
   diffAndRemapBlocks,
   getHiddenLockedFolderIds,
   getZeroAiFolderIds,
+  getNoteIndexLite,
   logStudyActivity,
   saveCustomTemplate,
 } from '../store/db';
 import StrokeLayer, { renderStrokesToCanvas } from './StrokeLayer';
 import ImageStrip, { pickImage, compressImage } from './ImageManager';
-import ChatSheet from './ChatSheet';
-import AudioStudySheet from './AudioStudySheet';
-import BaiDropSheet from './BaiDropSheet';
 import { summarizeNote, ocrImage, findRelatedNotes } from '../lib/aiFeatures';
 import { instantiateTemplate } from '../lib/templates';
 import { groupNoteLines } from '../lib/codeHighlight';
 import { findBacklinks, findNoteByWikiTitle } from '../lib/wikiLinks';
 import { NOTE_MODE_LIST, resolveNoteMode, getModeMeta, isZeroAiMode } from '../lib/noteModes';
 import SlideUpPanel from './SlideUpPanel';
-import FolderPickerSheet from './FolderPickerSheet';
 import {
   NoteLine as NoteLineComponent,
   CodeBlockCard,
@@ -76,6 +73,11 @@ import MarkdownContent from './ui/MarkdownContent';
 import { useDialog } from './ui/DialogProvider';
 import { PDF_STYLES, detectPdfStyle } from '../lib/pdfThemes';
 import { isDarkTheme, HINT_KEY } from '../theme';
+
+const ChatSheet = lazy(() => import('./ChatSheet'));
+const AudioStudySheet = lazy(() => import('./AudioStudySheet'));
+const BaiDropSheet = lazy(() => import('./BaiDropSheet'));
+const FolderPickerSheet = lazy(() => import('./FolderPickerSheet'));
 
 function normalizeDrawings(d) {
   if (Array.isArray(d)) return { refWidth: 0, strokes: d };
@@ -184,11 +186,26 @@ export default function NoteEditor({
   const [relatedOpen, setRelatedOpen] = useState(false);
   const [relatedBusy, setRelatedBusy] = useState(false);
 
-  // Draw mode state — defaults to adaptive ink (#ffffff in Dark, #000000 in Light)
+  // Draw mode state — remembers separate colors & opacities for Ink vs Highlighter
   const [drawMode, setDrawMode] = useState(false);
   const [tool, setTool] = useState('pen');
-  const [color, setColor] = useState(() => (isDarkTheme() ? '#ffffff' : '#000000'));
+  const [penColor, setPenColor] = useState(() => (isDarkTheme() ? '#ffffff' : '#14151a'));
+  const [hlColor, setHlColor] = useState('#fde047');
+  const [penOpacity, setPenOpacity] = useState(1);
+  const [hlOpacity, setHlOpacity] = useState(0.4);
   const [size, setSize] = useState('medium');
+  const activeDrawColor = tool === 'highlighter' ? hlColor : penColor;
+  const activeDrawOpacity = tool === 'highlighter' ? hlOpacity : penOpacity;
+  const handleSetDrawColor = c => {
+    if (tool === 'highlighter') setHlColor(c);
+    else setPenColor(c);
+  };
+  const handleSetDrawOpacity = a => {
+    if (tool === 'highlighter') setHlOpacity(a);
+    else setPenOpacity(a);
+  };
+  const blocksRef = useRef(blocks);
+  blocksRef.current = blocks;
 
   const [showHint] = useState(() => {
     try {
@@ -313,13 +330,23 @@ export default function NoteEditor({
     autoSaveTimer.current = setTimeout(async () => {
       setSaveState('saving');
       try {
+        const extractTagsKey = txt => (String(txt || '').match(/#[A-Za-z0-9_-]+/g) || []).join(',');
+        const prevSnap = savedRef.current;
+        const metaChanged =
+          title !== prevSnap.title ||
+          subject !== prevSnap.subject ||
+          extractTagsKey(`${title} ${body}`) !== extractTagsKey(`${prevSnap.title} ${prevSnap.body}`);
+
         // Keep existing explanations remapped onto moved lines during edits
-        const { remappedBlocks } = diffAndRemapBlocks(blocks, savedRef.current.body, body);
+        const { remappedBlocks } = diffAndRemapBlocks(blocksRef.current, prevSnap.body, body);
         await updateNote(note.id, { title, body, subject, blocks: remappedBlocks });
         savedRef.current = { title, body, subject };
         setBlocks(remappedBlocks);
         setSaveState('saved');
-        onNoteChanged?.({ title, body, subject, blocks: remappedBlocks });
+        onNoteChanged?.(
+          { title, body, subject, blocks: remappedBlocks },
+          { metadataChanged: metaChanged }
+        );
       } catch {
         setSaveState('dirty');
       }
@@ -328,38 +355,41 @@ export default function NoteEditor({
     return () => {
       if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     };
-  }, [mode, title, body, subject, note.id, blocks, onNoteChanged]);
+  }, [mode, title, body, subject, note.id, onNoteChanged]);
 
-  // Refresh cross-folder [[Wiki-Link]] backlinks pointing to this note (excluding locked & Zero-AI folders)
+  // Refresh cross-folder [[Wiki-Link]] backlinks only in Read Mode (debounced, lightweight index)
   useEffect(() => {
-    if (!title?.trim() || isZeroAi) {
-      setBacklinks([]);
+    if (!title?.trim() || isZeroAi || mode !== 'read') {
       return undefined;
     }
     let live = true;
-    Promise.all([db.notes.toArray(), getHiddenLockedFolderIds(), getZeroAiFolderIds()])
-      .then(([allNotes, hiddenIds, zeroAiIds]) => {
-        if (!live) return;
-        const excluded = new Set([...hiddenIds, ...zeroAiIds]);
-        setBacklinks(findBacklinks({ id: note.id, title }, allNotes, excluded));
-      })
-      .catch(() => {});
+    const t = setTimeout(() => {
+      Promise.all([getNoteIndexLite(), getHiddenLockedFolderIds(), getZeroAiFolderIds()])
+        .then(([allNotes, hiddenIds, zeroAiIds]) => {
+          if (!live) return;
+          const excluded = new Set([...hiddenIds, ...zeroAiIds]);
+          setBacklinks(findBacklinks({ id: note.id, title }, allNotes, excluded));
+        })
+        .catch(() => {});
+    }, 250);
     return () => {
       live = false;
+      clearTimeout(t);
     };
   }, [note.id, title, mode, isZeroAi]);
 
   const handleWikiLinkTap = useCallback(
     async targetTitle => {
       const [allNotes, hiddenIds, zeroAiIds] = await Promise.all([
-        db.notes.toArray(),
+        getNoteIndexLite(),
         getHiddenLockedFolderIds(),
         getZeroAiFolderIds(),
       ]);
       const excluded = new Set([...hiddenIds, ...zeroAiIds]);
       const existing = findNoteByWikiTitle(targetTitle, allNotes, excluded);
       if (existing) {
-        onOpenNote?.(existing);
+        const full = await getNote(existing.id);
+        onOpenNote?.(full || existing);
         return;
       }
       const ok = await confirm({
@@ -1456,8 +1486,9 @@ export default function NoteEditor({
               drawing={drawings}
               editable={drawMode}
               tool={tool}
-              color={color}
+              color={activeDrawColor}
               size={size}
+              opacity={activeDrawOpacity}
               onChange={updateDrawings}
             />
           )}
@@ -1470,8 +1501,10 @@ export default function NoteEditor({
           onTool={setTool}
           size={size}
           onSize={setSize}
-          color={color}
-          onColor={setColor}
+          color={activeDrawColor}
+          onColor={handleSetDrawColor}
+          opacity={activeDrawOpacity}
+          onOpacity={handleSetDrawOpacity}
           canUndo={strokeUndo.length > 0}
           canRedo={strokeRedo.length > 0}
           hasStrokes={drawings.strokes.length > 0}
@@ -1710,11 +1743,13 @@ export default function NoteEditor({
       )}
 
       {moveOpen && (
-        <FolderPickerSheet
-          currentId={folderId}
-          onPick={handleMove}
-          onClose={() => setMoveOpen(false)}
-        />
+        <Suspense fallback={null}>
+          <FolderPickerSheet
+            currentId={folderId}
+            onPick={handleMove}
+            onClose={() => setMoveOpen(false)}
+          />
+        </Suspense>
       )}
 
       {relatedOpen && (
@@ -1763,56 +1798,62 @@ export default function NoteEditor({
 
       {/* FIXED: passes live chatMsgs React state so closing & reopening Chat never loses messages */}
       {chatOpen && (
-        <ChatSheet
-          note={{ ...note, body, title, subject, chat: chatMsgs }}
-          subject={subject}
-          noteMode={activeNoteMode}
-          onClose={() => setChatOpen(false)}
-          onAppendToNote={text => {
-            appendTextToNote(text);
-            toast('Added to note', { type: 'success' });
-          }}
-          onCreateNoteFromChat={async (questionTitle, content, sources = []) => {
-            const citationsBlock = sources?.length
-              ? '\n\n## Sources\n' +
-                sources.map(s => `- [${s.index}] [${s.title}](${s.url})`).join('\n')
-              : '';
-            const created = await createNote(
-              folderId,
-              String(questionTitle || 'Research Note').slice(0, 64),
-              `${content}${citationsBlock}`,
-              subject
-            );
-            setChatOpen(false);
-            toast('Saved as a new note', { type: 'success' });
-            onNoteChanged?.();
-            onOpenNote?.(created);
-          }}
-          onSave={async msgs => {
-            setChatMsgs(msgs);
-            await updateNote(note.id, { chat: msgs });
-          }}
-        />
+        <Suspense fallback={null}>
+          <ChatSheet
+            note={{ ...note, body, title, subject, chat: chatMsgs }}
+            subject={subject}
+            noteMode={activeNoteMode}
+            onClose={() => setChatOpen(false)}
+            onAppendToNote={text => {
+              appendTextToNote(text);
+              toast('Added to note', { type: 'success' });
+            }}
+            onCreateNoteFromChat={async (questionTitle, content, sources = []) => {
+              const citationsBlock = sources?.length
+                ? '\n\n## Sources\n' +
+                  sources.map(s => `- [${s.index}] [${s.title}](${s.url})`).join('\n')
+                : '';
+              const created = await createNote(
+                folderId,
+                String(questionTitle || 'Research Note').slice(0, 64),
+                `${content}${citationsBlock}`,
+                subject
+              );
+              setChatOpen(false);
+              toast('Saved as a new note', { type: 'success' });
+              onNoteChanged?.();
+              onOpenNote?.(created);
+            }}
+            onSave={async msgs => {
+              setChatMsgs(msgs);
+              await updateNote(note.id, { chat: msgs });
+            }}
+          />
+        </Suspense>
       )}
 
-      {!isZeroAi && (
-        <AudioStudySheet
-          open={audioOpen}
-          onClose={() => setAudioOpen(false)}
-          mode="note"
-          title={title}
-          body={body}
-          subject={subject}
-        />
+      {!isZeroAi && audioOpen && (
+        <Suspense fallback={null}>
+          <AudioStudySheet
+            open={audioOpen}
+            onClose={() => setAudioOpen(false)}
+            mode="note"
+            title={title}
+            body={body}
+            subject={subject}
+          />
+        </Suspense>
       )}
 
-      {!isZeroAi && (
-        <BaiDropSheet
-          open={baiDropOpen}
-          onClose={() => setBaiDropOpen(false)}
-          note={{ ...note, title, body, subject, flashcards, quiz }}
-          folderName={folderLabel || subject || 'Shared'}
-        />
+      {!isZeroAi && baiDropOpen && (
+        <Suspense fallback={null}>
+          <BaiDropSheet
+            open={baiDropOpen}
+            onClose={() => setBaiDropOpen(false)}
+            note={{ ...note, title, body, subject, flashcards, quiz }}
+            folderName={folderLabel || subject || 'Shared'}
+          />
+        </Suspense>
       )}
 
       {printPortal}
