@@ -100,6 +100,7 @@ export default function CoursesDashboardScreen({
   onOpenExamPaper,
   onOpenPlanner,
   onChanged,
+  onRegisterBack = null,
 }) {
   const { confirm, toast } = useDialog();
 
@@ -191,6 +192,18 @@ export default function CoursesDashboardScreen({
     setUploadOpen(false);
     setPreviewMaterial(null);
   }, [selectedCourseId]);
+
+  useEffect(() => {
+    if (!onRegisterBack) return undefined;
+    onRegisterBack(() => {
+      if (previewMaterial) {
+        setPreviewMaterial(null);
+        return true;
+      }
+      return false;
+    });
+    return () => onRegisterBack(null);
+  }, [onRegisterBack, previewMaterial]);
 
   const courseStatsMap = useMemo(() => {
     const map = new Map();

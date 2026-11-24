@@ -159,3 +159,63 @@ describe('v2.0.7 Android Notification Proxy Fix, High Refresh Rate & Clean Read 
     expect(indexHtml).toContain('--boot-bg');
   });
 });
+
+describe('v2.0.8 Android Splash ActionBar, Single-Pass Keyboard Insets & Editor Viewport Lock', () => {
+  it('never calls applySavedWindowBackground before super.onCreate and handles insets in one pass', () => {
+    const java = fs.readFileSync(
+      path.join(root, 'android/app/src/main/java/com/philipjohn/aiclassnotes/MainActivity.java'),
+      'utf8'
+    );
+    const onCreateMatch = java.match(/protected void onCreate[\s\S]*?\n    \}/);
+    expect(onCreateMatch).not.toBeNull();
+    const superIdx = onCreateMatch[0].indexOf('super.onCreate(savedInstanceState)');
+    const bgIdx = onCreateMatch[0].indexOf('applySavedWindowBackground()');
+    expect(superIdx).toBeGreaterThan(-1);
+    expect(bgIdx).toBeGreaterThan(superIdx);
+
+    expect(java).toContain('WindowCompat.setDecorFitsSystemWindows');
+    expect(java).toContain('installCleanWindowInsets');
+    expect(java).toContain('WindowInsetsCompat.Type.ime()');
+    expect(java).toContain('WindowInsetsControllerCompat');
+  });
+
+  it('removes android:background=@drawable/splash and locks NoActionBar on launch themes', () => {
+    for (const rel of [
+      'android/app/src/main/res/values/styles.xml',
+      'android/app/src/main/res/values-night/styles.xml',
+    ]) {
+      const xml = fs.readFileSync(path.join(root, rel), 'utf8');
+      expect(xml).not.toContain('android:background">@drawable/splash');
+      const launchBlock = xml.slice(xml.indexOf('AppTheme.NoActionBarLaunch'));
+      expect(launchBlock).toContain('name="windowActionBar">false');
+      expect(launchBlock).toContain('name="windowNoTitle">true');
+    }
+
+    const manifest = fs.readFileSync(
+      path.join(root, 'android/app/src/main/AndroidManifest.xml'),
+      'utf8'
+    );
+    expect(manifest).toContain('android:windowSoftInputMode="adjustResize"');
+
+    const capConfig = JSON.parse(
+      fs.readFileSync(path.join(root, 'capacitor.config.json'), 'utf8')
+    );
+    expect(capConfig.plugins?.SystemBars?.insetsHandling).toBe('disable');
+  });
+
+  it('locks overflow: hidden on viewport roots and .screen.screen-paper so editor chrome stays pinned', () => {
+    const css = fs.readFileSync(path.join(root, 'src/styles.css'), 'utf8');
+    const htmlBlock = css.match(/html,\s*\r?\nbody,\s*\r?\n#root\s*\{[\s\S]*?\}/);
+    expect(htmlBlock).not.toBeNull();
+    expect(htmlBlock[0]).toContain('overflow: hidden;');
+
+    const appRootBlock = css.match(/\.app-root\s*\{[\s\S]*?\}/);
+    expect(appRootBlock).not.toBeNull();
+    expect(appRootBlock[0]).toContain('overflow: hidden;');
+    expect(appRootBlock[0]).not.toContain('min-height: 100vh');
+
+    const paperBlock = css.match(/\.screen\.screen-paper\s*\{[\s\S]*?\}/);
+    expect(paperBlock).not.toBeNull();
+    expect(paperBlock[0]).toContain('overflow: hidden;');
+  });
+});

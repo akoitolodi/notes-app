@@ -149,13 +149,23 @@ function RichRuns({ runs = [] }) {
   });
 }
 
+function detectDefaultReaderTheme() {
+  if (typeof document === 'undefined') return 'paper';
+  const root = document.documentElement;
+  if (root.dataset.theme === 'dark' || root.dataset.oled === 'true') return 'night';
+  if (!root.dataset.theme && window.matchMedia?.('(prefers-color-scheme: dark)').matches) {
+    return 'night';
+  }
+  return 'paper';
+}
+
 export default function DocumentViewerModal({ doc, onClose, onSaveAsNote = null }) {
   const kind = useMemo(
     () => doc?.kind || detectDocKind(doc?.fileName || doc?.title || '', doc?.mime || ''),
     [doc]
   );
 
-  const [readerTheme, setReaderTheme] = useState('paper'); // paper | sepia | night
+  const [readerTheme, setReaderTheme] = useState(detectDefaultReaderTheme); // paper | sepia | night
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [textMode, setTextMode] = useState(false); // PDF Pages vs Clean Text; PPTX Deck vs All Slides
@@ -193,6 +203,25 @@ export default function DocumentViewerModal({ doc, onClose, onSaveAsNote = null 
   const objectUrlsRef = useRef([]);
   const pdfInstanceRef = useRef(null);
   const bodyScrollRef = useRef(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  const cleanupDocResources = useCallback(() => {
+    for (const u of objectUrlsRef.current) {
+      try {
+        URL.revokeObjectURL(u);
+      } catch {
+        // ignore
+      }
+    }
+    objectUrlsRef.current = [];
+    try {
+      pdfInstanceRef.current?.destroy?.();
+    } catch {
+      // ignore
+    }
+    pdfInstanceRef.current = null;
+  }, []);
 
   const makeObjectUrl = useCallback((bytes, mime) => {
     const url = URL.createObjectURL(new Blob([bytes], { type: mime || 'image/png' }));
@@ -202,31 +231,19 @@ export default function DocumentViewerModal({ doc, onClose, onSaveAsNote = null 
 
   useEffect(() => {
     const onKey = e => {
-      if (e.key === 'Escape') onClose?.();
+      if (e.key === 'Escape') onCloseRef.current?.();
     };
     window.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('keydown', onKey);
-      for (const u of objectUrlsRef.current) {
-        try {
-          URL.revokeObjectURL(u);
-        } catch {
-          // ignore
-        }
-      }
-      objectUrlsRef.current = [];
-      try {
-        pdfInstanceRef.current?.destroy?.();
-      } catch {
-        // ignore
-      }
-      pdfInstanceRef.current = null;
+      cleanupDocResources();
     };
-  }, [onClose]);
+  }, [cleanupDocResources]);
 
   // Load document content (Blob from direct file/attachment OR fallback extractedText)
   useEffect(() => {
     let alive = true;
+    cleanupDocResources();
     setLoading(true);
     setError('');
     setPdfDoc(null);
@@ -331,7 +348,7 @@ export default function DocumentViewerModal({ doc, onClose, onSaveAsNote = null 
     return () => {
       alive = false;
     };
-  }, [doc, kind, makeObjectUrl]);
+  }, [doc, kind, makeObjectUrl, cleanupDocResources]);
 
   // Lazily extract PDF text index only when Clean Text or Search is opened
   useEffect(() => {

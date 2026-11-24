@@ -1,4 +1,7 @@
 import 'fake-indexeddb/auto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect } from 'vitest';
 import { zipSync, strToU8 } from 'fflate';
 import {
@@ -162,5 +165,17 @@ describe('v2.0.7 Document Viewer Parser & Binary Attachments', () => {
 
     await deleteCourseMaterial(mat.id);
     expect(await resolveFileBlob(mat)).toBeNull();
+  });
+
+  it('prevents premature cleanup on parent re-renders and defaults dark themes to night mode', () => {
+    const __dirname = path.dirname(fileURLToPath(import.meta.url));
+    const modalSrc = fs.readFileSync(
+      path.resolve(__dirname, '../src/components/DocumentViewerModal.jsx'),
+      'utf8'
+    );
+    expect(modalSrc).toContain('detectDefaultReaderTheme');
+    expect(modalSrc).toContain('onCloseRef');
+    expect(modalSrc).not.toMatch(/cleanupDocResources\(\);\s*\};\s*\},\s*\[\s*onClose/);
+    expect(modalSrc).toContain('[cleanupDocResources]');
   });
 });

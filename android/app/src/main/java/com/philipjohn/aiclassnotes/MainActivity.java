@@ -7,6 +7,7 @@ import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.database.Cursor;
 import android.graphics.Color;
+import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -27,6 +28,11 @@ import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -55,9 +61,12 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-        applySavedWindowBackground();
         super.onCreate(savedInstanceState);
+        if (getWindow() != null) {
+            WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        }
         applySavedWindowBackground();
+        installCleanWindowInsets();
         if (getWindow() != null) {
             getWindow().getDecorView().post(this::enableHighRefreshRate);
         }
@@ -65,6 +74,33 @@ public class MainActivity extends BridgeActivity {
         initNativeTts();
         initNativeSpeech();
         handleShareIntent(getIntent());
+    }
+
+    private void installCleanWindowInsets() {
+        try {
+            View content = findViewById(android.R.id.content);
+            if (content == null) return;
+            ViewCompat.setOnApplyWindowInsetsListener(content, (v, insets) -> {
+                Insets sysBars = insets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout()
+                );
+                Insets ime = insets.getInsets(WindowInsetsCompat.Type.ime());
+                boolean imeVisible = insets.isVisible(WindowInsetsCompat.Type.ime());
+                int bottomPad = imeVisible ? Math.max(sysBars.bottom, ime.bottom) : sysBars.bottom;
+                v.setPadding(sysBars.left, sysBars.top, sysBars.right, bottomPad);
+                return new WindowInsetsCompat.Builder(insets)
+                    .setInsets(
+                        WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout(),
+                        Insets.NONE
+                    )
+                    .setInsets(WindowInsetsCompat.Type.ime(), Insets.NONE)
+                    .setVisible(WindowInsetsCompat.Type.ime(), false)
+                    .build();
+            });
+            ViewCompat.requestApplyInsets(content);
+        } catch (Exception ignored) {
+            // fallback safely
+        }
     }
 
     private void applySavedWindowBackground() {
@@ -87,15 +123,19 @@ public class MainActivity extends BridgeActivity {
             int bgColor = Color.parseColor(hex.startsWith("#") ? hex : "#" + hex);
             Window window = getWindow();
             if (window != null) {
+                window.setBackgroundDrawable(new ColorDrawable(bgColor));
                 View decor = window.getDecorView();
                 decor.setBackgroundColor(bgColor);
-                window.setStatusBarColor(bgColor);
-                window.setNavigationBarColor(bgColor);
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    int flags = decor.getSystemUiVisibility();
-                    if (dark) flags &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
-                    else flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
-                    decor.setSystemUiVisibility(flags);
+                View content = findViewById(android.R.id.content);
+                if (content != null) {
+                    content.setBackgroundColor(bgColor);
+                }
+                window.setStatusBarColor(Color.TRANSPARENT);
+                window.setNavigationBarColor(Color.TRANSPARENT);
+                WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(window, decor);
+                if (controller != null) {
+                    controller.setAppearanceLightStatusBars(!dark);
+                    controller.setAppearanceLightNavigationBars(!dark);
                 }
             }
             if (getBridge() != null && getBridge().getWebView() != null) {
@@ -137,6 +177,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onResume() {
         super.onResume();
+        applySavedWindowBackground();
         enableHighRefreshRate();
     }
 

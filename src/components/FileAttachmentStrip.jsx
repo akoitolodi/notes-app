@@ -36,8 +36,8 @@ export default function FileAttachmentStrip({ files = [], onOpenFile, onRemoveFi
                 {(kind || 'file').toUpperCase()}
               </span>
               <span className="doc-attach-info">
-                <div className="doc-attach-name">{fileMeta.name || 'Document'}</div>
-                <div className="doc-attach-meta">{metaText}</div>
+                <span className="doc-attach-name">{fileMeta.name || 'Document'}</span>
+                <span className="doc-attach-meta">{metaText}</span>
               </span>
               <span className="doc-attach-cta">
                 <Eye size={12} /> View

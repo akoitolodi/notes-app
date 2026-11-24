@@ -393,6 +393,10 @@ export default function App() {
     if (overlayBackRef.current && overlayBackRef.current() === true) {
       return true;
     }
+    if (sharedImport) {
+      setSharedImport(null);
+      return true;
+    }
     if (screen === 'exam-paper') {
       handleBackFromExamPaper();
       return true;
@@ -429,7 +433,15 @@ export default function App() {
       return true;
     }
     return false;
-  }, [screen, handleBackFromExamPaper, handleBackFromStudy, handleBackFromEditor, handleBackToFolders]);
+  }, [
+    screen,
+    sharedImport,
+    themesReturnTo,
+    handleBackFromExamPaper,
+    handleBackFromStudy,
+    handleBackFromEditor,
+    handleBackToFolders,
+  ]);
 
   const logicalBackRef = useRef(handleLogicalBack);
   useEffect(() => {
@@ -628,6 +640,7 @@ export default function App() {
             onOpenExamPaper={handleOpenExamPaper}
             onOpenPlanner={handleOpenPlanner}
             onChanged={bumpSidebar}
+            onRegisterBack={registerOverlayBack}
           />
         </Suspense>
       );
