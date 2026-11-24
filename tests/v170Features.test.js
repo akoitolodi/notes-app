@@ -82,7 +82,7 @@ describe('Canvas LMS Integration (.ics, RSS, Quick-Paste & Note Builder)', () =>
   <id>https://school.instructure.com/courses/3161/announcements</id>
   <title>C - Integrative Programming and Technologies Announcements Feed</title>
   <entry>
-    <author><name>Harvey Sean Ocmen</name></author>
+    <author><name>Prof. Alex Cruz</name></author>
     <content type="html">&lt;p&gt;Hey everyone, welcome!&lt;br&gt;Join here: &lt;a class="inline_disabled" href="https://chat.google.com/room/test123" target="_blank"&gt;IPT 101A Chat&lt;/a&gt;. See you!&lt;/p&gt;</content>
     <id>tag:canvas.instructure.com,2026-11-23:/discussion_topics/discussion_topic_11974</id>
     <link href="http://school.instructure.com/courses/3161/discussion_topics/11974"/>
@@ -94,14 +94,14 @@ describe('Canvas LMS Integration (.ics, RSS, Quick-Paste & Note Builder)', () =>
     const anns = parseRssAnnouncements(atomXml);
     expect(anns.length).toBe(1);
     expect(anns[0].course).toBe('C - Integrative Programming and Technologies');
-    expect(anns[0].author).toBe('Harvey Sean Ocmen');
+    expect(anns[0].author).toBe('Prof. Alex Cruz');
     expect(anns[0].url).toBe('https://school.instructure.com/courses/3161/discussion_topics/11974');
     expect(anns[0].description).not.toContain('<p>');
     expect(anns[0].description).not.toContain('<a ');
     expect(anns[0].description).toContain('[IPT 101A Chat](https://chat.google.com/room/test123)');
 
     const noteMd = buildCanvasNoteContent(anns[0]);
-    expect(noteMd).toContain('**Posted by:** Harvey Sean Ocmen');
+    expect(noteMd).toContain('**Posted by:** Prof. Alex Cruz');
     expect(noteMd).toContain('[IPT 101A Chat](https://chat.google.com/room/test123)');
   });
 
