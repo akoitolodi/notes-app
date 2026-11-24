@@ -1100,7 +1100,7 @@ export default function EditModeView({
             <input
               ref={docInputRef}
               type="file"
-              accept=".pdf,.pptx,.docx,.md,.markdown,.txt,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown"
+              accept=".pdf,.ppt,.pptx,.docx,.md,.markdown,.txt,application/pdf,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown"
               style={{ display: 'none' }}
               onChange={handleDocPick}
             />

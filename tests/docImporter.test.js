@@ -84,7 +84,7 @@ describe('Document Importer (.pptx, .md, .txt)', () => {
     expect(res.markdown).not.toContain('\n- 1\n');
   });
 
-  it('imports .md files and rejects legacy .ppt cleanly', async () => {
+  it('imports .md files, supports renamed .ppt ZIP decks, and rejects invalid .ppt / binary .doc cleanly', async () => {
     const mdFile = {
       name: 'Lecture_Notes.md',
       text: async () => '# Intro\r\n- Point A\r\n- Point B',
@@ -94,9 +94,21 @@ describe('Document Importer (.pptx, .md, .txt)', () => {
     expect(res.kind).toBe('md');
     expect(res.rawMarkdown).toBe('# Intro\n- Point A\n- Point B');
 
+    const pptxBytes = buildSamplePptx();
+    const renamedPpt = await extractDocument({
+      name: 'renamed_deck.ppt',
+      arrayBuffer: async () => pptxBytes.buffer,
+    });
+    expect(renamedPpt.kind).toBe('pptx');
+    expect(renamedPpt.pageCount).toBe(2);
+
     await expect(
       extractDocument({ name: 'old_deck.ppt', arrayBuffer: async () => new ArrayBuffer(0) })
-    ).rejects.toThrow(/Legacy \.ppt/i);
+    ).rejects.toThrow(/valid OLE2 PowerPoint/i);
+
+    await expect(
+      extractDocument({ name: 'old_word.doc', arrayBuffer: async () => new ArrayBuffer(16) })
+    ).rejects.toThrow(/Legacy binary \.doc/i);
   });
 });
 

@@ -28,13 +28,17 @@ import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.WebViewListener;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Locale;
@@ -43,6 +47,7 @@ import org.json.JSONObject;
 public class MainActivity extends BridgeActivity {
 
     private static final int MAX_SHARED_BYTES = 12 * 1024 * 1024; // 12 MB safety cap
+    private static final int MAX_EXTERNAL_BYTES = 25 * 1024 * 1024; // 25 MB temp export cap
     private static final int REQ_RECORD_AUDIO = 4201;
     private TextToSpeech tts;
     private volatile boolean ttsReady = false;
@@ -58,21 +63,52 @@ public class MainActivity extends BridgeActivity {
     private static final String THEME_PREFS = "bai_theme_prefs";
     private static final String PREF_BG_COLOR = "bg_color";
     private static final String PREF_IS_DARK = "is_dark";
+    private static final String PREF_HIDE_STATUS_BAR = "hide_status_bar";
+
+    private volatile int lastSafeTopDp = 0;
+    private volatile int lastSafeBottomDp = 0;
+    private volatile int lastSafeLeftDp = 0;
+    private volatile int lastSafeRightDp = 0;
+    private WebViewListener safeInsetWebViewListener = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         if (getWindow() != null) {
             WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                WindowManager.LayoutParams lp = getWindow().getAttributes();
+                lp.layoutInDisplayCutoutMode =
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
+                        ? WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+                        : WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+                getWindow().setAttributes(lp);
+            }
         }
         applySavedWindowBackground();
+        applySavedStatusBarVisibility();
         installCleanWindowInsets();
         if (getWindow() != null) {
             getWindow().getDecorView().post(this::enableHighRefreshRate);
         }
         initNativeTheme();
+        initNativeFiles();
         initNativeTts();
         initNativeSpeech();
+        if (getBridge() != null) {
+            safeInsetWebViewListener = new WebViewListener() {
+                @Override
+                public void onPageCommitVisible(WebView view, String url) {
+                    pushSafeInsetsToWeb();
+                }
+
+                @Override
+                public void onPageLoaded(WebView webView) {
+                    pushSafeInsetsToWeb();
+                }
+            };
+            getBridge().addWebViewListener(safeInsetWebViewListener);
+        }
         handleShareIntent(getIntent());
     }
 
@@ -84,10 +120,26 @@ public class MainActivity extends BridgeActivity {
                 Insets sysBars = insets.getInsets(
                     WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout()
                 );
+                Insets statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars());
+                Insets navBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars());
                 Insets ime = insets.getInsets(WindowInsetsCompat.Type.ime());
                 boolean imeVisible = insets.isVisible(WindowInsetsCompat.Type.ime());
-                int bottomPad = imeVisible ? Math.max(sysBars.bottom, ime.bottom) : sysBars.bottom;
-                v.setPadding(sysBars.left, sysBars.top, sysBars.right, bottomPad);
+                boolean hideStatusBar =
+                    getSharedPreferences(THEME_PREFS, MODE_PRIVATE).getBoolean(PREF_HIDE_STATUS_BAR, false);
+
+                // Keep top/left/right at 0 so WebView draws edge-to-edge behind status & nav bars;
+                // pad bottom strictly when IME is visible for single-pass keyboard resize without any black gap.
+                v.setPadding(0, 0, 0, imeVisible ? ime.bottom : 0);
+
+                float density = Math.max(1f, getResources().getDisplayMetrics().density);
+                lastSafeTopDp = hideStatusBar
+                    ? Math.round(statusBars.top / density)
+                    : Math.round(sysBars.top / density);
+                lastSafeBottomDp = imeVisible ? 0 : Math.round(navBars.bottom / density);
+                lastSafeLeftDp = Math.round(sysBars.left / density);
+                lastSafeRightDp = Math.round(sysBars.right / density);
+                pushSafeInsetsToWeb();
+
                 return new WindowInsetsCompat.Builder(insets)
                     .setInsets(
                         WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout(),
@@ -100,6 +152,60 @@ public class MainActivity extends BridgeActivity {
             ViewCompat.requestApplyInsets(content);
         } catch (Exception ignored) {
             // fallback safely
+        }
+    }
+
+    private void pushSafeInsetsToWeb() {
+        final int top = lastSafeTopDp;
+        final int bottom = lastSafeBottomDp;
+        final int left = lastSafeLeftDp;
+        final int right = lastSafeRightDp;
+        final String js = String.format(
+            Locale.US,
+            "try{var s=document.documentElement.style;s.setProperty('--native-safe-top','%dpx');s.setProperty('--native-safe-bottom','%dpx');s.setProperty('--native-safe-left','%dpx');s.setProperty('--native-safe-right','%dpx');}catch(e){}",
+            top,
+            bottom,
+            left,
+            right
+        );
+        mainHandler.post(() -> {
+            try {
+                if (getBridge() != null && getBridge().getWebView() != null) {
+                    getBridge().getWebView().evaluateJavascript(js, null);
+                }
+            } catch (Exception ignored) {
+                // ignore if WebView not ready
+            }
+        });
+    }
+
+    private void applySavedStatusBarVisibility() {
+        try {
+            boolean hide =
+                getSharedPreferences(THEME_PREFS, MODE_PRIVATE).getBoolean(PREF_HIDE_STATUS_BAR, false);
+            applyHideStatusBar(hide);
+        } catch (Exception ignored) {
+            // fallback safely
+        }
+    }
+
+    private void applyHideStatusBar(final boolean hide) {
+        try {
+            Window window = getWindow();
+            if (window == null) return;
+            View decor = window.getDecorView();
+            WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(window, decor);
+            if (controller == null) return;
+            controller.setSystemBarsBehavior(
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            );
+            if (hide) {
+                controller.hide(WindowInsetsCompat.Type.statusBars());
+            } else {
+                controller.show(WindowInsetsCompat.Type.statusBars());
+            }
+        } catch (Exception ignored) {
+            // ignore on older OS
         }
     }
 
@@ -172,13 +278,126 @@ public class MainActivity extends BridgeActivity {
             }
             mainHandler.post(() -> applyNativeWindowBg(hex, dark));
         }
+
+        @JavascriptInterface
+        public void setHideStatusBar(final boolean hide) {
+            try {
+                getSharedPreferences(THEME_PREFS, MODE_PRIVATE)
+                    .edit()
+                    .putBoolean(PREF_HIDE_STATUS_BAR, hide)
+                    .apply();
+            } catch (Exception ignored) {
+                // ignore
+            }
+            mainHandler.post(() -> {
+                applyHideStatusBar(hide);
+                View content = findViewById(android.R.id.content);
+                if (content != null) ViewCompat.requestApplyInsets(content);
+            });
+        }
+
+        @JavascriptInterface
+        public String getSafeInsetsJson() {
+            return String.format(
+                Locale.US,
+                "{\"top\":%d,\"bottom\":%d,\"left\":%d,\"right\":%d}",
+                lastSafeTopDp,
+                lastSafeBottomDp,
+                lastSafeLeftDp,
+                lastSafeRightDp
+            );
+        }
+    }
+
+    private void initNativeFiles() {
+        try {
+            if (getBridge() != null && getBridge().getWebView() != null) {
+                getBridge().getWebView().addJavascriptInterface(new AndroidFilesBridge(), "BaiNativeFiles");
+            }
+        } catch (Exception ignored) {
+            // ignore
+        }
+    }
+
+    private void cleanupSharedDocsDir(File dir) {
+        try {
+            File[] files = dir.listFiles();
+            if (files == null) return;
+            long cutoff = System.currentTimeMillis() - 30L * 60L * 1000L;
+            for (File f : files) {
+                if (f.lastModified() < cutoff) {
+                    f.delete();
+                }
+            }
+        } catch (Exception ignored) {
+            // ignore cleanup errors
+        }
+    }
+
+    private final class AndroidFilesBridge {
+
+        @JavascriptInterface
+        public boolean openFileExternal(final String fileName, final String mimeType, final String base64Data) {
+            try {
+                if (base64Data == null || base64Data.isEmpty()) return false;
+                byte[] bytes = Base64.decode(base64Data, Base64.DEFAULT);
+                if (bytes == null || bytes.length == 0 || bytes.length > MAX_EXTERNAL_BYTES) return false;
+
+                String safeName = (fileName == null || fileName.trim().isEmpty())
+                    ? "document.bin"
+                    : fileName.trim().replaceAll("[^a-zA-Z0-9._-]", "_");
+                if (safeName.startsWith(".")) safeName = "document" + safeName;
+
+                File sharedDir = new File(getCacheDir(), "shared_docs");
+                if (!sharedDir.exists()) sharedDir.mkdirs();
+                cleanupSharedDocsDir(sharedDir);
+
+                File outFile = new File(sharedDir, safeName);
+                try (FileOutputStream fos = new FileOutputStream(outFile)) {
+                    fos.write(bytes);
+                }
+
+                String safeMime = (mimeType == null || mimeType.trim().isEmpty())
+                    ? "application/octet-stream"
+                    : mimeType.trim();
+                Uri uri = FileProvider.getUriForFile(
+                    MainActivity.this,
+                    getPackageName() + ".fileprovider",
+                    outFile
+                );
+                mainHandler.post(() -> {
+                    try {
+                        Intent viewIntent = new Intent(Intent.ACTION_VIEW);
+                        viewIntent.setDataAndType(uri, safeMime);
+                        viewIntent.addFlags(
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK
+                        );
+                        startActivity(Intent.createChooser(viewIntent, "Open with"));
+                    } catch (Exception ignored) {
+                        // no handler or restricted
+                    }
+                });
+                return true;
+            } catch (Exception ignored) {
+                return false;
+            }
+        }
     }
 
     @Override
     public void onResume() {
         super.onResume();
         applySavedWindowBackground();
+        applySavedStatusBarVisibility();
         enableHighRefreshRate();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            applySavedStatusBarVisibility();
+        }
     }
 
     @SuppressWarnings("deprecation")

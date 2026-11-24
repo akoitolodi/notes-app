@@ -1700,7 +1700,7 @@ export default function CoursesDashboardScreen({
                         ? matFiles[0].name
                         : matFiles.length > 1
                           ? `${matFiles.length} files selected`
-                          : 'Pick 1 or multiple .pdf, .pptx, .docx, .md, .txt'}
+                          : 'Pick 1 or multiple .pdf, .ppt, .pptx, .docx, .md, .txt'}
                     </div>
                     <div className="import-dropzone-sub">
                       Extracted &amp; chunk-indexed 100% offline for Course AI
@@ -1710,7 +1710,7 @@ export default function CoursesDashboardScreen({
                     ref={fileInputRef}
                     type="file"
                     multiple
-                    accept=".pdf,.pptx,.docx,.md,.markdown,.txt"
+                    accept=".pdf,.ppt,.pptx,.docx,.md,.markdown,.txt,application/vnd.ms-powerpoint"
                     style={{ display: 'none' }}
                     onChange={e => {
                       const list = Array.from(e.target.files || []).slice(0, 12);

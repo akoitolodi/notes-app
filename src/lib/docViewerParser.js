@@ -87,11 +87,109 @@ function extractSlideTitle(xml) {
   return '';
 }
 
+function extractSlideBgColor(xml) {
+  const bgMatch = /<p:bg\b[^>]*>([\s\S]*?)<\/p:bg>/i.exec(xml);
+  if (!bgMatch) return null;
+  const clrMatch = /<a:srgbClr\b[^>]*val="([0-9A-Fa-f]{6})"/i.exec(bgMatch[1]);
+  return clrMatch ? `#${clrMatch[1].toUpperCase()}` : null;
+}
+
+function extractPptxRichParagraphs(xml) {
+  if (!xml) return [];
+  const out = [];
+  const pRe = /<a:p\b[^>]*>([\s\S]*?)<\/a:p>/g;
+  let pm;
+  while ((pm = pRe.exec(xml)) !== null) {
+    const pInner = pm[1];
+    const lvlMatch = /<a:pPr\b[^>]*\blvl="(\d+)"/i.exec(pInner);
+    const level = lvlMatch ? Math.min(3, Math.max(0, parseInt(lvlMatch[1], 10) || 0)) : 0;
+
+    const runs = [];
+    const rRe = /<(?:a:r|a:fld)\b[^>]*>([\s\S]*?)<\/(?:a:r|a:fld)>/g;
+    let rm;
+    while ((rm = rRe.exec(pInner)) !== null) {
+      const rInner = rm[1];
+      const rPrMatch = /<a:rPr\b([^>]*)>/i.exec(rInner);
+      const rPrAttrs = rPrMatch ? rPrMatch[1] : '';
+      const bold = /\bb="(?:1|true)"/i.test(rPrAttrs);
+      const italic = /\bi="(?:1|true)"/i.test(rPrAttrs);
+      const underline = /\bu="(?!none\b)[a-z]+"/i.test(rPrAttrs);
+
+      const tMatch = /<a:t\b[^>]*>([\s\S]*?)<\/a:t>/i.exec(rInner);
+      if (!tMatch) continue;
+      const text = decodeXmlEntities(tMatch[1]);
+      if (!text) continue;
+      const prev = runs[runs.length - 1];
+      if (prev && prev.bold === bold && prev.italic === italic && prev.underline === underline) {
+        prev.text += text;
+      } else {
+        runs.push({ text, bold, italic, underline });
+      }
+    }
+
+    if (runs.length === 0) {
+      const plain = extractPptxParagraphs(`<a:p>${pInner}</a:p>`);
+      if (plain.length > 0) {
+        runs.push({ text: plain[0], bold: false, italic: false, underline: false });
+      }
+    }
+
+    const plainText = runs.map(r => r.text).join('').replace(/\s+/g, ' ').trim();
+    if (!plainText) continue;
+    out.push({ level, runs, text: plainText });
+  }
+  return out;
+}
+
+function extractPptxTables(xml) {
+  if (!xml) return [];
+  const tables = [];
+  const tblRe = /<a:tbl\b[^>]*>([\s\S]*?)<\/a:tbl>/g;
+  let tm;
+  while ((tm = tblRe.exec(xml)) !== null) {
+    const rows = [];
+    const trRe = /<a:tr\b[^>]*>([\s\S]*?)<\/a:tr>/g;
+    let trm;
+    while ((trm = trRe.exec(tm[1])) !== null) {
+      const cells = [];
+      const tcRe = /<a:tc\b[^>]*>([\s\S]*?)<\/a:tc>/g;
+      let tcm;
+      while ((tcm = tcRe.exec(trm[1])) !== null) {
+        const cellParas = extractPptxParagraphs(tcm[1]);
+        cells.push(cellParas.join(' ').trim());
+      }
+      if (cells.length > 0) rows.push(cells);
+    }
+    if (rows.length > 0) tables.push(rows);
+  }
+  return tables;
+}
+
+function extractDiagramAndChartTexts(xml) {
+  if (!xml) return [];
+  const seen = new Set();
+  const out = [];
+  const pushVal = raw => {
+    const clean = decodeXmlEntities(raw).replace(/\s+/g, ' ').trim();
+    if (!clean || seen.has(clean)) return;
+    seen.add(clean);
+    out.push(clean);
+  };
+  const aRe = /<a:t\b[^>]*>([\s\S]*?)<\/a:t>/g;
+  let am;
+  while ((am = aRe.exec(xml)) !== null) pushVal(am[1]);
+  const cRe = /<c:v\b[^>]*>([\s\S]*?)<\/c:v>/g;
+  let cm;
+  while ((cm = cRe.exec(xml)) !== null) pushVal(cm[1]);
+  return out;
+}
+
 function parseRelsMap(relsXml, baseDir = 'ppt/slides') {
   const notesTargets = [];
   const imageTargets = [];
+  const diagramTargets = [];
   const byId = {};
-  if (!relsXml) return { notesTargets, imageTargets, byId };
+  if (!relsXml) return { notesTargets, imageTargets, diagramTargets, byId };
 
   const relRe = /<Relationship\b[^>]*>/g;
   let m;
@@ -117,17 +215,28 @@ function parseRelsMap(relsXml, baseDir = 'ppt/slides') {
       notesTargets.push(resolved);
     } else if (/\/image$/i.test(relType) || /\.(png|jpe?g|gif|webp|svg)$/i.test(resolved)) {
       imageTargets.push(resolved);
+    } else if (
+      /diagramData|chart/i.test(relType) ||
+      /^ppt\/(?:diagrams\/data|charts\/chart)/i.test(resolved)
+    ) {
+      diagramTargets.push(resolved);
     }
   }
-  return { notesTargets, imageTargets, byId };
+  return { notesTargets, imageTargets, diagramTargets, byId };
 }
 
 /**
- * Parse a .pptx buffer into structured slides with title, bullets, speaker notes, and embedded images.
+ * Parse a .pptx or .ppt buffer into structured slides with title, formatted bullets,
+ * tables, SmartArt/chart text, speaker notes, background accent, and embedded images.
  */
 export async function extractPptxSlidesRich(input) {
-  const { unzipSync, strFromU8 } = await import('fflate');
   const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+  const { isOle2Magic, extractLegacyPptSlidesRich } = await import('./legacyPptParser');
+  if (isOle2Magic(bytes)) {
+    return extractLegacyPptSlidesRich(bytes);
+  }
+
+  const { unzipSync, strFromU8 } = await import('fflate');
 
   let entries;
   try {
@@ -150,25 +259,30 @@ export async function extractPptxSlidesRich(input) {
 
   const slides = slideFiles.map(({ name, num }) => {
     const slideXml = strFromU8(entries[name]);
-    const explicitTitle = extractSlideTitle(slideXml);
-    const allParas = extractPptxParagraphs(slideXml);
+    const bgColor = extractSlideBgColor(slideXml);
+    const tables = extractPptxTables(slideXml);
+    const xmlWithoutTables = slideXml.replace(/<a:tbl\b[^>]*>[\s\S]*?<\/a:tbl>/g, '');
+
+    const explicitTitle = extractSlideTitle(xmlWithoutTables);
+    const allRich = extractPptxRichParagraphs(xmlWithoutTables);
 
     let title = explicitTitle;
-    let bullets = allParas;
+    let richBullets = allRich;
     if (title) {
       let removed = false;
-      bullets = allParas.filter(p => {
-        if (!removed && p === title) {
+      richBullets = allRich.filter(p => {
+        if (!removed && p.text === title) {
           removed = true;
           return false;
         }
         return true;
       });
-    } else if (allParas.length > 0 && allParas[0].length <= 120) {
-      title = allParas[0];
-      bullets = allParas.slice(1);
+    } else if (allRich.length > 0 && allRich[0].text.length <= 120) {
+      title = allRich[0].text;
+      richBullets = allRich.slice(1);
     }
-    bullets = bullets.filter(p => p !== String(num));
+    richBullets = richBullets.filter(p => p.text !== String(num));
+    const bullets = richBullets.map(p => p.text);
 
     const relsPath = `ppt/slides/_rels/slide${num}.xml.rels`;
     const relsXml = entries[relsPath] ? strFromU8(entries[relsPath]) : '';
@@ -191,12 +305,29 @@ export async function extractPptxSlidesRich(input) {
       });
     }
 
+    const bulletSeen = new Set([title, ...bullets]);
+    const diagramTexts = [];
+    for (const dPath of rels.diagramTargets) {
+      if (!entries[dPath]) continue;
+      const items = extractDiagramAndChartTexts(strFromU8(entries[dPath]));
+      for (const item of items) {
+        if (!bulletSeen.has(item)) {
+          bulletSeen.add(item);
+          diagramTexts.push(item);
+        }
+      }
+    }
+
     return {
       num,
       title: title || `Slide ${num}`,
       bullets,
+      richBullets,
+      tables,
+      diagramTexts,
       notes,
       images,
+      bgColor,
     };
   });
 

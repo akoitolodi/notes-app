@@ -19,6 +19,8 @@ import {
   MessageSquareText,
   Layers,
   AlignLeft,
+  ExternalLink,
+  Maximize2,
 } from 'lucide-react';
 import { resolveFileBlob } from '../store/db';
 import {
@@ -149,6 +151,90 @@ function RichRuns({ runs = [] }) {
   });
 }
 
+function SlideCardContent({ slide, totalSlides = 0, compact = false, presentMode = false, readerTheme = 'paper' }) {
+  const hasRichBullets = Array.isArray(slide.richBullets) && slide.richBullets.length > 0;
+  return (
+    <article
+      className={`doc-slide-card${compact ? ' doc-slide-card-compact' : ''}${presentMode && !compact ? ' is-present' : ''}`}
+    >
+      {slide.bgColor && readerTheme !== 'night' && (
+        <div className="doc-slide-accent-bar" style={{ background: slide.bgColor }} />
+      )}
+      <div className="doc-slide-meta">
+        <span>SLIDE {slide.num}</span>
+        {!compact && totalSlides > 0 && <span>{totalSlides} TOTAL</span>}
+      </div>
+      <h2 className="doc-slide-title">{slide.title}</h2>
+      {slide.imageUrls?.length > 0 && (
+        <div className="doc-slide-media-grid">
+          {slide.imageUrls.map((im, i) => (
+            <img key={i} src={im.url} alt={im.name} className="doc-slide-img" />
+          ))}
+        </div>
+      )}
+      {hasRichBullets ? (
+        <ul className="doc-slide-bullets">
+          {slide.richBullets.map((b, i) => (
+            <li key={i} data-level={b.level || 0}>
+              <RichRuns runs={b.runs} />
+            </li>
+          ))}
+        </ul>
+      ) : (
+        slide.bullets.length > 0 && (
+          <ul className="doc-slide-bullets">
+            {slide.bullets.map((b, i) => (
+              <li key={i}>{b}</li>
+            ))}
+          </ul>
+        )
+      )}
+      {slide.tables?.length > 0 &&
+        slide.tables.map((rows, ti) => (
+          <div key={`tbl-${ti}`} className="doc-docx-table-wrap">
+            <table className="doc-docx-table">
+              <thead>
+                <tr>
+                  {rows[0].map((cell, ci) => (
+                    <th key={ci}>{cell}</th>
+                  ))}
+                </tr>
+              </thead>
+              {rows.length > 1 && (
+                <tbody>
+                  {rows.slice(1).map((row, ri) => (
+                    <tr key={ri}>
+                      {rows[0].map((_, ci) => (
+                        <td key={ci}>{row[ci] || ''}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              )}
+            </table>
+          </div>
+        ))}
+      {slide.diagramTexts?.length > 0 && (
+        <div>
+          <div className="doc-slide-section-label">Diagram / Chart Labels</div>
+          <div className="doc-slide-diagram-chips">
+            {slide.diagramTexts.map((txt, di) => (
+              <span key={di} className="doc-slide-diagram-chip">
+                {txt}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {compact && slide.notes?.length > 0 && (
+        <div className="doc-slide-notes-inline">
+          <strong>Notes:</strong> {slide.notes.join(' ')}
+        </div>
+      )}
+    </article>
+  );
+}
+
 function detectDefaultReaderTheme() {
   if (typeof document === 'undefined') return 'paper';
   const root = document.documentElement;
@@ -187,6 +273,7 @@ export default function DocumentViewerModal({ doc, onClose, onSaveAsNote = null 
   const [slides, setSlides] = useState([]);
   const [slideIdx, setSlideIdx] = useState(0);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [presentMode, setPresentMode] = useState(false);
   const slideRefs = useRef(new Map());
   const touchStartX = useRef(null);
 
@@ -198,10 +285,12 @@ export default function DocumentViewerModal({ doc, onClose, onSaveAsNote = null 
   // Text / fallback Markdown state
   const [plainText, setPlainText] = useState('');
   const [extractedFallback, setExtractedFallback] = useState(doc?.extractedText || '');
+  const [hasBinaryBlob, setHasBinaryBlob] = useState(false);
 
   // Track created Object URLs & pdfDoc for strict zero-leak cleanup
   const objectUrlsRef = useRef([]);
   const pdfInstanceRef = useRef(null);
+  const loadedBlobRef = useRef(null);
   const bodyScrollRef = useRef(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -221,6 +310,7 @@ export default function DocumentViewerModal({ doc, onClose, onSaveAsNote = null 
       // ignore
     }
     pdfInstanceRef.current = null;
+    loadedBlobRef.current = null;
   }, []);
 
   const makeObjectUrl = useCallback((bytes, mime) => {
@@ -245,6 +335,7 @@ export default function DocumentViewerModal({ doc, onClose, onSaveAsNote = null 
     let alive = true;
     cleanupDocResources();
     setLoading(true);
+    setHasBinaryBlob(false);
     setError('');
     setPdfDoc(null);
     setSlides([]);
@@ -268,6 +359,10 @@ export default function DocumentViewerModal({ doc, onClose, onSaveAsNote = null 
           }
           throw new Error('Original file is not stored on this device.');
         }
+
+        if (!alive) return;
+        loadedBlobRef.current = blob;
+        setHasBinaryBlob(true);
 
         if (kind === 'pdf') {
           const buf = await blob.arrayBuffer();
@@ -402,11 +497,15 @@ export default function DocumentViewerModal({ doc, onClose, onSaveAsNote = null 
     }
     if (kind === 'pptx' && slides.length > 0) {
       return searchDocMatches(
-        slides.map((s, idx) => ({
-          index: idx,
-          label: `Slide ${s.num}`,
-          text: `${s.title} ${s.bullets.join(' ')} ${s.notes.join(' ')}`,
-        })),
+        slides.map((s, idx) => {
+          const tblTxt = (s.tables || []).map(t => t.map(r => r.join(' ')).join(' ')).join(' ');
+          const diagTxt = (s.diagramTexts || []).join(' ');
+          return {
+            index: idx,
+            label: `Slide ${s.num}`,
+            text: `${s.title} ${s.bullets.join(' ')} ${tblTxt} ${diagTxt} ${s.notes.join(' ')}`,
+          };
+        }),
         searchQuery
       );
     }
@@ -469,6 +568,44 @@ export default function DocumentViewerModal({ doc, onClose, onSaveAsNote = null 
   const currentSlide = slides[slideIdx] || null;
   const fallbackMarkdown = plainText || extractedFallback;
 
+  const handleOpenExternal = async () => {
+    const blob = loadedBlobRef.current;
+    if (!blob) return;
+    const extFallback = kind === 'unknown' ? 'bin' : kind;
+    const rawName = doc?.fileName || `${doc?.title || 'Document'}.${extFallback}`;
+    const mime = blob.type || doc?.mime || 'application/octet-stream';
+
+    if (typeof window !== 'undefined' && window.BaiNativeFiles?.openFileExternal) {
+      try {
+        const dataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ''));
+          reader.onerror = () => reject(new Error('Encode failed'));
+          reader.readAsDataURL(blob);
+        });
+        const comma = dataUrl.indexOf(',');
+        const b64 = comma >= 0 ? dataUrl.slice(comma + 1) : '';
+        if (b64 && window.BaiNativeFiles.openFileExternal(rawName, mime, b64)) {
+          return;
+        }
+      } catch {
+        // fallback below
+      }
+    }
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = rawName;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      a.remove();
+      URL.revokeObjectURL(url);
+    }, 1000);
+  };
+
   const content = (
     <div className="doc-viewer-shell" data-reader-theme={readerTheme} role="dialog" aria-modal="true" aria-label={doc?.title || 'Document Viewer'}>
       {/* Modern Top Chrome Header */}
@@ -488,6 +625,17 @@ export default function DocumentViewerModal({ doc, onClose, onSaveAsNote = null 
         </div>
 
         <div className="doc-viewer-actions">
+          {kind === 'pptx' && slides.length > 0 && !textMode && (
+            <button
+              type="button"
+              className={`doc-viewer-icon-btn${presentMode ? ' active' : ''}`}
+              onClick={() => setPresentMode(v => !v)}
+              title={presentMode ? 'Exit 16:9 frame' : '16:9 presentation frame'}
+              aria-label="Toggle 16:9 presentation frame"
+            >
+              <Maximize2 size={15} />
+            </button>
+          )}
           {(kind === 'pdf' || (kind === 'pptx' && slides.length > 0)) && (
             <button
               type="button"
@@ -512,6 +660,17 @@ export default function DocumentViewerModal({ doc, onClose, onSaveAsNote = null 
           >
             <Search size={16} />
           </button>
+          {hasBinaryBlob && (
+            <button
+              type="button"
+              className="doc-viewer-icon-btn"
+              onClick={handleOpenExternal}
+              title="Open in PowerPoint / WPS / external app"
+              aria-label="Open in external app"
+            >
+              <ExternalLink size={15} />
+            </button>
+          )}
           <div className="doc-reader-theme-pills" role="group" aria-label="Reader background theme">
             {READER_THEMES.map(([id, label]) => (
               <button
@@ -630,27 +789,12 @@ export default function DocumentViewerModal({ doc, onClose, onSaveAsNote = null 
               touchStartX.current = null;
             }}
           >
-            <article className="doc-slide-card">
-              <div className="doc-slide-meta">
-                <span>SLIDE {currentSlide.num}</span>
-                <span>{slides.length} TOTAL</span>
-              </div>
-              <h2 className="doc-slide-title">{currentSlide.title}</h2>
-              {currentSlide.imageUrls?.length > 0 && (
-                <div className="doc-slide-media-grid">
-                  {currentSlide.imageUrls.map((im, i) => (
-                    <img key={i} src={im.url} alt={im.name} className="doc-slide-img" />
-                  ))}
-                </div>
-              )}
-              {currentSlide.bullets.length > 0 && (
-                <ul className="doc-slide-bullets">
-                  {currentSlide.bullets.map((b, i) => (
-                    <li key={i}>{b}</li>
-                  ))}
-                </ul>
-              )}
-            </article>
+            <SlideCardContent
+              slide={currentSlide}
+              totalSlides={slides.length}
+              presentMode={presentMode}
+              readerTheme={readerTheme}
+            />
 
             {currentSlide.notes.length > 0 && (
               <div className="doc-slide-notes-card">
@@ -677,38 +821,15 @@ export default function DocumentViewerModal({ doc, onClose, onSaveAsNote = null 
         {!loading && !error && kind === 'pptx' && slides.length > 0 && textMode && (
           <div className="doc-pptx-all">
             {slides.map((s, idx) => (
-              <article
+              <div
                 key={s.num}
                 ref={el => {
                   if (el) slideRefs.current.set(idx, el);
                   else slideRefs.current.delete(idx);
                 }}
-                className="doc-slide-card doc-slide-card-compact"
               >
-                <div className="doc-slide-meta">
-                  <span>SLIDE {s.num}</span>
-                </div>
-                <h2 className="doc-slide-title">{s.title}</h2>
-                {s.imageUrls?.length > 0 && (
-                  <div className="doc-slide-media-grid">
-                    {s.imageUrls.map((im, i) => (
-                      <img key={i} src={im.url} alt={im.name} className="doc-slide-img" />
-                    ))}
-                  </div>
-                )}
-                {s.bullets.length > 0 && (
-                  <ul className="doc-slide-bullets">
-                    {s.bullets.map((b, i) => (
-                      <li key={i}>{b}</li>
-                    ))}
-                  </ul>
-                )}
-                {s.notes.length > 0 && (
-                  <div className="doc-slide-notes-inline">
-                    <strong>Notes:</strong> {s.notes.join(' ')}
-                  </div>
-                )}
-              </article>
+                <SlideCardContent slide={s} compact readerTheme={readerTheme} />
+              </div>
             ))}
           </div>
         )}

@@ -390,13 +390,34 @@ export async function extractDocument(file, { maxPages = MAX_DEFAULT_PDF_PAGES, 
   const ext = (name.split('.').pop() || '').toLowerCase();
   const title = titleFromFilename(name);
 
-  if (ext === 'ppt' || ext === 'doc') {
-    throw new Error(`Legacy .${ext} files are not supported — please re-save as .${ext}x or .pdf first.`);
+  if (ext === 'ppt') {
+    const buf = await file.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    const { isZipMagic, extractLegacyPptText } = await import('./legacyPptParser');
+    const res = isZipMagic(bytes)
+      ? await extractPptxText(buf, { onProgress })
+      : await extractLegacyPptText(buf, { onProgress });
+    return { title, rawMarkdown: res.markdown, pageCount: res.pageCount, truncatedPages: 0, kind: 'pptx' };
+  }
+
+  if (ext === 'doc') {
+    const buf = await file.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    const { isZipMagic } = await import('./legacyPptParser');
+    if (isZipMagic(bytes)) {
+      const res = await extractDocxText(buf);
+      return { title, rawMarkdown: res.markdown, pageCount: res.pageCount, truncatedPages: 0, kind: 'docx' };
+    }
+    throw new Error('Legacy binary .doc files cannot be parsed offline — please re-save as .docx or .pdf first.');
   }
 
   if (ext === 'pptx') {
     const buf = await file.arrayBuffer();
-    const res = await extractPptxText(buf, { onProgress });
+    const bytes = new Uint8Array(buf);
+    const { isOle2Magic, extractLegacyPptText } = await import('./legacyPptParser');
+    const res = isOle2Magic(bytes)
+      ? await extractLegacyPptText(buf, { onProgress })
+      : await extractPptxText(buf, { onProgress });
     return { title, rawMarkdown: res.markdown, pageCount: res.pageCount, truncatedPages: 0, kind: 'pptx' };
   }
 
@@ -425,7 +446,7 @@ export async function extractDocument(file, { maxPages = MAX_DEFAULT_PDF_PAGES, 
     return { title, rawMarkdown: text, pageCount: 1, truncatedPages: 0, kind: ext === 'txt' ? 'txt' : 'md' };
   }
 
-  throw new Error(`Unsupported file type ".${ext}". Please choose a .pdf, .pptx, .docx, .md, or .txt file.`);
+  throw new Error(`Unsupported file type ".${ext}". Please choose a .pdf, .ppt, .pptx, .docx, .md, or .txt file.`);
 }
 
 /**

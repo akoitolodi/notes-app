@@ -219,3 +219,38 @@ describe('v2.0.8 Android Splash ActionBar, Single-Pass Keyboard Insets & Editor 
     expect(paperBlock[0]).toContain('overflow: hidden;');
   });
 });
+
+describe('v2.0.9 Edge-to-Edge Status Bar, Fullscreen Toggle & Native External Open Bridge', () => {
+  it('applies edge-to-edge zero top padding and single-pass IME padding while syncing native CSS safe-area vars', () => {
+    const java = fs.readFileSync(
+      path.join(root, 'android/app/src/main/java/com/philipjohn/aiclassnotes/MainActivity.java'),
+      'utf8'
+    );
+    expect(java).toContain('v.setPadding(0, 0, 0, imeVisible ? ime.bottom : 0)');
+    expect(java).toContain('--native-safe-top');
+    expect(java).toContain('--native-safe-bottom');
+    expect(java).toContain('setHideStatusBar');
+    expect(java).toContain('getSafeInsetsJson');
+    expect(java).toContain('BaiNativeFiles');
+    expect(java).toContain('openFileExternal');
+    expect(java).toContain('FileProvider.getUriForFile');
+  });
+
+  it('wires --safe-top/--safe-bottom variables and Hide status bar setting across styles.css, theme.js, and SettingsScreen', () => {
+    const css = fs.readFileSync(path.join(root, 'src/styles.css'), 'utf8');
+    expect(css).toContain('--safe-top: max(var(--native-safe-top, 0px), env(safe-area-inset-top, 0px));');
+    expect(css).toContain('--safe-bottom: max(var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px));');
+    expect(css).toContain('.app-root::after');
+
+    const themeSrc = fs.readFileSync(path.join(root, 'src/theme.js'), 'utf8');
+    expect(themeSrc).toContain('HIDE_STATUS_BAR_KEY');
+    expect(themeSrc).toContain('setHideStatusBar');
+
+    const settingsSrc = fs.readFileSync(
+      path.join(root, 'src/components/SettingsScreen.jsx'),
+      'utf8'
+    );
+    expect(settingsSrc).toContain('HIDE_STATUS_BAR_KEY');
+    expect(settingsSrc).toContain('Hide status bar (Fullscreen)');
+  });
+});

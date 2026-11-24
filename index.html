@@ -71,6 +71,17 @@
               (dark ? '#090a0e' : '#f4f2ec');
           d.style.backgroundColor = bg;
           d.style.setProperty('--boot-bg', bg);
+          if (window.BaiNativeTheme && window.BaiNativeTheme.getSafeInsetsJson) {
+            try {
+              var ins = JSON.parse(window.BaiNativeTheme.getSafeInsetsJson());
+              if (ins) {
+                d.style.setProperty('--native-safe-top', (ins.top || 0) + 'px');
+                d.style.setProperty('--native-safe-bottom', (ins.bottom || 0) + 'px');
+                d.style.setProperty('--native-safe-left', (ins.left || 0) + 'px');
+                d.style.setProperty('--native-safe-right', (ins.right || 0) + 'px');
+              }
+            } catch (e2) {}
+          }
           var m = document.querySelector('meta[name="theme-color"]');
           if (m) m.setAttribute('content', bg);
         } catch (e) {}

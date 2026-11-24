@@ -12,6 +12,7 @@ export const FONT_KEY = 'aicn:font';               // key into FONT_PRESETS
 export const SURFACE_KEY = 'aicn:surface';         // 'studio' | 'glass-frosted' | 'glass-aurora'
 export const HINT_KEY = 'aicn:showHint';           // boolean string
 export const REDUCE_MOTION_KEY = 'aicn:reduceMotion'; // 'true' | 'false'
+export const HIDE_STATUS_BAR_KEY = 'aicn:hideStatusBar'; // 'true' | 'false'
 
 export const SURFACE_STYLES = [
   ['studio', 'Studio'],
@@ -353,17 +354,19 @@ export function getSettings() {
       paper: localStorage.getItem(PAPER_KEY) || 'blank',
       font: localStorage.getItem(FONT_KEY) || 'system',
       reduceMotion: localStorage.getItem(REDUCE_MOTION_KEY) === 'true',
+      hideStatusBar: localStorage.getItem(HIDE_STATUS_BAR_KEY) === 'true',
     };
   } catch {
     return {
       theme: 'auto',
       themePreset: 'default',
-      surface: 'glass-frosted',
+      surface: 'studio',
       accent: 'indigo',
       size: 'medium',
       paper: 'blank',
       font: 'system',
       reduceMotion: false,
+      hideStatusBar: false,
     };
   }
 }
@@ -409,7 +412,7 @@ let mediaListenerAttached = false;
 export function applySettings() {
   if (typeof document === 'undefined') return;
   const root = document.documentElement;
-  const { theme, themePreset, surface, accent, size, paper, font, reduceMotion } = getSettings();
+  const { theme, themePreset, surface, accent, size, paper, font, reduceMotion, hideStatusBar } = getSettings();
   const preset = THEME_PRESETS.find(p => p.id === themePreset) || null;
   root.dataset.surface = normalizeSurface(surface);
 
@@ -462,6 +465,12 @@ export function applySettings() {
   root.dataset.font = fontPreset.id;
 
   updateMetaThemeColor(dark, theme, preset);
+
+  try {
+    window.BaiNativeTheme?.setHideStatusBar?.(Boolean(hideStatusBar));
+  } catch {
+    // non-native web
+  }
 
   // Keep auto theme synchronized if system appearance flips while app is open
   if (!mediaListenerAttached && typeof window !== 'undefined' && window.matchMedia) {
