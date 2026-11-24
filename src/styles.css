@@ -228,6 +228,15 @@ a:hover {
   }
 }
 
+:root[data-reduce-motion='true'] *,
+:root[data-reduce-motion='true'] *::before,
+:root[data-reduce-motion='true'] *::after {
+  animation-duration: 0.01ms !important;
+  animation-delay: 0ms !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
 /* ============================================================
    3. App Shell & Responsive 2-Pane Split Layout
    ============================================================ */
@@ -4989,9 +4998,10 @@ a:hover {
 
 .courses-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(162px, 1fr));
+  gap: 10px;
   padding: 0 var(--gutter) 20px;
+  align-items: stretch;
 }
 
 .course-card {
@@ -5002,29 +5012,56 @@ a:hover {
   cursor: pointer;
   display: flex;
   flex-direction: column;
+  height: 100%;
+  box-shadow: var(--shadow-card);
   transition: transform 0.14s ease, box-shadow 0.14s ease;
+  animation: staggerFadeUp 0.26s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(min(var(--stagger-idx, 0), 8) * 36ms);
 }
 .course-card:hover {
   transform: translateY(-1px);
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
 }
+.course-card:active {
+  transform: scale(0.985);
+}
 
 .course-card-banner {
-  height: 76px;
-  padding: 10px 12px;
+  min-height: 58px;
+  padding: 9px 10px;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
+}
+
+.course-banner-edit-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  background: rgba(0, 0, 0, 0.24);
+  color: #ffffff;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.14s ease;
+}
+.course-banner-edit-btn:hover {
+  background: rgba(0, 0, 0, 0.42);
 }
 
 .course-code-pill {
   display: inline-block;
-  padding: 3px 9px;
+  padding: 3px 8px;
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.28);
   color: #ffffff;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 800;
   letter-spacing: 0.3px;
   backdrop-filter: blur(4px);
@@ -5032,40 +5069,64 @@ a:hover {
 
 .course-due-pill {
   display: inline-block;
-  padding: 3px 8px;
+  padding: 3px 7px;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.34);
+  background: rgba(0, 0, 0, 0.36);
   color: #ffffff;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 800;
   backdrop-filter: blur(4px);
 }
 
 .course-card-body {
-  padding: 12px 13px 10px;
+  padding: 10px 11px 9px;
   flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 .course-card-title {
-  font-size: 15px;
-  font-weight: 700;
-  line-height: 1.3;
+  font-size: 14px;
+  font-weight: 750;
+  line-height: 1.28;
   color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .course-card-inst {
-  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
   color: var(--text-secondary);
-  margin-top: 3px;
+  margin-top: 5px;
+}
+.course-card-inst span,
+.course-card-sched span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.course-card-sched {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent-ink);
+  margin-top: 4px;
 }
 
 .course-card-stats {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
+  gap: 5px;
+  font-size: 11px;
   color: var(--text-tertiary);
-  margin-top: 8px;
 }
 
 .course-card-footer {
@@ -5080,11 +5141,15 @@ a:hover {
   border: none;
   background: transparent;
   color: var(--text-secondary);
-  padding: 9px 0;
+  padding: 8px 2px;
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 650;
   cursor: pointer;
+  transition: color 0.14s ease, background 0.14s ease;
 }
 .course-foot-btn:hover {
   color: var(--accent-ink);
@@ -6584,3 +6649,741 @@ a:hover {
   background: var(--fill);
   border-left: 3px solid var(--accent);
 }
+
+/* ============================================================
+   v2.0.3 — Launch Splash, Reverse Feynman Personas,
+            Cleaned Course Dashboard & 30-Min Visual Timetable
+   ============================================================ */
+
+@keyframes staggerFadeUp {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes splashLogoPop {
+  0% { opacity: 0; transform: scale(0.86) translateY(6px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes splashShimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(220%); }
+}
+
+@keyframes typingBounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.45; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+
+@keyframes livePulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.45); opacity: 0.45; }
+}
+
+@keyframes msgSlideIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Launch Splash Overlay */
+.app-splash-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: var(--bg-grouped);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.28s ease, transform 0.28s ease;
+}
+.app-splash-overlay.is-leaving {
+  opacity: 0;
+  transform: scale(1.02);
+  pointer-events: none;
+}
+.app-splash-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  animation: splashLogoPop 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.app-splash-logo {
+  width: 68px;
+  height: 68px;
+  border-radius: 20px;
+  background: var(--card-bg);
+  border: 1px solid var(--divider);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.12);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.app-splash-logo img {
+  border-radius: 12px;
+}
+.app-splash-title {
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: -0.3px;
+  color: var(--text);
+}
+.app-splash-sub {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.app-splash-bar {
+  width: 96px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--fill);
+  overflow: hidden;
+  margin-top: 4px;
+}
+.app-splash-bar span {
+  display: block;
+  width: 45%;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent-grad);
+  animation: splashShimmer 0.7s ease-in-out infinite;
+}
+
+/* Home Staggered Entry (first session open only) */
+.home-bento-grid.is-entering .bento-tile {
+  animation: staggerFadeUp 0.26s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--stagger-idx, 0) * 42ms);
+}
+
+/* Reverse Feynman Persona Picker, Language Pill & Rubric Bars */
+.feynman-persona-row {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+.feynman-persona-row::-webkit-scrollbar {
+  display: none;
+}
+.feynman-persona-chip {
+  appearance: none;
+  -webkit-appearance: none;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--divider);
+  background: var(--fill);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease, transform 0.1s ease;
+}
+.feynman-persona-chip:active {
+  transform: scale(0.96);
+}
+.feynman-persona-chip.active {
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.feynman-lang-switch {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--fill);
+  border: 1px solid var(--divider);
+  gap: 2px;
+}
+.feynman-lang-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.feynman-lang-btn.active {
+  background: var(--seg-active);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.feynman-msg-enter {
+  animation: msgSlideIn 0.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.typing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.typing-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: inline-block;
+  animation: typingBounce 1.05s ease-in-out infinite;
+}
+.typing-dots span:nth-child(2) {
+  animation-delay: 0.16s;
+}
+.typing-dots span:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+.rubric-bar-track {
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--fill);
+  margin-top: 6px;
+  overflow: hidden;
+}
+.rubric-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent-grad);
+  transition: width 0.55s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Course Dashboard Summary Strip & Meetings Editor */
+.course-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px var(--gutter) 8px;
+}
+.course-summary-tile {
+  background: var(--card-bg);
+  border: 1px solid var(--divider);
+  border-radius: 13px;
+  padding: 9px 10px;
+  text-align: left;
+  box-shadow: var(--shadow-card);
+}
+.course-summary-tile.is-tappable {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  transition: border-color 0.14s ease, transform 0.1s ease;
+}
+.course-summary-tile.is-tappable:active {
+  transform: scale(0.98);
+}
+.course-summary-tile.is-tappable:hover {
+  border-color: var(--accent);
+}
+.course-summary-val {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text);
+  margin-top: 2px;
+  line-height: 1.15;
+}
+.course-summary-sub {
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+.course-utility-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px var(--gutter) 10px;
+  flex-wrap: wrap;
+}
+
+.course-hero-sched {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.course-hero-sched-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.24);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.course-meetings-box {
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 12px;
+  background: var(--fill);
+  border: 1px solid var(--divider);
+}
+.meeting-slot-card {
+  background: var(--card-bg);
+  border: 1px solid var(--divider);
+  border-radius: 10px;
+  padding: 8px 9px;
+}
+.meeting-day-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.meeting-day-chip {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid var(--divider);
+  background: var(--fill);
+  color: var(--text-secondary);
+  min-width: 28px;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.meeting-day-chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+/* Course Schedule Section & 30-Minute Timetable Grid */
+.schedule-section-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.schedule-now-card {
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: var(--card-bg);
+  border: 1px solid var(--divider);
+  box-shadow: var(--shadow-card);
+}
+.schedule-now-card.is-live {
+  border-color: rgba(236, 160, 56, 0.6);
+  background: linear-gradient(135deg, rgba(236, 160, 56, 0.14), var(--card-bg) 65%);
+}
+.schedule-now-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.35px;
+  color: var(--accent-ink);
+}
+.schedule-now-title {
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--text);
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.schedule-now-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 5px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.schedule-now-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.schedule-kind-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--fill);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+}
+
+.live-pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ef4444;
+  display: inline-block;
+  animation: livePulse 1.6s ease-in-out infinite;
+}
+
+.schedule-controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Visual Timetable Board (Inspired by Studio Amber Paper Grid) */
+.timetable-board {
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(180, 130, 50, 0.24);
+  background: #fbf8f1;
+  box-shadow: var(--shadow-card);
+}
+:root[data-theme='dark'] .timetable-board {
+  background: var(--card-bg);
+  border-color: var(--divider);
+}
+
+.timetable-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.timetable-canvas {
+  position: relative;
+}
+
+.timetable-header-row {
+  display: grid;
+  background: #eca038;
+  color: #2b1d07;
+}
+.timetable-board.palette-course .timetable-header-row {
+  background: var(--card-bg);
+  color: var(--text);
+  border-bottom: 1.5px solid var(--divider);
+}
+:root[data-theme='dark'] .timetable-board.palette-gold .timetable-header-row {
+  background: #b9751d;
+  color: #fff8eb;
+}
+
+.timetable-head-cell {
+  padding: 10px 6px;
+  font-size: 12.5px;
+  font-weight: 800;
+  text-align: center;
+  letter-spacing: 0.2px;
+}
+.timetable-head-cell.is-time-col {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  background: inherit;
+  border-right: 1px solid rgba(0, 0, 0, 0.09);
+}
+.timetable-head-cell.is-today {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.timetable-body {
+  display: grid;
+  position: relative;
+}
+
+.timetable-time-col {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: #fbf8f1;
+  border-right: 1px solid rgba(15, 23, 42, 0.08);
+}
+:root[data-theme='dark'] .timetable-time-col {
+  background: var(--card-bg);
+  border-right-color: var(--divider);
+}
+
+.timetable-time-cell {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  padding: 3px 7px 0 4px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.055);
+  font-variant-numeric: tabular-nums;
+}
+:root[data-theme='dark'] .timetable-time-cell {
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+.timetable-time-cell.is-hour {
+  font-size: 11px;
+  font-weight: 800;
+  color: #292524;
+}
+.timetable-time-cell.is-half {
+  font-size: 10px;
+  font-weight: 500;
+  color: #78716c;
+}
+:root[data-theme='dark'] .timetable-time-cell.is-hour {
+  color: var(--text);
+}
+:root[data-theme='dark'] .timetable-time-cell.is-half {
+  color: var(--text-tertiary);
+}
+
+.timetable-day-col {
+  position: relative;
+  border-right: 1px solid rgba(15, 23, 42, 0.055);
+}
+.timetable-day-col:last-child {
+  border-right: none;
+}
+.timetable-day-col.is-today {
+  background: rgba(236, 160, 56, 0.055);
+}
+:root[data-theme='dark'] .timetable-day-col {
+  border-right-color: rgba(255, 255, 255, 0.055);
+}
+
+.timetable-grid-slot {
+  border-bottom: 1px solid rgba(15, 23, 42, 0.045);
+}
+.timetable-grid-slot.is-hour {
+  border-bottom-color: rgba(15, 23, 42, 0.085);
+}
+:root[data-theme='dark'] .timetable-grid-slot {
+  border-bottom-color: rgba(255, 255, 255, 0.04);
+}
+:root[data-theme='dark'] .timetable-grid-slot.is-hour {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
+.timetable-now-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #ef4444;
+  z-index: 2;
+  pointer-events: none;
+}
+.timetable-now-line .live-pulse-dot {
+  position: absolute;
+  left: -4px;
+  top: -3px;
+}
+
+.timetable-block {
+  appearance: none;
+  -webkit-appearance: none;
+  position: absolute;
+  z-index: 1;
+  border: 1px solid rgba(180, 120, 30, 0.22);
+  border-radius: 10px;
+  padding: 6px 7px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+  cursor: pointer;
+  background: #f4c77b;
+  color: #241806;
+  transition: transform 0.12s ease, box-shadow 0.14s ease;
+  animation: staggerFadeUp 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(min(var(--stagger-idx, 0), 8) * 28ms);
+}
+.timetable-block:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+.timetable-block:active {
+  transform: scale(0.975);
+}
+:root[data-theme='dark'] .timetable-block {
+  background: rgba(236, 160, 56, 0.24);
+  border-color: rgba(236, 160, 56, 0.48);
+  color: #fef3c7;
+}
+
+.timetable-block.is-course-tinted {
+  border-width: 1px 1px 1px 4px;
+  border-style: solid;
+  border-top-color: var(--divider);
+  border-right-color: var(--divider);
+  border-bottom-color: var(--divider);
+  color: var(--text);
+}
+.timetable-block.is-live {
+  box-shadow: 0 0 0 2px #ef4444;
+}
+
+.timetable-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+.timetable-block-code {
+  font-size: 11.5px;
+  font-weight: 800;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.timetable-block-badge {
+  font-size: 9px;
+  font-weight: 800;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.14);
+  flex-shrink: 0;
+}
+.timetable-block-time {
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.88;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.timetable-block-meta {
+  font-size: 10px;
+  opacity: 0.82;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Directory & Study Load Cards */
+.schedule-directory-strip {
+  background: var(--card-bg);
+  border: 1px solid var(--divider);
+  border-radius: 14px;
+  padding: 10px 12px;
+}
+.schedule-mini-roster {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 7px;
+}
+.schedule-roster-chip {
+  appearance: none;
+  -webkit-appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  background: var(--fill);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: border-color 0.14s ease;
+}
+.schedule-roster-chip:hover {
+  border-color: var(--accent);
+}
+.schedule-roster-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.study-load-card {
+  background: var(--card-bg);
+  border: 1px solid var(--divider);
+  border-radius: 14px;
+  padding: 12px;
+  box-shadow: var(--shadow-card);
+}
+.study-load-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.study-load-meta-row span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.study-load-meetings {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--divider);
+}
+.study-load-slot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text);
+}
+.study-load-totals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  background: var(--card-bg);
+  border: 1px solid var(--divider);
+  border-radius: 14px;
+  padding: 11px 12px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .timetable-board {
+    background: var(--card-bg);
+    border-color: var(--divider);
+  }
+  :root:not([data-theme='light']) .timetable-board.palette-gold .timetable-header-row {
+    background: #b9751d;
+    color: #fff8eb;
+  }
+  :root:not([data-theme='light']) .timetable-time-col {
+    background: var(--card-bg);
+    border-right-color: var(--divider);
+  }
+  :root:not([data-theme='light']) .timetable-time-cell {
+    border-bottom-color: rgba(255, 255, 255, 0.06);
+  }
+  :root:not([data-theme='light']) .timetable-time-cell.is-hour {
+    color: var(--text);
+  }
+  :root:not([data-theme='light']) .timetable-time-cell.is-half {
+    color: var(--text-tertiary);
+  }
+  :root:not([data-theme='light']) .timetable-day-col {
+    border-right-color: rgba(255, 255, 255, 0.055);
+  }
+  :root:not([data-theme='light']) .timetable-grid-slot {
+    border-bottom-color: rgba(255, 255, 255, 0.04);
+  }
+  :root:not([data-theme='light']) .timetable-grid-slot.is-hour {
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+  }
+  :root:not([data-theme='light']) .timetable-block {
+    background: rgba(236, 160, 56, 0.24);
+    border-color: rgba(236, 160, 56, 0.48);
+    color: #fef3c7;
+  }
+}
+

@@ -1,11 +1,12 @@
-# Notes by Bai (v2.0.2)
+# Notes by Bai (v2.0.3)
 
 An offline-first Android, desktop & web notes app styled like iOS Notes — built for class study, Canvas LMS & school planning, personal journaling, curiosity deep-dives, and coding — enhanced with a fast AI layer, Study Commute audio, answerable & printable bond-paper exams, Learn Coding Studio + Algorithm Visualizer, 2D Math Grapher, SM-2 spaced repetition, and Zero-Cloud BaiDrop sync.
 
 ## Features
 
+- **Course Dashboard & Visual 30-Min Timetable**: Equal-height course cards with semester PH GWA/US GPA standing, bottom-sheet Class Meetings & Units editor, live Now / Up Next tracker, 30-minute visual weekly grid (`Studio Gold` / `Course Colors`) showing rooms & teachers, overlap conflict guard, Study Load rollup, Modules RAG, and What-If grade simulator.
 - **School Planner & Canvas LMS Hub**: Interactive Month Calendar, Exam Countdown, Canvas Calendar Feed (`.ics`) sync (works even when school admins block Access Tokens), Quick-Paste Announcement date detector, Weekly Class Timetable, PH GWA / US GPA Target Final Calculator, and 16-Week Study Activity Heatmap.
-- **Study Commute Audio & Reverse Feynman**: Offline Read Aloud + 2-Voice AI Study Podcast on notes, Hands-Free Audio Flashcards in Daily Review, and **Teach the AI** Reverse Feynman roleplay integrated with DeepTutor Persistent Learner Memory.
+- **Study Commute Audio & Human-Like Reverse Feynman**: Offline Read Aloud + 2-Voice AI Study Podcast on notes, Hands-Free Audio Flashcards in Daily Review, and **Teach the AI** Reverse Feynman with 6 relatable personas (*Close Friend*, *Classmate*, *Junior*, *Curious Kid*, *Your Teacher*, *Panicking Groupmate*), English (default) / Taglish toggle, and 3-axis grading (`Clarity`, `Accuracy`, `Audience Fit`) synced with DeepTutor Persistent Learner Memory.
 - **Learn Coding Studio & Algorithm Visualizer**: 18 languages via live open-source lessons, Exercism challenges, live multi-language code runner, and 100% offline Sorting / Binary Search / BFS-DFS-Dijkstra / Recursion Call-Stack visualizations.
 - **Multi-Life Modes & Hidden PIN Vault**: Switch folders or notes between **Study**, **Journal**, **Explore**, and **Code**, plus a salted SHA-256 Hidden Vault with a permanent Zero-AI `Passwords & Keys` folder.
 - **Answerable & Printable Bond-Paper Exam Builder**: Convert any note or folder into an authentic `8.5" × 11"` exam paper combining any mix & count of 8 test types — answerable right on screen with offline auto-grading + PDF/Print export with a separate Answer Key page.

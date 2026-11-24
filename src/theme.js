@@ -9,6 +9,7 @@ export const ACCENT_KEY = 'aicn:accent';           // key into ACCENTS
 export const SIZE_KEY = 'aicn:size';               // 'small' | 'medium' | 'large'
 export const PAPER_KEY = 'aicn:paper';             // 'blank' | 'ruled' | 'dot' | 'grid'
 export const HINT_KEY = 'aicn:showHint';           // boolean string
+export const REDUCE_MOTION_KEY = 'aicn:reduceMotion'; // 'true' | 'false'
 
 export const PAPER_STYLES = [
   ['blank', 'Blank'],
@@ -265,9 +266,17 @@ export function getSettings() {
       accent: localStorage.getItem(ACCENT_KEY) || 'indigo',
       size: localStorage.getItem(SIZE_KEY) || 'medium',
       paper: localStorage.getItem(PAPER_KEY) || 'blank',
+      reduceMotion: localStorage.getItem(REDUCE_MOTION_KEY) === 'true',
     };
   } catch {
-    return { theme: 'auto', themePreset: 'default', accent: 'indigo', size: 'medium', paper: 'blank' };
+    return {
+      theme: 'auto',
+      themePreset: 'default',
+      accent: 'indigo',
+      size: 'medium',
+      paper: 'blank',
+      reduceMotion: false,
+    };
   }
 }
 
@@ -278,7 +287,11 @@ export function isDarkTheme() {
   if (preset) return preset.mode === 'dark';
   if (theme === 'dark' || theme === 'oled') return true;
   if (theme === 'light') return false;
-  return Boolean(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  return Boolean(
+    typeof window !== 'undefined' &&
+      window.matchMedia &&
+      window.matchMedia('(prefers-color-scheme: dark)').matches
+  );
 }
 
 function updateMetaThemeColor(dark, themeSetting = 'auto', presetObj = null) {
@@ -302,7 +315,7 @@ let mediaListenerAttached = false;
 export function applySettings() {
   if (typeof document === 'undefined') return;
   const root = document.documentElement;
-  const { theme, themePreset, accent, size, paper } = getSettings();
+  const { theme, themePreset, accent, size, paper, reduceMotion } = getSettings();
   const preset = THEME_PRESETS.find(p => p.id === themePreset) || null;
 
   if (preset) {
@@ -327,6 +340,12 @@ export function applySettings() {
 
   if (paper && paper !== 'blank') root.dataset.paper = paper;
   else root.removeAttribute('data-paper');
+
+  if (reduceMotion) root.dataset.reduceMotion = 'true';
+  else {
+    delete root.dataset.reduceMotion;
+    root.removeAttribute('data-reduce-motion');
+  }
 
   const dark = isDarkTheme();
   const a = ACCENTS[accent] || ACCENTS.indigo;

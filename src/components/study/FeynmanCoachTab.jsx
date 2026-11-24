@@ -1,57 +1,50 @@
 /**
- * FeynmanCoachTab — Interactive "Teach the AI" Reverse Feynman Roleplay.
+ * FeynmanCoachTab — Human-like "Teach the AI" Reverse Feynman Roleplay.
  *
- * The AI plays a curious 1st-year student who asks probing follow-up questions
- * until you truly understand the topic. Tap "Grade My Teaching" anytime to get
- * a Clarity / Accuracy rubric and sync missed concepts into DeepTutor Memory.
+ * Pick who you're explaining to (Close Friend, Friend / Classmate, Junior,
+ * Curious Kid, Your Teacher, or Panicking Groupmate) in English (default) or
+ * Taglish, then grade Clarity, Accuracy & Audience Fit and sync missed gaps
+ * into DeepTutor Learner Memory.
  */
 import { useState, useRef } from 'react';
-import { Send, Award, RotateCcw, Sparkles, User, GraduationCap } from 'lucide-react';
+import { Send, Award, RotateCcw, User, GraduationCap } from 'lucide-react';
 import { aiText, aiTextStream } from '../../lib/aiCore';
 import { recordLearningSignal } from '../../lib/learnerMemory';
 import { logStudyActivity } from '../../store/db';
+import {
+  FEYNMAN_PERSONAS,
+  getFeynmanPersona,
+  getSavedFeynmanPrefs,
+  saveFeynmanPrefs,
+  buildFeynmanOpeningMessage,
+  buildFeynmanSystemPrompt,
+  buildFeynmanGradingPrompt,
+  parseFeynmanGradeJson,
+} from '../../lib/feynmanPersonas';
 import MarkdownContent from '../ui/MarkdownContent';
 import { useDialog } from '../ui/DialogProvider';
 
-function parseGradeJson(raw) {
-  const txt = String(raw || '').trim();
-  const match = /\{[\s\S]*\}/.exec(txt);
-  if (match) {
-    try {
-      const obj = JSON.parse(match[0]);
-      return {
-        clarity: Math.max(0, Math.min(10, Number(obj.clarity) || 7)),
-        accuracy: Math.max(0, Math.min(10, Number(obj.accuracy) || 7)),
-        summary: String(obj.summary || obj.verdict || 'Good effort teaching this concept!'),
-        missingGaps: Array.isArray(obj.missingGaps || obj.gaps)
-          ? (obj.missingGaps || obj.gaps).map(String).filter(Boolean).slice(0, 6)
-          : [],
-      };
-    } catch {
-      // fall through
-    }
-  }
-  return {
-    clarity: 7,
-    accuracy: 7,
-    summary: txt.slice(0, 400) || 'Teaching session graded.',
-    missingGaps: [],
-  };
-}
-
 export default function FeynmanCoachTab({ note }) {
-  const { toast } = useDialog();
+  const { toast, confirm } = useDialog();
   const topicTitle = note?.title || 'this topic';
   const subject = note?.subject || 'General';
 
-  const makeInitialMessages = () => [
+  const savedPrefs = useRef(getSavedFeynmanPrefs()).current;
+  const [personaId, setPersonaId] = useState(savedPrefs.personaId);
+  const [lang, setLang] = useState(savedPrefs.lang);
+
+  const activePersona = getFeynmanPersona(personaId);
+
+  const [messages, setMessages] = useState(() => [
     {
       role: 'assistant',
-      content: `Hey! I'm a 1st-year student trying to learn **${topicTitle}**. I read the title, but I'm totally lost — can you explain the main idea to me in your own words?`,
+      content: buildFeynmanOpeningMessage({
+        personaId: savedPrefs.personaId,
+        lang: savedPrefs.lang,
+        topicTitle,
+      }),
     },
-  ];
-
-  const [messages, setMessages] = useState(makeInitialMessages);
+  ]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [grading, setGrading] = useState(false);
@@ -59,6 +52,39 @@ export default function FeynmanCoachTab({ note }) {
   const abortRef = useRef(null);
 
   const userTurns = messages.filter(m => m.role === 'user').length;
+
+  const applyPersonaOrLangSwitch = async (nextPersonaId, nextLang) => {
+    if (nextPersonaId === personaId && nextLang === lang) return;
+    if (busy || grading) return;
+
+    const targetPersona = getFeynmanPersona(nextPersonaId);
+    if (userTurns > 0) {
+      const ok = await confirm({
+        title: `Switch listener to ${targetPersona.label}?`,
+        message: 'This restarts the current teaching chat so the new listener can open fresh.',
+        confirmLabel: 'Switch & Restart',
+      });
+      if (!ok) return;
+    }
+
+    abortRef.current?.abort();
+    setPersonaId(targetPersona.id);
+    setLang(nextLang);
+    saveFeynmanPrefs({ personaId: targetPersona.id, lang: nextLang });
+    setMessages([
+      {
+        role: 'assistant',
+        content: buildFeynmanOpeningMessage({
+          personaId: targetPersona.id,
+          lang: nextLang,
+          topicTitle,
+        }),
+      },
+    ]);
+    setInput('');
+    setReport(null);
+    setBusy(false);
+  };
 
   const handleSend = async e => {
     e?.preventDefault?.();
@@ -77,17 +103,16 @@ export default function FeynmanCoachTab({ note }) {
     try {
       const noteContext = String(note?.body || '').slice(0, 4500);
       const reply = await aiTextStream({
-        system: `You are playing the role of a curious, friendly 1st-year college student learning "${topicTitle}" (${subject}) from the user (your tutor).
-Reference notes (do NOT recite them — use them silently to spot gaps or vague hand-waving in the user's explanation):
-${noteContext || '(No note body provided)'}
-
-Rules:
-- Stay in character as a genuinely curious student.
-- Briefly react to what the user explained (1 sentence), then ask ONE sharp, specific follow-up question probing a detail they glossed over, skipped, or haven't given an example for yet (e.g., "Wait, why does X happen if Y changes?" or "Can you give me a real-life analogy for that?").
-- Keep replies short (2–4 sentences max) and encouraging.`,
+        system: buildFeynmanSystemPrompt({
+          personaId,
+          lang,
+          topicTitle,
+          subject,
+          noteContext,
+        }),
         user: text,
         history: messages.map(m => ({ role: m.role, content: m.content })),
-        maxTokens: 450,
+        maxTokens: 380,
         signal: ctrl.signal,
         onToken: partial => {
           setMessages(prev => {
@@ -118,25 +143,23 @@ Rules:
     setGrading(true);
     try {
       const transcript = messages
-        .map(m => `${m.role === 'user' ? 'Student-Teacher' : 'AI-Learner'}: ${m.content}`)
+        .map(m => `${m.role === 'user' ? 'You (Teacher)' : activePersona.name}: ${m.content}`)
         .join('\n');
       const raw = await aiText({
-        system:
-          'You are an academic evaluator grading a Feynman Technique teaching session. Return STRICT JSON ONLY: {"clarity": 0-10, "accuracy": 0-10, "summary": "2 sentences of constructive feedback", "missingGaps": ["specific concept skipped or explained inaccurately"]}.',
+        system: buildFeynmanGradingPrompt({ personaId, lang }),
         user: `Reference Note ("${topicTitle}"):\n${String(note?.body || '').slice(0, 4000)}\n\nTeaching Transcript:\n${transcript}`,
         maxTokens: 700,
       });
-      const parsed = parseGradeJson(raw);
+      const parsed = parseFeynmanGradeJson(raw);
       setReport(parsed);
 
-      // Sync weak gaps into DeepTutor Persistent Learner Memory!
       if (parsed.missingGaps.length > 0) {
         for (const gap of parsed.missingGaps.slice(0, 3)) {
           await recordLearningSignal({
             subject,
             topic: gap.slice(0, 72),
             correct: false,
-            mistakeSummary: `Missed while teaching "${topicTitle}"`,
+            mistakeSummary: `Missed while teaching "${topicTitle}" to ${activePersona.label}`,
             source: 'feynman',
             noteMode: 'study',
           });
@@ -161,7 +184,12 @@ Rules:
 
   const handleReset = () => {
     abortRef.current?.abort();
-    setMessages(makeInitialMessages());
+    setMessages([
+      {
+        role: 'assistant',
+        content: buildFeynmanOpeningMessage({ personaId, lang, topicTitle }),
+      },
+    ]);
     setInput('');
     setReport(null);
     setBusy(false);
@@ -172,30 +200,81 @@ Rules:
       <div className="explanation-card" style={{ marginBottom: 0 }}>
         <div className="flex items-center justify-between gap-8" style={{ marginBottom: 6 }}>
           <div className="flex items-center gap-6" style={{ fontSize: 15, fontWeight: 700 }}>
-            <GraduationCap size={17} style={{ color: 'var(--accent-ink)' }} /> Teach the AI (Reverse Feynman)
+            <GraduationCap size={17} style={{ color: 'var(--accent-ink)' }} /> Teach {activePersona.name}
           </div>
-          <button type="button" className="row-action-chip" onClick={handleReset} title="Restart roleplay">
-            <RotateCcw size={12} /> Restart
-          </button>
+          <div className="flex items-center gap-6">
+            <div className="feynman-lang-switch" role="group" aria-label="Conversation language">
+              <button
+                type="button"
+                className={`feynman-lang-btn${lang === 'en' ? ' active' : ''}`}
+                onClick={() => applyPersonaOrLangSwitch(personaId, 'en')}
+              >
+                English
+              </button>
+              <button
+                type="button"
+                className={`feynman-lang-btn${lang === 'taglish' ? ' active' : ''}`}
+                onClick={() => applyPersonaOrLangSwitch(personaId, 'taglish')}
+              >
+                Taglish
+              </button>
+            </div>
+            <button type="button" className="row-action-chip" onClick={handleReset} title="Restart roleplay">
+              <RotateCcw size={12} /> Restart
+            </button>
+          </div>
         </div>
-        <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.45 }}>
-          You are the professor. Explain <strong>{topicTitle}</strong> simply — the AI plays a curious student and asks
-          probing follow-ups to uncover blind spots.
+
+        <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', lineHeight: 1.4, marginBottom: 8 }}>
+          Who are you explaining <strong>{topicTitle}</strong> to? Pick a listener — each pushes you differently:
+        </div>
+
+        <div className="feynman-persona-row" role="listbox" aria-label="Reverse Feynman listener persona">
+          {FEYNMAN_PERSONAS.map(p => {
+            const selected = p.id === personaId;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                role="option"
+                aria-selected={selected}
+                className={`feynman-persona-chip${selected ? ' active' : ''}`}
+                onClick={() => applyPersonaOrLangSwitch(p.id, lang)}
+              >
+                <span>{p.emoji}</span>
+                <span>{p.label}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
 
       {/* Chat bubbles */}
       <div className="feynman-chat-box">
         {messages.map((m, idx) => (
-          <div key={idx} className={`feynman-msg ${m.role === 'user' ? 'is-user' : 'is-ai'}`}>
+          <div
+            key={idx}
+            className={`feynman-msg feynman-msg-enter ${m.role === 'user' ? 'is-user' : 'is-ai'}`}
+            style={
+              m.role === 'assistant'
+                ? {
+                    borderColor: activePersona.borderTint,
+                    background: `linear-gradient(180deg, ${activePersona.tint}, var(--card-bg) 52%)`,
+                  }
+                : undefined
+            }
+          >
             <div className="feynman-msg-head">
               {m.role === 'user' ? (
                 <>
-                  <User size={12} /> You (Teacher)
+                  <User size={12} /> You
                 </>
               ) : (
                 <>
-                  <Sparkles size={12} /> Curious Student (AI)
+                  <span>{activePersona.emoji}</span>
+                  <span>
+                    {activePersona.name} · {activePersona.roleBadge}
+                  </span>
                 </>
               )}
             </div>
@@ -203,8 +282,13 @@ Rules:
               {m.content ? (
                 <MarkdownContent text={m.content} />
               ) : (
-                <span className="scan-indicator" style={{ padding: 0 }}>
-                  <span className="spinner" style={{ width: 13, height: 13 }} /> Thinking of a question…
+                <span className="scan-indicator" style={{ padding: 0, gap: 8 }}>
+                  <span className="typing-dots" aria-hidden="true">
+                    <span />
+                    <span />
+                    <span />
+                  </span>
+                  <span>{activePersona.name} is thinking…</span>
                 </span>
               )}
             </div>
@@ -217,7 +301,7 @@ Rules:
         <textarea
           className="ai-input"
           style={{ marginTop: 0, flex: 1, minHeight: 54 }}
-          placeholder="Teach the student in plain words…"
+          placeholder={`Explain ${topicTitle} to ${activePersona.name} in your own words…`}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => {
@@ -247,24 +331,42 @@ Rules:
       >
         <Award size={16} />
         {grading
-          ? 'Evaluating your teaching…'
+          ? 'Evaluating clarity & audience fit…'
           : userTurns === 0
             ? 'Explain at least once to unlock Grade My Teaching'
             : `Grade My Teaching (${userTurns} turn${userTurns === 1 ? '' : 's'})`}
       </button>
 
-      {/* Rubric Report Card */}
+      {/* 3-Axis Rubric Report Card */}
       {report && (
-        <div className="explanation-card" style={{ marginBottom: 0 }}>
-          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 10 }}>Teaching Rubric Report</div>
-          <div className="grade-stats-grid" style={{ gridTemplateColumns: '1fr 1fr', marginBottom: 10 }}>
+        <div className="explanation-card feynman-msg-enter" style={{ marginBottom: 0 }}>
+          <div className="flex items-center justify-between gap-8" style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 15, fontWeight: 700 }}>Teaching Rubric Report</div>
+            <span className="row-action-chip active-chip">
+              {activePersona.emoji} {activePersona.label}
+            </span>
+          </div>
+          <div className="grade-stats-grid" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', marginBottom: 10 }}>
             <div className="grade-stat-card">
               <div className="grade-stat-label">Clarity</div>
               <div className="grade-stat-val">{report.clarity}/10</div>
+              <div className="rubric-bar-track">
+                <div className="rubric-bar-fill" style={{ width: `${report.clarity * 10}%` }} />
+              </div>
             </div>
             <div className="grade-stat-card">
               <div className="grade-stat-label">Accuracy</div>
               <div className="grade-stat-val">{report.accuracy}/10</div>
+              <div className="rubric-bar-track">
+                <div className="rubric-bar-fill" style={{ width: `${report.accuracy * 10}%` }} />
+              </div>
+            </div>
+            <div className="grade-stat-card">
+              <div className="grade-stat-label">Audience Fit</div>
+              <div className="grade-stat-val">{report.audienceFit}/10</div>
+              <div className="rubric-bar-track">
+                <div className="rubric-bar-fill" style={{ width: `${report.audienceFit * 10}%` }} />
+              </div>
             </div>
           </div>
           <div style={{ fontSize: 13.5, lineHeight: 1.5, marginBottom: report.missingGaps.length ? 10 : 0 }}>

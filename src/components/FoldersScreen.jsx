@@ -143,6 +143,15 @@ export default function FoldersScreen({
   const [results, setResults] = useState([]);
   const [folderMap, setFolderMap] = useState({});
   const [menuFolder, setMenuFolder] = useState(null);
+  const [homeStagger] = useState(() => {
+    try {
+      if (sessionStorage.getItem('aicn:homeAnimated') === '1') return false;
+      sessionStorage.setItem('aicn:homeAnimated', '1');
+      return true;
+    } catch {
+      return false;
+    }
+  });
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
 
@@ -841,8 +850,8 @@ export default function FoldersScreen({
       </div>
 
       {/* 2x2 Bento Workspace Hub Grid */}
-      <div className="home-bento-grid" role="region" aria-label="Student Workspace Hubs">
-        <button type="button" className="bento-tile bento-indigo" onClick={onOpenCourses}>
+      <div className={`home-bento-grid${homeStagger ? ' is-entering' : ''}`} role="region" aria-label="Student Workspace Hubs">
+        <button type="button" className="bento-tile bento-indigo" style={{ '--stagger-idx': 0 }} onClick={onOpenCourses}>
           <div className="bento-tile-top">
             <span className="bento-tile-icon">
               <BookOpen size={18} />
@@ -853,7 +862,7 @@ export default function FoldersScreen({
           <div className="bento-tile-sub">Modules &amp; Course AI</div>
         </button>
 
-        <button type="button" className="bento-tile bento-rose" onClick={onOpenPlanner}>
+        <button type="button" className="bento-tile bento-rose" style={{ '--stagger-idx': 1 }} onClick={onOpenPlanner}>
           <div className="bento-tile-top">
             <span className="bento-tile-icon">
               <Calendar size={18} />
@@ -867,7 +876,7 @@ export default function FoldersScreen({
         </button>
 
         {showCoding && (
-          <button type="button" className="bento-tile bento-emerald" onClick={onOpenCoding}>
+          <button type="button" className="bento-tile bento-emerald" style={{ '--stagger-idx': 2 }} onClick={onOpenCoding}>
             <div className="bento-tile-top">
               <span className="bento-tile-icon">
                 <Code2 size={18} />
@@ -880,7 +889,7 @@ export default function FoldersScreen({
         )}
 
         {showToolkit && (
-          <button type="button" className="bento-tile bento-violet" onClick={onOpenToolkit}>
+          <button type="button" className="bento-tile bento-violet" style={{ '--stagger-idx': 3 }} onClick={onOpenToolkit}>
             <div className="bento-tile-top">
               <span className="bento-tile-icon">
                 <Wrench size={18} />

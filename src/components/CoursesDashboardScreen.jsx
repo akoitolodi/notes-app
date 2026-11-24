@@ -36,6 +36,9 @@ import {
   Pencil,
   Award,
   Download,
+  Clock,
+  MapPin,
+  User,
 } from 'lucide-react';
 import {
   db,
@@ -65,10 +68,18 @@ import {
   computeCourseGrade,
   computeSemesterGwa,
 } from '../lib/courseExtras';
+import {
+  SCHEDULE_DAYS,
+  formatTimeRange12h,
+  groupDaysLabel,
+  meetingsToScheduleRows,
+  scheduleRowsToMeetings,
+} from '../lib/scheduleView';
 import { syncDeadlineNotifications, markAnnouncementRead } from '../lib/notifications';
 import { compressImage } from './ImageManager';
 import CourseGradesTab from './course/CourseGradesTab';
 import CourseAttendanceCard from './course/CourseAttendanceCard';
+import CourseScheduleView from './course/CourseScheduleView';
 import MarkdownContent from './ui/MarkdownContent';
 import { useDialog } from './ui/DialogProvider';
 
@@ -98,19 +109,23 @@ export default function CoursesDashboardScreen({
   const [folders, setFolders] = useState([]);
 
   const [selectedCourseId, setSelectedCourseId] = useState(null);
+  const [dashSection, setDashSection] = useState('courses'); // courses | schedule
+  const [gwaMode, setGwaMode] = useState('gwa'); // gwa | gpa
   const [courseTab, setCourseTab] = useState('overview'); // overview | modules | announcements | assignments | grades | ai
   const [showArchived, setShowArchived] = useState(false);
 
-  // Add / Edit Course Form
+  // Add / Edit Course Modal Form (+ Class Meetings & Units)
   const [addCourseOpen, setAddCourseOpen] = useState(false);
   const [editingCourse, setEditingCourse] = useState(null);
   const [cCode, setCCode] = useState('');
   const [cName, setCName] = useState('');
   const [cNickname, setCNickname] = useState('');
   const [cInstructor, setCInstructor] = useState('');
+  const [cUnits, setCUnits] = useState('3');
   const [cRssUrl, setCRssUrl] = useState('');
   const [cFolderId, setCFolderId] = useState('');
   const [cColor, setCColor] = useState(COURSE_PALETTE[0]);
+  const [cMeetings, setCMeetings] = useState([]);
 
   // Add Module / Material Drawer inside a Course
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -184,7 +199,9 @@ export default function CoursesDashboardScreen({
       const cTasks = cAllTasks.filter(it => !it.done);
       const cMats = materials.filter(m => m.courseId === c.id);
       const studiedCount = cMats.filter(m => m.studied).length;
-      const cClasses = schedule.filter(s => courseMatchesTag(s.subject, c));
+      const cClasses = schedule.filter(
+        s => s.courseId === c.id || (!s.courseId && courseMatchesTag(s.subject, c))
+      );
 
       // Compute course live grade standing for dashboard badge & semester GWA rollup
       const gradeEntries = [
@@ -257,6 +274,15 @@ export default function CoursesDashboardScreen({
     return computeSemesterGwa(standings);
   }, [activeCourses, courseStatsMap]);
 
+  const totalDueTasks = useMemo(
+    () =>
+      activeCourses.reduce(
+        (sum, c) => sum + (courseStatsMap.get(c.id)?.pendingAssignments?.length || 0),
+        0
+      ),
+    [activeCourses, courseStatsMap]
+  );
+
   // Auto-discover Canvas courses from synced .ics / .atom feeds + timetable
   const handleAutoDiscover = async () => {
     const added = await discoverCoursesFromPlanner();
@@ -270,15 +296,43 @@ export default function CoursesDashboardScreen({
     }
   };
 
-  const openEditCourse = course => {
+  const openEditCourse = (course, { ensureMeetingSlot = false } = {}) => {
     setEditingCourse(course);
     setCCode(course.code || '');
     setCName(course.name || '');
     setCNickname(course.nickname || '');
     setCInstructor(course.instructor || '');
+    setCUnits(String(course.units || 3));
     setCRssUrl(course.rssUrl || '');
     setCFolderId(course.folderId ? String(course.folderId) : '');
     setCColor(course.color || COURSE_PALETTE[0]);
+    const existingRows = courseStatsMap.get(course.id)?.classes || [];
+    const grouped = scheduleRowsToMeetings(existingRows);
+    setCMeetings(
+      grouped.length > 0
+        ? grouped
+        : ensureMeetingSlot
+          ? [{ days: [1, 3, 5], startTime: '09:00', endTime: '10:30', room: '', kind: 'LEC' }]
+          : []
+    );
+    setAddCourseOpen(true);
+  };
+
+  const openNewCourseModal = ({ withMeetingSlot = false } = {}) => {
+    setEditingCourse(null);
+    setCCode('');
+    setCName('');
+    setCNickname('');
+    setCInstructor('');
+    setCUnits('3');
+    setCRssUrl('');
+    setCFolderId('');
+    setCColor(COURSE_PALETTE[courses.length % COURSE_PALETTE.length]);
+    setCMeetings(
+      withMeetingSlot
+        ? [{ days: [1, 3, 5], startTime: '09:00', endTime: '10:30', room: '', kind: 'LEC' }]
+        : []
+    );
     setAddCourseOpen(true);
   };
 
@@ -288,13 +342,49 @@ export default function CoursesDashboardScreen({
     setCName('');
     setCNickname('');
     setCInstructor('');
+    setCUnits('3');
     setCRssUrl('');
     setCFolderId('');
     setCColor(COURSE_PALETTE[courses.length % COURSE_PALETTE.length]);
+    setCMeetings([]);
     setAddCourseOpen(false);
   };
 
-  // Create or Update Course
+  const addMeetingSlot = () => {
+    setCMeetings(prev => [
+      ...prev,
+      {
+        days: prev.length === 0 ? [1, 3, 5] : [2, 4],
+        startTime: prev.length === 0 ? '09:00' : '13:30',
+        endTime: prev.length === 0 ? '10:30' : '15:00',
+        room: '',
+        kind: prev.length === 0 ? 'LEC' : 'LAB',
+      },
+    ]);
+  };
+
+  const toggleMeetingDay = (idx, dayIdx) => {
+    setCMeetings(prev =>
+      prev.map((m, i) => {
+        if (i !== idx) return m;
+        const has = m.days.includes(dayIdx);
+        return {
+          ...m,
+          days: has ? m.days.filter(d => d !== dayIdx) : [...m.days, dayIdx],
+        };
+      })
+    );
+  };
+
+  const updateMeetingField = (idx, field, val) => {
+    setCMeetings(prev => prev.map((m, i) => (i === idx ? { ...m, [field]: val } : m)));
+  };
+
+  const removeMeetingSlot = idx => {
+    setCMeetings(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  // Create or Update Course (+ sync Class Schedule meetings)
   const handleSaveCourse = async e => {
     e?.preventDefault?.();
     const name = cName.trim() || cCode.trim();
@@ -303,6 +393,7 @@ export default function CoursesDashboardScreen({
       return;
     }
 
+    const parsedUnits = Math.max(0.5, Math.min(12, Number(cUnits) || 3));
     const cleanRss = cRssUrl.trim();
     if (cleanRss && /^https:\/\//i.test(cleanRss)) {
       const cur = getCanvasSettings();
@@ -312,54 +403,82 @@ export default function CoursesDashboardScreen({
       }
     }
 
+    let savedCourseObj;
+    let oldLinkedIds = [];
+    const isEditing = Boolean(editingCourse);
+
     if (editingCourse) {
-      await db.courses.update(editingCourse.id, {
+      oldLinkedIds = (courseStatsMap.get(editingCourse.id)?.classes || []).map(r => r.id).filter(Boolean);
+      const updatedFields = {
         code: cCode.trim() || name.slice(0, 16),
         name,
         nickname: cNickname.trim(),
         instructor: cInstructor.trim(),
+        units: parsedUnits,
         color: cColor,
         folderId: cFolderId ? Number(cFolderId) : editingCourse.folderId ?? null,
         rssUrl: cleanRss,
-      });
-      resetCourseForm();
-      await refreshAll();
-      toast(`Updated "${cNickname.trim() || name}"`, { type: 'success' });
-      return;
-    }
-
-    let linkedFolderId = cFolderId ? Number(cFolderId) : null;
-    if (!linkedFolderId) {
-      const existing = folders.find(f => f.name.toLowerCase() === name.toLowerCase());
-      if (existing) {
-        linkedFolderId = existing.id;
-      } else {
-        linkedFolderId = await createFolder(cNickname.trim() || cCode.trim() || name.slice(0, 28), {
-          mode: 'study',
-          locked: false,
-        });
+      };
+      await db.courses.update(editingCourse.id, updatedFields);
+      savedCourseObj = { ...editingCourse, ...updatedFields };
+    } else {
+      let linkedFolderId = cFolderId ? Number(cFolderId) : null;
+      if (!linkedFolderId) {
+        const existing = folders.find(f => f.name.toLowerCase() === name.toLowerCase());
+        if (existing) {
+          linkedFolderId = existing.id;
+        } else {
+          linkedFolderId = await createFolder(cNickname.trim() || cCode.trim() || name.slice(0, 28), {
+            mode: 'study',
+            locked: false,
+          });
+        }
       }
+
+      const newRecord = {
+        code: cCode.trim() || name.slice(0, 16),
+        name,
+        nickname: cNickname.trim(),
+        icsCourseTag: cCode.trim() || name,
+        instructor: cInstructor.trim(),
+        color: cColor,
+        folderId: linkedFolderId,
+        rssUrl: cleanRss,
+        units: parsedUnits,
+        archived: false,
+        createdAt: Date.now(),
+      };
+      const id = await db.courses.add(newRecord);
+      savedCourseObj = { id, ...newRecord };
     }
 
-    const id = await db.courses.add({
-      code: cCode.trim() || name.slice(0, 16),
-      name,
-      nickname: cNickname.trim(),
-      icsCourseTag: cCode.trim() || name,
-      instructor: cInstructor.trim(),
-      color: cColor,
-      folderId: linkedFolderId,
-      rssUrl: cleanRss,
-      units: 3,
-      archived: false,
-      createdAt: Date.now(),
-    });
+    // Sync Class Schedule meetings into `db.classSchedule`
+    const existingByCourseId = schedule
+      .filter(s => s.courseId === savedCourseObj.id)
+      .map(s => s.id)
+      .filter(Boolean);
+    const idsToDelete = [...new Set([...oldLinkedIds, ...existingByCourseId])];
+    if (idsToDelete.length > 0) {
+      await Promise.all(idsToDelete.map(id => db.classSchedule.delete(id).catch(() => {})));
+    }
+    const newScheduleRows = meetingsToScheduleRows(savedCourseObj, cMeetings);
+    if (newScheduleRows.length > 0) {
+      await Promise.all(newScheduleRows.map(row => db.classSchedule.add(row)));
+    }
+
     resetCourseForm();
     await refreshAll();
     onChanged?.();
-    setSelectedCourseId(id);
-    setCourseTab('overview');
-    toast(`Created course "${cNickname.trim() || name}"`, { type: 'success' });
+    if (!isEditing) {
+      setSelectedCourseId(savedCourseObj.id);
+      setCourseTab('overview');
+    }
+    toast(
+      isEditing
+        ? `Updated "${savedCourseObj.nickname || savedCourseObj.name}"`
+        : `Created course "${savedCourseObj.nickname || savedCourseObj.name}"`,
+      { type: 'success' }
+    );
   };
 
   const handleToggleArchive = async course => {
@@ -375,11 +494,16 @@ export default function CoursesDashboardScreen({
   const handleDeleteCourse = async course => {
     const ok = await confirm({
       title: `Remove "${course.nickname || course.name}"?`,
-      message: 'Removes this course card and its uploaded module library. Your regular Subject Folder notes stay untouched.',
+      message: 'Removes this course card, its course schedules, and its uploaded module library. Your regular Subject Folder notes stay untouched.',
       confirmLabel: 'Remove course',
       destructive: true,
     });
     if (!ok) return;
+    await Promise.all(
+      schedule
+        .filter(s => s.courseId === course.id)
+        .map(s => db.classSchedule.delete(s.id).catch(() => {}))
+    );
     await db.materialChunks.where('courseId').equals(course.id).delete().catch(() => {});
     await db.courseMaterials.where('courseId').equals(course.id).delete().catch(() => {});
     await db.courses.delete(course.id);
@@ -667,85 +791,222 @@ export default function CoursesDashboardScreen({
     await refreshAll();
   };
 
-  // Shared Add / Edit Course Modal Form
-  const renderCourseForm = () => (
-    <form className="list-group settings-group" onSubmit={handleSaveCourse} style={{ marginBottom: 12 }}>
-      <div className="settings-label">
-        {editingCourse ? `Edit Course: ${editingCourse.code}` : 'New Canvas-Style Course Card'}
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '0.85fr 1.35fr', gap: 8 }}>
-        <input
-          className="input-field"
-          placeholder="Code (e.g. IPT 101A)"
-          value={cCode}
-          onChange={e => setCCode(e.target.value)}
-          autoFocus
-        />
-        <input
-          className="input-field"
-          placeholder="Nickname (optional, e.g. IPT 101)"
-          value={cNickname}
-          onChange={e => setCNickname(e.target.value)}
-        />
-      </div>
-      <input
-        className="input-field mt-8"
-        placeholder="Full Course Title (matches Canvas name)"
-        value={cName}
-        onChange={e => setCName(e.target.value)}
-      />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
-        <input
-          className="input-field"
-          placeholder="Instructor (optional)"
-          value={cInstructor}
-          onChange={e => setCInstructor(e.target.value)}
-        />
-        <select
-          className="input-field"
-          value={cFolderId}
-          onChange={e => setCFolderId(e.target.value)}
-          aria-label="Linked notes folder"
+  // Shared Add / Edit Course Modal Sheet (with Units + Class Schedule Meetings)
+  const renderCourseFormModal = () => {
+    if (!addCourseOpen) return null;
+    return (
+      <div
+        className="export-overlay"
+        onClick={resetCourseForm}
+        role="dialog"
+        aria-modal="true"
+        aria-label={editingCourse ? `Edit Course ${editingCourse.code}` : 'New Course'}
+      >
+        <div
+          className="export-sheet"
+          onClick={e => e.stopPropagation()}
         >
-          <option value="">Auto-create notes folder</option>
-          {folders.map(f => (
-            <option key={f.id} value={f.id}>
-              Link folder: {f.name}
-            </option>
-          ))}
-        </select>
+          <form onSubmit={handleSaveCourse}>
+            <div className="flex items-center justify-between gap-8" style={{ marginBottom: 10 }}>
+              <div className="settings-label" style={{ margin: 0 }}>
+                {editingCourse ? `Edit Course: ${editingCourse.code}` : 'New Course Card'}
+              </div>
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label="Close modal"
+                onClick={resetCourseForm}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '0.85fr 1.15fr 0.6fr', gap: 8 }}>
+              <input
+                className="input-field"
+                placeholder="Code (e.g. IPT 101)"
+                value={cCode}
+                onChange={e => setCCode(e.target.value)}
+                autoFocus
+              />
+              <input
+                className="input-field"
+                placeholder="Short Name (opt.)"
+                value={cNickname}
+                onChange={e => setCNickname(e.target.value)}
+              />
+              <input
+                type="number"
+                step="0.5"
+                min="0.5"
+                max="12"
+                className="input-field"
+                placeholder="Units"
+                title="Course Units"
+                value={cUnits}
+                onChange={e => setCUnits(e.target.value)}
+                aria-label="Units"
+              />
+            </div>
+
+            <input
+              className="input-field mt-8"
+              placeholder="Full Course Title (matches Canvas name)"
+              value={cName}
+              onChange={e => setCName(e.target.value)}
+            />
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+              <input
+                className="input-field"
+                placeholder="Teacher / Instructor"
+                value={cInstructor}
+                onChange={e => setCInstructor(e.target.value)}
+              />
+              <select
+                className="input-field"
+                value={cFolderId}
+                onChange={e => setCFolderId(e.target.value)}
+                aria-label="Linked notes folder"
+              >
+                <option value="">Auto-create notes folder</option>
+                {folders.map(f => (
+                  <option key={f.id} value={f.id}>
+                    Link folder: {f.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Class Meetings (Days · Time · Room · LEC/LAB) */}
+            <div className="course-meetings-box">
+              <div className="flex items-center justify-between gap-8" style={{ marginBottom: 6 }}>
+                <span className="settings-label" style={{ margin: 0 }}>
+                  Class Schedule &amp; Rooms
+                </span>
+                <button
+                  type="button"
+                  className="row-action-chip active-chip"
+                  onClick={addMeetingSlot}
+                >
+                  <Plus size={11} /> Add Meeting
+                </button>
+              </div>
+              {cMeetings.length === 0 ? (
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                  No days/times assigned yet. Tap <strong>+ Add Meeting</strong> to add lecture or lab slots.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {cMeetings.map((m, mIdx) => (
+                    <div key={mIdx} className="meeting-slot-card">
+                      <div className="flex items-center justify-between gap-6">
+                        <div className="meeting-day-chips">
+                          {SCHEDULE_DAYS.map(d => {
+                            const active = m.days.includes(d.idx);
+                            return (
+                              <button
+                                key={d.idx}
+                                type="button"
+                                className={`meeting-day-chip${active ? ' active' : ''}`}
+                                onClick={() => toggleMeetingDay(mIdx, d.idx)}
+                              >
+                                {d.code}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <button
+                          type="button"
+                          className="row-icon-btn"
+                          aria-label="Remove meeting slot"
+                          onClick={() => removeMeetingSlot(mIdx)}
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: '76px 1fr 1fr',
+                          gap: 6,
+                          marginTop: 7,
+                        }}
+                      >
+                        <select
+                          className="input-field"
+                          value={m.kind}
+                          onChange={e => updateMeetingField(mIdx, 'kind', e.target.value)}
+                          aria-label="Class type"
+                        >
+                          <option value="LEC">LEC</option>
+                          <option value="LAB">LAB</option>
+                        </select>
+                        <input
+                          type="time"
+                          className="input-field"
+                          value={m.startTime}
+                          onChange={e => updateMeetingField(mIdx, 'startTime', e.target.value)}
+                          aria-label="Start time"
+                        />
+                        <input
+                          type="time"
+                          className="input-field"
+                          value={m.endTime}
+                          onChange={e => updateMeetingField(mIdx, 'endTime', e.target.value)}
+                          aria-label="End time"
+                        />
+                      </div>
+
+                      <input
+                        className="input-field mt-6"
+                        placeholder="Room (e.g. 207-B, Lab 503C, G3)"
+                        value={m.room}
+                        onChange={e => updateMeetingField(mIdx, 'room', e.target.value)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <input
+              className="input-field mt-8"
+              placeholder="Optional Course Announcements RSS URL (.atom)"
+              value={cRssUrl}
+              onChange={e => setCRssUrl(e.target.value)}
+            />
+
+            <div className="flex items-center gap-8 mt-10" style={{ flexWrap: 'wrap' }}>
+              {COURSE_PALETTE.map(hex => (
+                <button
+                  key={hex}
+                  type="button"
+                  className={`accent-swatch${cColor === hex ? ' active' : ''}`}
+                  style={{ background: hex, width: 24, height: 24 }}
+                  aria-label={`Banner color ${hex}`}
+                  onClick={() => setCColor(hex)}
+                />
+              ))}
+            </div>
+
+            <div className="flex gap-8 mt-12">
+              <button type="submit" className="btn btn-primary btn-sm" style={{ flex: 1 }}>
+                {editingCourse ? 'Save Changes' : <><Plus size={14} /> Create Course</>}
+              </button>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={resetCourseForm}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
-      <input
-        className="input-field mt-8"
-        placeholder="Optional Course Announcements RSS URL (.atom)"
-        value={cRssUrl}
-        onChange={e => setCRssUrl(e.target.value)}
-      />
-      <div className="flex items-center gap-8 mt-10">
-        {COURSE_PALETTE.map(hex => (
-          <button
-            key={hex}
-            type="button"
-            className={`accent-swatch${cColor === hex ? ' active' : ''}`}
-            style={{ background: hex, width: 24, height: 24 }}
-            aria-label={`Banner color ${hex}`}
-            onClick={() => setCColor(hex)}
-          />
-        ))}
-      </div>
-      <div className="flex gap-8 mt-12">
-        <button type="submit" className="btn btn-primary btn-sm">
-          {editingCourse ? 'Save Changes' : <><Plus size={14} /> Create Course</>}
-        </button>
-        <button type="button" className="btn btn-ghost btn-sm" onClick={resetCourseForm}>
-          Cancel
-        </button>
-      </div>
-    </form>
-  );
+    );
+  };
 
   // =========================================================================
-  // VIEW 1: CANVAS-STYLE COURSES DASHBOARD GRID
+  // VIEW 1: CLEAN COURSE DASHBOARD + VISUAL TIMETABLE SECTION
   // =========================================================================
   if (!selectedCourse) {
     const visibleCourses = showArchived ? archivedCourses : activeCourses;
@@ -760,18 +1021,18 @@ export default function CoursesDashboardScreen({
             type="button"
             className="navbar-btn"
             aria-label="New course"
-            onClick={() => {
-              setEditingCourse(null);
-              setAddCourseOpen(v => !v);
-            }}
+            onClick={() => openNewCourseModal({ withMeetingSlot: dashSection === 'schedule' })}
           >
             <Plus size={20} />
           </button>
         </header>
 
-        <div className="large-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: 16 }}>
+        <div
+          className="large-title"
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: 16 }}
+        >
           <span>Course Dashboard</span>
-          {archivedCourses.length > 0 && (
+          {archivedCourses.length > 0 && dashSection === 'courses' && (
             <button
               type="button"
               className={`row-action-chip${showArchived ? ' active-chip' : ''}`}
@@ -782,202 +1043,280 @@ export default function CoursesDashboardScreen({
           )}
         </div>
 
-        {/* Semester Overall GWA Rollup Banner (appears once at least 1 course has grades!) */}
-        {semesterGwa && !showArchived && (
-          <div className="list-group settings-group" style={{ marginBottom: 10 }}>
-            <div className="flex items-center justify-between gap-8">
-              <div className="flex items-center gap-6" style={{ fontSize: 13.5, fontWeight: 700 }}>
-                <Award size={15} color="var(--accent-ink)" /> Semester Standing ({semesterGwa.courseCount} graded)
-              </div>
-              <div className="flex gap-8" style={{ fontSize: 13, fontWeight: 700 }}>
-                <span>{semesterGwa.avgPercent}%</span>
-                <span className="mode-badge mode-study">GWA {semesterGwa.phGwa.toFixed(2)}</span>
-                <span className="mode-badge mode-code">GPA {semesterGwa.usGpa.toFixed(2)}</span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div className="quick-action-row" style={{ marginBottom: 10 }}>
-          <button type="button" className="quick-action-btn" onClick={handleAutoDiscover}>
-            <Wand2 size={15} />
-            <span>Auto-Discover from Canvas</span>
+        {/* Section Switcher: Courses vs Weekly Schedule */}
+        <div className="view-switcher" role="tablist" aria-label="Course dashboard sections">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={dashSection === 'courses'}
+            className={`view-switch-btn${dashSection === 'courses' ? ' active' : ''}`}
+            onClick={() => setDashSection('courses')}
+          >
+            Courses ({activeCourses.length})
           </button>
           <button
             type="button"
-            className="quick-action-btn"
-            onClick={() => {
-              setEditingCourse(null);
-              setAddCourseOpen(v => !v);
-            }}
+            role="tab"
+            aria-selected={dashSection === 'schedule'}
+            className={`view-switch-btn${dashSection === 'schedule' ? ' active' : ''}`}
+            onClick={() => setDashSection('schedule')}
           >
-            <Plus size={15} />
-            <span>Add Course</span>
+            Schedule ({schedule.length})
           </button>
         </div>
 
-        {addCourseOpen && renderCourseForm()}
-
-        {visibleCourses.length === 0 ? (
-          <div className="list-group settings-group" style={{ textAlign: 'center', padding: '26px 16px' }}>
-            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>
-              {showArchived ? 'No Archived Courses' : 'No Course Cards Yet'}
-            </div>
-            <p className="settings-help" style={{ maxWidth: 360, margin: '0 auto 14px' }}>
-              {showArchived
-                ? 'Finished semester courses you archive will live cleanly here.'
-                : 'Tap Auto-Discover from Canvas to build cards automatically from your synced Canvas Calendar & Announcements, or tap Add Course to create one manually!'}
-            </p>
-            {!showArchived && (
-              <div className="flex justify-center gap-8" style={{ flexWrap: 'wrap' }}>
-                <button type="button" className="btn btn-primary btn-sm" onClick={() => setAddCourseOpen(true)}>
-                  <Plus size={14} /> Add Your First Course
-                </button>
-                {onOpenPlanner && (
-                  <button type="button" className="btn btn-secondary btn-sm" onClick={onOpenPlanner}>
-                    Open Canvas Sync
-                  </button>
-                )}
-              </div>
-            )}
+        {dashSection === 'schedule' ? (
+          <div style={{ padding: '10px var(--gutter) 20px' }}>
+            <CourseScheduleView
+              courses={activeCourses}
+              scheduleRows={schedule}
+              onOpenCourse={c => {
+                setSelectedCourseId(c.id);
+                setCourseTab('overview');
+              }}
+              onEditCourse={c => openEditCourse(c, { ensureMeetingSlot: true })}
+              onAddCourseSchedule={() => {
+                if (activeCourses.length > 0) {
+                  const firstMissing = activeCourses.find(
+                    c => (courseStatsMap.get(c.id)?.classes || []).length === 0
+                  );
+                  openEditCourse(firstMissing || activeCourses[0], { ensureMeetingSlot: true });
+                } else {
+                  openNewCourseModal({ withMeetingSlot: true });
+                }
+              }}
+            />
           </div>
         ) : (
-          <div className="courses-grid">
-            {visibleCourses.map(c => {
-              const st = courseStatsMap.get(c.id) || {
-                announcements: [],
-                pendingAssignments: [],
-                materials: [],
-                studiedCount: 0,
-                gradeInfo: { standing: null },
-              };
-              const displayName = c.nickname || c.name;
-              return (
-                <div
-                  key={c.id}
-                  className="course-card"
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => {
-                    setSelectedCourseId(c.id);
-                    setCourseTab('overview');
-                  }}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      setSelectedCourseId(c.id);
-                      setCourseTab('overview');
-                    }
-                  }}
-                >
-                  <div className="course-card-banner" style={{ background: c.color || '#0a84ff' }}>
-                    <span className="course-code-pill">{c.code || 'COURSE'}</span>
-                    <div className="flex items-center gap-6">
-                      {st.gradeInfo?.standing !== null && (
-                        <span className="course-code-pill">{st.gradeInfo.standing}%</span>
-                      )}
-                      {st.pendingAssignments.length > 0 && (
-                        <span className="course-due-pill">{st.pendingAssignments.length} due</span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="course-card-body">
-                    <div className="flex items-start justify-between gap-6">
-                      <div className="course-card-title">{displayName}</div>
-                      <button
-                        type="button"
-                        className="icon-btn"
-                        style={{ minWidth: 26, minHeight: 26, padding: 3 }}
-                        aria-label={`Edit ${displayName}`}
-                        title="Edit nickname / color"
-                        onClick={e => {
-                          e.stopPropagation();
-                          openEditCourse(c);
-                        }}
-                      >
-                        <Pencil size={13} />
-                      </button>
-                    </div>
-                    {c.instructor && <div className="course-card-inst">{c.instructor}</div>}
-                    <div className="course-card-stats">
-                      <span>
-                        {st.materials.length > 0
-                          ? `${st.studiedCount}/${st.materials.length} studied`
-                          : '0 files'}
-                      </span>
-                      <span>·</span>
-                      <span>{st.announcements.length} posts</span>
-                      <span>·</span>
-                      <span>{st.pendingAssignments.length} tasks</span>
-                    </div>
-                  </div>
-                  <div className="course-card-footer">
-                    <button
-                      type="button"
-                      className="course-foot-btn"
-                      title="Announcements"
-                      onClick={e => {
-                        e.stopPropagation();
-                        setSelectedCourseId(c.id);
-                        setCourseTab('announcements');
-                      }}
-                    >
-                      <Megaphone size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      className="course-foot-btn"
-                      title="Modules & Files"
-                      onClick={e => {
-                        e.stopPropagation();
-                        setSelectedCourseId(c.id);
-                        setCourseTab('modules');
-                      }}
-                    >
-                      <Layers size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      className="course-foot-btn"
-                      title="Assignments"
-                      onClick={e => {
-                        e.stopPropagation();
-                        setSelectedCourseId(c.id);
-                        setCourseTab('assignments');
-                      }}
-                    >
-                      <CheckSquare size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      className="course-foot-btn"
-                      title="Grades & What-If"
-                      onClick={e => {
-                        e.stopPropagation();
-                        setSelectedCourseId(c.id);
-                        setCourseTab('grades');
-                      }}
-                    >
-                      <Award size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      className="course-foot-btn"
-                      title="Course AI Tutor"
-                      onClick={e => {
-                        e.stopPropagation();
-                        setSelectedCourseId(c.id);
-                        setCourseTab('ai');
-                      }}
-                    >
-                      <Sparkles size={14} />
-                    </button>
-                  </div>
+          <>
+            {/* Compact 3-Tile Summary Strip */}
+            {!showArchived && (
+              <div className="course-summary-strip">
+                <div className="course-summary-tile">
+                  <div className="pattern-mini-label">Subjects</div>
+                  <div className="course-summary-val">{activeCourses.length}</div>
+                  <div className="course-summary-sub">Active load</div>
                 </div>
-              );
-            })}
-          </div>
+                <div className="course-summary-tile">
+                  <div className="pattern-mini-label">Tasks Due</div>
+                  <div className="course-summary-val">{totalDueTasks}</div>
+                  <div className="course-summary-sub">Pending items</div>
+                </div>
+                <button
+                  type="button"
+                  className="course-summary-tile is-tappable"
+                  onClick={() => setGwaMode(m => (m === 'gwa' ? 'gpa' : 'gwa'))}
+                  title="Tap to toggle PH GWA / US GPA"
+                >
+                  <div className="pattern-mini-label">
+                    {gwaMode === 'gwa' ? 'PH GWA' : 'US GPA'}
+                  </div>
+                  <div className="course-summary-val">
+                    {semesterGwa
+                      ? gwaMode === 'gwa'
+                        ? semesterGwa.phGwa.toFixed(2)
+                        : semesterGwa.usGpa.toFixed(2)
+                      : '—'}
+                  </div>
+                  <div className="course-summary-sub">
+                    {semesterGwa ? `${semesterGwa.avgPercent}% avg · tap` : 'No grades yet'}
+                  </div>
+                </button>
+              </div>
+            )}
+
+            {/* Utility Chip Strip */}
+            <div className="course-utility-chips">
+              <button type="button" className="row-action-chip" onClick={handleAutoDiscover}>
+                <Wand2 size={12} /> Auto-Discover Canvas
+              </button>
+              <button
+                type="button"
+                className="row-action-chip"
+                onClick={() => setDashSection('schedule')}
+              >
+                <Clock size={12} /> View Timetable &amp; Rooms
+              </button>
+            </div>
+
+            {visibleCourses.length === 0 ? (
+              <div className="list-group settings-group" style={{ textAlign: 'center', padding: '26px 16px' }}>
+                <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>
+                  {showArchived ? 'No Archived Courses' : 'No Course Cards Yet'}
+                </div>
+                <p className="settings-help" style={{ maxWidth: 360, margin: '0 auto 14px' }}>
+                  {showArchived
+                    ? 'Finished semester courses you archive will live cleanly here.'
+                    : 'Tap + at the top right to add a subject with its schedule, room, and teacher, or tap Auto-Discover Canvas.'}
+                </p>
+                {!showArchived && (
+                  <div className="flex justify-center gap-8" style={{ flexWrap: 'wrap' }}>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      onClick={() => openNewCourseModal({ withMeetingSlot: true })}
+                    >
+                      <Plus size={14} /> Add Your First Course
+                    </button>
+                    {onOpenPlanner && (
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={onOpenPlanner}>
+                        Open Canvas Sync
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="courses-grid">
+                {visibleCourses.map((c, idx) => {
+                  const st = courseStatsMap.get(c.id) || {
+                    announcements: [],
+                    pendingAssignments: [],
+                    materials: [],
+                    studiedCount: 0,
+                    classes: [],
+                    gradeInfo: { standing: null },
+                  };
+                  const displayName = c.nickname || c.name;
+                  const groupedMeetings = scheduleRowsToMeetings(st.classes);
+                  const firstMeeting = groupedMeetings[0];
+                  const schedLine = firstMeeting
+                    ? `${groupDaysLabel(firstMeeting.days)} ${formatTimeRange12h(
+                        firstMeeting.startTime,
+                        firstMeeting.endTime
+                      )}`
+                    : '';
+                  const roomLine = firstMeeting?.room || '';
+                  const studiedPctCard =
+                    st.materials.length > 0
+                      ? Math.round((st.studiedCount / st.materials.length) * 100)
+                      : 0;
+
+                  return (
+                    <div
+                      key={c.id}
+                      className="course-card"
+                      style={{ '--stagger-idx': idx }}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => {
+                        setSelectedCourseId(c.id);
+                        setCourseTab('overview');
+                      }}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setSelectedCourseId(c.id);
+                          setCourseTab('overview');
+                        }
+                      }}
+                    >
+                      <div className="course-card-banner" style={{ background: c.color || '#0a84ff' }}>
+                        <span className="course-code-pill">{c.code || 'COURSE'}</span>
+                        <div className="flex items-center gap-4">
+                          {st.gradeInfo?.standing !== null && (
+                            <span className="course-code-pill">{st.gradeInfo.standing}%</span>
+                          )}
+                          {st.pendingAssignments.length > 0 && (
+                            <span className="course-due-pill">{st.pendingAssignments.length} due</span>
+                          )}
+                          <button
+                            type="button"
+                            className="course-banner-edit-btn"
+                            aria-label={`Edit ${displayName}`}
+                            title="Edit course, teacher & schedule"
+                            onClick={e => {
+                              e.stopPropagation();
+                              openEditCourse(c);
+                            }}
+                          >
+                            <Pencil size={12} />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="course-card-body">
+                        <div className="course-card-title">{displayName}</div>
+                        <div className="course-card-inst">
+                          <User size={11} style={{ flexShrink: 0 }} />
+                          <span>{c.instructor || 'Add instructor'}</span>
+                        </div>
+                        <div className="course-card-sched">
+                          <Clock size={11} style={{ flexShrink: 0 }} />
+                          <span>{schedLine || 'Tap ✎ to set days & room'}</span>
+                        </div>
+                        {roomLine && (
+                          <div className="course-card-inst" style={{ marginTop: 3 }}>
+                            <MapPin size={11} style={{ flexShrink: 0 }} />
+                            <span>{roomLine}</span>
+                          </div>
+                        )}
+
+                        {st.materials.length > 0 ? (
+                          <div style={{ marginTop: 'auto', paddingTop: 8 }}>
+                            <div className="flex items-center justify-between" style={{ fontSize: 10.5, color: 'var(--text-tertiary)', marginBottom: 4 }}>
+                              <span>{st.studiedCount}/{st.materials.length} studied</span>
+                              <span>{studiedPctCard}%</span>
+                            </div>
+                            <div className="progress-bar-track" style={{ height: 5, margin: 0 }}>
+                              <div className="progress-bar-fill" style={{ width: `${Math.max(4, studiedPctCard)}%` }} />
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="course-card-stats" style={{ marginTop: 'auto', paddingTop: 8 }}>
+                            <span>{c.units || 3} units</span>
+                            <span>·</span>
+                            <span>{st.pendingAssignments.length} tasks</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="course-card-footer">
+                        <button
+                          type="button"
+                          className="course-foot-btn"
+                          onClick={e => {
+                            e.stopPropagation();
+                            setSelectedCourseId(c.id);
+                            setCourseTab('modules');
+                          }}
+                        >
+                          <Layers size={13} />
+                          <span>Modules</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="course-foot-btn"
+                          onClick={e => {
+                            e.stopPropagation();
+                            setSelectedCourseId(c.id);
+                            setCourseTab('assignments');
+                          }}
+                        >
+                          <CheckSquare size={13} />
+                          <span>Tasks</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="course-foot-btn"
+                          onClick={e => {
+                            e.stopPropagation();
+                            setSelectedCourseId(c.id);
+                            setCourseTab('ai');
+                          }}
+                        >
+                          <Sparkles size={13} />
+                          <span>AI</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
         )}
+        {renderCourseFormModal()}
       </div>
     );
   }
@@ -988,6 +1327,7 @@ export default function CoursesDashboardScreen({
   const displayTitle = selectedCourse.nickname || selectedCourse.name;
   const studiedPct =
     stats.materials.length > 0 ? Math.round((stats.studiedCount / stats.materials.length) * 100) : 0;
+  const selectedCourseMeetings = scheduleRowsToMeetings(stats.classes);
 
   return (
     <div className="screen list-pad-bottom">
@@ -1008,7 +1348,7 @@ export default function CoursesDashboardScreen({
             type="button"
             className="navbar-btn"
             aria-label="Edit course"
-            title="Edit nickname, color or RSS"
+            title="Edit schedule, teacher, color or RSS"
             onClick={() => openEditCourse(selectedCourse)}
           >
             <Pencil size={17} />
@@ -1031,7 +1371,9 @@ export default function CoursesDashboardScreen({
       {/* Colored Canvas-Style Course Header Strip */}
       <div className="course-hero-banner" style={{ background: selectedCourse.color || '#0a84ff' }}>
         <div className="flex items-center justify-between gap-8">
-          <div className="course-code-pill">{selectedCourse.code}</div>
+          <div className="course-code-pill">
+            {selectedCourse.code} · {selectedCourse.units || 3}u
+          </div>
           {stats.gradeInfo?.standing !== null && (
             <div className="course-code-pill">
               {stats.gradeInfo.standing}% · GWA {stats.gradeInfo.phGwa.toFixed(2)}
@@ -1043,9 +1385,20 @@ export default function CoursesDashboardScreen({
           <div className="course-hero-inst" style={{ opacity: 0.8 }}>{selectedCourse.name}</div>
         )}
         {selectedCourse.instructor && <div className="course-hero-inst">{selectedCourse.instructor}</div>}
+        {selectedCourseMeetings.length > 0 && (
+          <div className="course-hero-sched">
+            {selectedCourseMeetings.map((m, idx) => (
+              <span key={idx} className="course-hero-sched-pill">
+                <Clock size={11} /> {groupDaysLabel(m.days)}{' '}
+                {formatTimeRange12h(m.startTime, m.endTime)}
+                {m.room ? ` · ${m.room}` : ''}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
 
-      {addCourseOpen && <div style={{ marginTop: 10 }}>{renderCourseForm()}</div>}
+      {renderCourseFormModal()}
 
       {/* 6 Canvas-Style Workspace Tabs */}
       <div className="hub-tabs" role="tablist" style={{ marginTop: 10 }}>

@@ -21,7 +21,7 @@ import { db, ensureSeeded, purgeOldTrash, noteHasContent } from './store/db';
 import { autoSyncCanvasIfStale } from './lib/canvasSync';
 import { syncDeadlineNotifications } from './lib/notifications';
 import { lockVault, subscribeVault } from './lib/vault';
-import { applySettings } from './theme';
+import { REDUCE_MOTION_KEY, applySettings } from './theme';
 
 const DevToolkitScreen = lazy(() => import('./components/DevToolkitScreen'));
 const LearnCodingScreen = lazy(() => import('./components/LearnCodingScreen'));
@@ -32,6 +32,15 @@ const ThemeStudioScreen = lazy(() => import('./components/ThemeStudioScreen'));
 
 export default function App() {
   const [ready, setReady] = useState(false);
+  const [splashPhase, setSplashPhase] = useState(() => {
+    try {
+      const reduced = localStorage.getItem(REDUCE_MOTION_KEY) === 'true';
+      const alreadySplashed = sessionStorage.getItem('aicn:splashed') === '1';
+      return reduced || alreadySplashed ? 'gone' : 'visible';
+    } catch {
+      return 'gone';
+    }
+  });
   const [screen, setScreen] = useState('folders'); // folders | list | editor | study | exam | trash | settings
   const [folder, setFolder] = useState(null);
   const [note, setNote] = useState(null);
@@ -89,6 +98,22 @@ export default function App() {
         .catch(() => {});
     });
   }, [bumpSidebar]);
+
+  // Brief purposeful launch splash (<= 0.8s total, never blocks interaction once leaving)
+  useEffect(() => {
+    if (!ready || splashPhase !== 'visible') return;
+    try {
+      sessionStorage.setItem('aicn:splashed', '1');
+    } catch {
+      // ignore
+    }
+    const tLeave = setTimeout(() => setSplashPhase('leaving'), 420);
+    const tGone = setTimeout(() => setSplashPhase('gone'), 760);
+    return () => {
+      clearTimeout(tLeave);
+      clearTimeout(tGone);
+    };
+  }, [ready, splashPhase]);
 
   // Android "Share to Notes by Bai" Intent Receiver (PDF, PPTX, DOCX, image, or text/link)
   useEffect(() => {
@@ -691,6 +716,23 @@ export default function App() {
           }}
           onClose={() => setSharedImport(null)}
         />
+      )}
+      {splashPhase !== 'gone' && (
+        <div
+          className={`app-splash-overlay${splashPhase === 'leaving' ? ' is-leaving' : ''}`}
+          aria-hidden="true"
+        >
+          <div className="app-splash-card">
+            <div className="app-splash-logo">
+              <img src="./icons/icon-192.png" alt="" width={46} height={46} />
+            </div>
+            <div className="app-splash-title">Notes by Bai</div>
+            <div className="app-splash-sub">Study workspace</div>
+            <div className="app-splash-bar">
+              <span />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

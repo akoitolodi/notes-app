@@ -33,6 +33,7 @@ import {
   PAPER_KEY,
   PAPER_STYLES,
   HINT_KEY,
+  REDUCE_MOTION_KEY,
   ACCENTS,
   getSettings,
   applySettings,
@@ -197,6 +198,7 @@ export default function SettingsScreen({ onBack, onDataImported, onOpenThemes })
       return false;
     }
   });
+  const [reduceMotion, setReduceMotion] = useState(() => Boolean(initial.reduceMotion));
 
   const [mode, setMode] = useState(() => getAiMode());
   const [provider, setProvider] = useState(() => getProviderId());
@@ -569,6 +571,23 @@ export default function SettingsScreen({ onBack, onDataImported, onOpenThemes })
               type="checkbox"
               checked={showHint}
               onChange={e => handleHintChange(e.target.checked)}
+            />
+            <span className="ios-switch-track" />
+          </span>
+        </label>
+
+        <label className="ios-switch-row mt-12">
+          <div style={{ flex: 1 }}>
+            <span className="ios-switch-label">Reduce animations</span>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+              Disables launch splash, card stagger &amp; chat motion
+            </div>
+          </div>
+          <span className="ios-switch">
+            <input
+              type="checkbox"
+              checked={reduceMotion}
+              onChange={e => setPref(REDUCE_MOTION_KEY, e.target.checked ? 'true' : 'false', v => setReduceMotion(v === 'true'))}
             />
             <span className="ios-switch-track" />
           </span>
@@ -1337,7 +1356,7 @@ export default function SettingsScreen({ onBack, onDataImported, onOpenThemes })
           • Press <strong>Ctrl+S</strong> to save immediately or <strong>Ctrl+Shift+S</strong> to save & explain.
         </div>
         <div className="settings-tip" style={{ marginTop: 10, opacity: 0.7 }}>
-          Notes by Bai v2.0.2
+          Notes by Bai v2.0.3
         </div>
       </div>
 
