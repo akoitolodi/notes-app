@@ -6,7 +6,7 @@
  *
  * Destination: Save as a Note in a Folder OR Save directly into a Course Module (AI-indexed immediately!).
  */
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { createPortal } from 'react-dom';
 import {
   FileUp,
@@ -19,15 +19,26 @@ import {
   ClipboardPaste,
   Images,
   BookOpen,
+  Eye,
 } from 'lucide-react';
-import { db, createNote, saveCourseMaterialWithChunks, logStudyActivity } from '../store/db';
+import {
+  db,
+  createNote,
+  updateNote,
+  saveFileAttachment,
+  saveCourseMaterialWithChunks,
+  logStudyActivity,
+} from '../store/db';
 import { isVaultUnlocked } from '../lib/vault';
 import { extractDocument, structureImportedTextWithAI } from '../lib/docImporter';
+import { detectDocKind } from '../lib/docViewerParser';
 import { htmlToCleanMarkdown } from '../lib/htmlToMarkdown';
 import { getPublicGoogleExportUrl, importPublicGoogleLink } from '../lib/courseExtras';
 import { ocrImage } from '../lib/aiFeatures';
 import { compressImage } from './ImageManager';
 import { useDialog } from './ui/DialogProvider';
+
+const DocumentViewerModal = lazy(() => import('./DocumentViewerModal'));
 
 export default function ImportSheet({
   defaultFolderId = null,
@@ -63,6 +74,7 @@ export default function ImportSheet({
   const [status, setStatus] = useState('');
   const [progress, setProgress] = useState(null);
   const [error, setError] = useState(null);
+  const [previewDoc, setPreviewDoc] = useState(null);
 
   const fileInputRef = useRef(null);
   const ocrInputRef = useRef(null);
@@ -126,7 +138,15 @@ export default function ImportSheet({
     }
   };
 
-  const saveResultItem = async ({ title, rawMarkdown, kind = 'pdf', fileName = '', pageCount = 1, signal }) => {
+  const saveResultItem = async ({
+    title,
+    rawMarkdown,
+    kind = 'pdf',
+    fileName = '',
+    fileObj = null,
+    pageCount = 1,
+    signal,
+  }) => {
     const targetCourse = courses.find(c => c.id === Number(courseId));
     const targetFolder = folders.find(f => f.id === Number(folderId)) || folders[0];
     const subjectName =
@@ -160,6 +180,8 @@ export default function ImportSheet({
         fileName,
         extractedText: finalBody,
         pageCount,
+        fileBlob: fileObj,
+        mime: fileObj?.type || '',
       });
       await logStudyActivity('notes', 1);
       return { savedToCourse: targetCourse };
@@ -171,6 +193,20 @@ export default function ImportSheet({
       finalBody,
       subjectName
     );
+    if (fileObj) {
+      try {
+        const meta = await saveFileAttachment(created.id, fileObj, {
+          kind,
+          mime: fileObj.type || '',
+          name: fileObj.name || fileName || title,
+          pageCount,
+        });
+        await updateNote(created.id, { files: [meta] });
+        created.files = [meta];
+      } catch {
+        // Non-fatal: keep imported note text even if binary exceeds limit
+      }
+    }
     await logStudyActivity('notes', 1);
     return { created, targetFolder: targetFolder || { id: '__all__', name: 'All Notes' } };
   };
@@ -215,6 +251,7 @@ export default function ImportSheet({
             rawMarkdown: extracted.rawMarkdown,
             kind: extracted.kind,
             fileName: f.name,
+            fileObj: f,
             pageCount: extracted.pageCount,
             signal: controller.signal,
           });
@@ -603,6 +640,26 @@ export default function ImportSheet({
           <button type="button" className="btn btn-secondary flex-1" onClick={handleCancel}>
             {busy ? 'Stop' : 'Cancel'}
           </button>
+          {mode === 'file' && selectedFiles.length === 1 && !busy && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ flex: '0 0 auto' }}
+              onClick={() => {
+                const f = selectedFiles[0];
+                setPreviewDoc({
+                  title: f.name,
+                  fileName: f.name,
+                  kind: detectDocKind(f.name, f.type),
+                  mime: f.type || '',
+                  file: f,
+                  size: f.size,
+                });
+              }}
+            >
+              <Eye size={16} /> View Now
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-primary flex-1"
@@ -613,6 +670,18 @@ export default function ImportSheet({
           </button>
         </div>
       </div>
+      {previewDoc && (
+        <Suspense fallback={null}>
+          <DocumentViewerModal
+            doc={previewDoc}
+            onClose={() => setPreviewDoc(null)}
+            onSaveAsNote={() => {
+              setPreviewDoc(null);
+              handleImport();
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 

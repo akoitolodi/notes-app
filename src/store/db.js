@@ -162,6 +162,8 @@ export async function saveCourseMaterialWithChunks({
   extractedText = '',
   pageCount = 0,
   sourceUrl = '',
+  fileBlob = null,
+  mime = '',
 }) {
   const matId = await db.courseMaterials.add({
     courseId,
@@ -174,6 +176,28 @@ export async function saveCourseMaterialWithChunks({
     sourceUrl: String(sourceUrl || ''),
     createdAt: Date.now(),
   });
+
+  if (fileBlob && typeof fileBlob.size === 'number' && fileBlob.size <= MAX_DOC_BLOB_BYTES) {
+    try {
+      const attachmentId = `mat-${matId}`;
+      const fileMime = mime || fileBlob.type || '';
+      await db.attachments.put({
+        id: attachmentId,
+        noteId: -matId,
+        blob: fileBlob,
+        mime: fileMime,
+        name: String(fileName || title || 'document'),
+        createdAt: Date.now(),
+      });
+      await db.courseMaterials.update(matId, {
+        attachmentId,
+        fileSize: fileBlob.size,
+        mime: fileMime,
+      });
+    } catch {
+      // Non-fatal: keep text chunks even if Blob storage fails
+    }
+  }
 
   const chunks = buildMaterialChunks(extractedText, title);
   if (chunks.length > 0) {
@@ -194,6 +218,7 @@ export async function saveCourseMaterialWithChunks({
 /** Delete a course material and its indexed BM25 chunks cleanly. */
 export async function deleteCourseMaterial(materialId) {
   await db.materialChunks.where('materialId').equals(materialId).delete().catch(() => {});
+  await db.attachments.delete(`mat-${materialId}`).catch(() => {});
   await db.courseMaterials.delete(materialId);
 }
 
@@ -322,12 +347,15 @@ export async function getActivityHeatmap(days = 112) {
   return out;
 }
 
-/** Check whether a note has any meaningful user content (text, images, or drawings). */
+export const MAX_DOC_BLOB_BYTES = 20 * 1024 * 1024; // 20 MB cap for stored PDFs/slides/docs
+
+/** Check whether a note has any meaningful user content (text, images, files, or drawings). */
 export function noteHasContent(note) {
   if (!note) return false;
   if ((note.title || '').trim()) return true;
   if ((note.body || '').trim()) return true;
   if (Array.isArray(note.images) && note.images.length > 0) return true;
+  if (Array.isArray(note.files) && note.files.length > 0) return true;
   const strokes = Array.isArray(note.drawings)
     ? note.drawings
     : note.drawings?.strokes || [];
@@ -760,6 +788,31 @@ export async function duplicateNote(id) {
     await db.notes.update(newId, { images: clonedImages });
   }
 
+  if (Array.isArray(src.files) && src.files.length > 0) {
+    const clonedFiles = [];
+    for (let i = 0; i < src.files.length; i++) {
+      const f = src.files[i];
+      if (f.storedInDb && f.id) {
+        const rec = await db.attachments.get(f.id).catch(() => null);
+        if (rec?.blob) {
+          const newFileId = `file-${now}-${i}-${Math.random().toString(36).slice(2, 6)}`;
+          await db.attachments.add({
+            id: newFileId,
+            noteId: newId,
+            blob: rec.blob,
+            mime: rec.mime,
+            name: rec.name || f.name,
+            createdAt: now,
+          });
+          clonedFiles.push({ ...f, id: newFileId, storedInDb: true });
+          continue;
+        }
+      }
+      clonedFiles.push({ ...f });
+    }
+    await db.notes.update(newId, { files: clonedFiles });
+  }
+
   invalidateNoteIndexCache();
   return db.notes.get(newId);
 }
@@ -827,6 +880,55 @@ export async function resolveImageBlob(img) {
 export async function deleteImageAttachment(imgId) {
   try {
     await db.attachments.delete(imgId);
+  } catch {
+    // non-fatal
+  }
+}
+
+/** Store a PDF / PPTX / DOCX / text Blob into db.attachments and return lightweight metadata for note.files[]. */
+export async function saveFileAttachment(noteId, file, meta = {}) {
+  if (!file || typeof file.size !== 'number') {
+    throw new Error('No document file provided.');
+  }
+  if (file.size > MAX_DOC_BLOB_BYTES) {
+    throw new Error('File exceeds the 20 MB offline viewer storage limit.');
+  }
+  const id = `file-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const mime = meta.mime || file.type || '';
+  const name = meta.name || file.name || 'document';
+  await db.attachments.put({
+    id,
+    noteId,
+    blob: file,
+    mime,
+    name,
+    createdAt: Date.now(),
+  });
+  return {
+    id,
+    name,
+    kind: meta.kind || '',
+    mime,
+    size: file.size,
+    pageCount: Number(meta.pageCount || 0) || 0,
+    storedInDb: true,
+  };
+}
+
+/** Resolve any stored document metadata entry to a Blob. */
+export async function resolveFileBlob(fileMeta) {
+  if (!fileMeta) return null;
+  const key = fileMeta.attachmentId || fileMeta.id;
+  if (key) {
+    const rec = await db.attachments.get(key).catch(() => null);
+    if (rec?.blob) return rec.blob;
+  }
+  return null;
+}
+
+export async function deleteFileAttachment(fileId) {
+  try {
+    await db.attachments.delete(fileId);
   } catch {
     // non-fatal
   }

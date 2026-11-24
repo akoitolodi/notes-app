@@ -2,9 +2,13 @@ package com.philipjohn.aiclassnotes;
 
 import android.Manifest;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.database.Cursor;
+import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -15,6 +19,10 @@ import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.util.Base64;
+import android.view.Display;
+import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
 import androidx.core.app.ActivityCompat;
@@ -41,12 +49,132 @@ public class MainActivity extends BridgeActivity {
     private Runnable pendingSpeechRestart;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
+    private static final String THEME_PREFS = "bai_theme_prefs";
+    private static final String PREF_BG_COLOR = "bg_color";
+    private static final String PREF_IS_DARK = "is_dark";
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        applySavedWindowBackground();
         super.onCreate(savedInstanceState);
+        applySavedWindowBackground();
+        if (getWindow() != null) {
+            getWindow().getDecorView().post(this::enableHighRefreshRate);
+        }
+        initNativeTheme();
         initNativeTts();
         initNativeSpeech();
         handleShareIntent(getIntent());
+    }
+
+    private void applySavedWindowBackground() {
+        try {
+            SharedPreferences prefs = getSharedPreferences(THEME_PREFS, MODE_PRIVATE);
+            int uiNight = getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
+            boolean systemDark = uiNight == Configuration.UI_MODE_NIGHT_YES;
+            boolean isDark = prefs.contains(PREF_IS_DARK) ? prefs.getBoolean(PREF_IS_DARK, systemDark) : systemDark;
+            String hex = prefs.getString(PREF_BG_COLOR, systemDark ? "#090A0E" : "#F4F2EC");
+            applyNativeWindowBg(hex, isDark);
+        } catch (Exception ignored) {
+            // fallback safely
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private void applyNativeWindowBg(final String hex, final boolean dark) {
+        try {
+            if (hex == null || hex.isEmpty()) return;
+            int bgColor = Color.parseColor(hex.startsWith("#") ? hex : "#" + hex);
+            Window window = getWindow();
+            if (window != null) {
+                View decor = window.getDecorView();
+                decor.setBackgroundColor(bgColor);
+                window.setStatusBarColor(bgColor);
+                window.setNavigationBarColor(bgColor);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    int flags = decor.getSystemUiVisibility();
+                    if (dark) flags &= ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+                    else flags |= View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+                    decor.setSystemUiVisibility(flags);
+                }
+            }
+            if (getBridge() != null && getBridge().getWebView() != null) {
+                getBridge().getWebView().setBackgroundColor(bgColor);
+            }
+        } catch (Exception ignored) {
+            // ignore invalid hex colors
+        }
+    }
+
+    private void initNativeTheme() {
+        try {
+            if (getBridge() != null && getBridge().getWebView() != null) {
+                getBridge().getWebView().addJavascriptInterface(new AndroidThemeBridge(), "BaiNativeTheme");
+            }
+        } catch (Exception ignored) {
+            // ignore
+        }
+    }
+
+    private final class AndroidThemeBridge {
+
+        @JavascriptInterface
+        public void setBgColor(final String hex, final boolean dark) {
+            try {
+                if (hex == null || hex.isEmpty()) return;
+                getSharedPreferences(THEME_PREFS, MODE_PRIVATE)
+                    .edit()
+                    .putString(PREF_BG_COLOR, hex)
+                    .putBoolean(PREF_IS_DARK, dark)
+                    .apply();
+            } catch (Exception ignored) {
+                // ignore
+            }
+            mainHandler.post(() -> applyNativeWindowBg(hex, dark));
+        }
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        enableHighRefreshRate();
+    }
+
+    @SuppressWarnings("deprecation")
+    private void enableHighRefreshRate() {
+        try {
+            Window window = getWindow();
+            if (window == null) return;
+            Display display = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R ? getDisplay() : null;
+            if (display == null && getWindowManager() != null) {
+                display = getWindowManager().getDefaultDisplay();
+            }
+            if (display == null) return;
+
+            Display.Mode current = display.getMode();
+            Display.Mode[] modes = display.getSupportedModes();
+            if (current == null || modes == null || modes.length == 0) return;
+
+            Display.Mode best = current;
+            for (Display.Mode m : modes) {
+                if (m.getPhysicalWidth() == current.getPhysicalWidth()
+                        && m.getPhysicalHeight() == current.getPhysicalHeight()
+                        && m.getRefreshRate() > best.getRefreshRate()) {
+                    best = m;
+                }
+            }
+
+            WindowManager.LayoutParams lp = window.getAttributes();
+            if (lp != null
+                    && (lp.preferredDisplayModeId != best.getModeId()
+                            || lp.preferredRefreshRate != best.getRefreshRate())) {
+                lp.preferredDisplayModeId = best.getModeId();
+                lp.preferredRefreshRate = best.getRefreshRate();
+                window.setAttributes(lp);
+            }
+        } catch (Exception ignored) {
+            // Safely ignore on OEMs or older Android builds without multi-mode switching
+        }
     }
 
     @Override

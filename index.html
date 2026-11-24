@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
-    <meta name="theme-color" content="#f2f2f7" />
+    <meta name="theme-color" content="#f4f2ec" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
@@ -13,6 +13,7 @@
     <link rel="apple-touch-icon" href="./icons/icon-192.png" />
     <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
     <title>Notes by Bai</title>
+    <style>html,body,#root{background-color:var(--boot-bg,#f4f2ec);margin:0;}</style>
     <script>
       (function () {
         try {
@@ -69,6 +70,7 @@
               lightPresets[preset] ||
               (dark ? '#090a0e' : '#f4f2ec');
           d.style.backgroundColor = bg;
+          d.style.setProperty('--boot-bg', bg);
           var m = document.querySelector('meta[name="theme-color"]');
           if (m) m.setAttribute('content', bg);
         } catch (e) {}

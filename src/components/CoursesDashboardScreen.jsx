@@ -5,7 +5,7 @@
  *   Upload + Google Docs/Slides Link Import + Studied Checkmarks) | Posts | Tasks (Workflow Status + Score)
  *   | Grades (Syllabus Weights + Canvas What-If Simulator + Pre-Submit AI Rubric Checker) | Course AI
  */
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import {
   ChevronLeft,
   Plus,
@@ -80,6 +80,7 @@ import { compressImage } from './ImageManager';
 import CourseGradesTab from './course/CourseGradesTab';
 import CourseAttendanceCard from './course/CourseAttendanceCard';
 import CourseScheduleView from './course/CourseScheduleView';
+const DocumentViewerModal = lazy(() => import('./DocumentViewerModal'));
 import MarkdownContent from './ui/MarkdownContent';
 import { useDialog } from './ui/DialogProvider';
 
@@ -504,6 +505,10 @@ export default function CoursesDashboardScreen({
         .filter(s => s.courseId === course.id)
         .map(s => db.classSchedule.delete(s.id).catch(() => {}))
     );
+    const courseMats = await db.courseMaterials.where('courseId').equals(course.id).toArray().catch(() => []);
+    await Promise.all(
+      courseMats.map(m => db.attachments.delete(m.attachmentId || `mat-${m.id}`).catch(() => {}))
+    );
     await db.materialChunks.where('courseId').equals(course.id).delete().catch(() => {});
     await db.courseMaterials.where('courseId').equals(course.id).delete().catch(() => {});
     await db.courses.delete(course.id);
@@ -567,6 +572,8 @@ export default function CoursesDashboardScreen({
             fileName: f.name,
             extractedText: res.rawMarkdown,
             pageCount: res.pageCount,
+            fileBlob: f,
+            mime: f.type || '',
           });
           savedCount += 1;
         }
@@ -1797,7 +1804,11 @@ export default function CoursesDashboardScreen({
                             {checked ? <CheckSquare size={18} color="var(--accent-ink)" /> : <Square size={18} />}
                           </button>
                           <div className="list-item-body">
-                            <div className="list-item-title">
+                            <div
+                              className="list-item-title"
+                              style={{ cursor: 'pointer' }}
+                              onClick={() => setPreviewMaterial(mat)}
+                            >
                               <span>{mat.title}</span>
                               <span className="mode-badge mode-code" style={{ textTransform: 'uppercase' }}>
                                 {mat.kind}
@@ -1820,7 +1831,7 @@ export default function CoursesDashboardScreen({
                                 className="row-action-chip"
                                 onClick={() => setPreviewMaterial(mat)}
                               >
-                                <Eye size={12} /> Read
+                                <Eye size={12} /> View
                               </button>
                               <button
                                 type="button"
@@ -1846,32 +1857,26 @@ export default function CoursesDashboardScreen({
           )}
 
           {previewMaterial && (
-            <div className="sheet-backdrop" onClick={() => setPreviewMaterial(null)}>
-              <div className="sheet-panel" onClick={e => e.stopPropagation()}>
-                <div className="sheet-header">
-                  <span className="sheet-title">{previewMaterial.title}</span>
-                  <button type="button" className="icon-btn" onClick={() => setPreviewMaterial(null)}>
-                    <X size={18} />
-                  </button>
-                </div>
-                <div className="flex gap-8" style={{ marginBottom: 10 }}>
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-sm"
-                    onClick={() => {
-                      const m = previewMaterial;
-                      setPreviewMaterial(null);
-                      openAsNote({ title: m.title, body: m.extractedText });
-                    }}
-                  >
-                    <FilePlus2 size={13} /> Save as Editable Note
-                  </button>
-                </div>
-                <div style={{ fontSize: 13.5, lineHeight: 1.55, maxHeight: '55vh', overflowY: 'auto' }}>
-                  <MarkdownContent text={previewMaterial.extractedText || ''} />
-                </div>
-              </div>
-            </div>
+            <Suspense fallback={null}>
+              <DocumentViewerModal
+                doc={{
+                  title: previewMaterial.title,
+                  fileName: previewMaterial.fileName || `${previewMaterial.title}.${previewMaterial.kind || 'md'}`,
+                  kind: previewMaterial.kind || undefined,
+                  mime: previewMaterial.mime || '',
+                  attachmentId: previewMaterial.attachmentId || null,
+                  extractedText: previewMaterial.extractedText || '',
+                  pageCount: previewMaterial.pageCount || 0,
+                  size: previewMaterial.fileSize || 0,
+                }}
+                onClose={() => setPreviewMaterial(null)}
+                onSaveAsNote={() => {
+                  const m = previewMaterial;
+                  setPreviewMaterial(null);
+                  openAsNote({ title: m.title, body: m.extractedText });
+                }}
+              />
+            </Suspense>
           )}
         </div>
       )}

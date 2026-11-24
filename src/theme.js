@@ -396,6 +396,12 @@ function updateMetaThemeColor(dark, themeSetting = 'auto', presetObj = null) {
   const statusMeta = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
   if (statusMeta) statusMeta.setAttribute('content', dark ? 'black-translucent' : 'default');
   document.documentElement.style.backgroundColor = color;
+  document.documentElement.style.setProperty('--boot-bg', color);
+  try {
+    window.BaiNativeTheme?.setBgColor?.(color, Boolean(dark));
+  } catch {
+    // non-native web
+  }
 }
 
 let mediaListenerAttached = false;

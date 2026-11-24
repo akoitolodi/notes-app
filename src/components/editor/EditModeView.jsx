@@ -22,6 +22,7 @@ import {
   Sigma,
   Camera,
   Image as ImageIcon,
+  Paperclip,
   ScanText,
   LayoutTemplate,
   Mic,
@@ -37,6 +38,7 @@ import {
   ZapOff,
 } from 'lucide-react';
 import ImageStrip, { pickImage, compressImage } from '../ImageManager';
+import FileAttachmentStrip from '../FileAttachmentStrip';
 import TemplatePickerSheet from '../TemplatePickerSheet';
 import InsertBlockSheet from './InsertBlockSheet';
 import SmartDetectBar from './SmartDetectBar';
@@ -67,6 +69,10 @@ export default function EditModeView({
   images,
   onAddImage,
   onRemoveImage,
+  files = [],
+  onAddFile = null,
+  onRemoveFile = null,
+  onViewFile = null,
   onAppendText,
   onOcrScan,
   ocrBusy,
@@ -250,6 +256,18 @@ export default function EditModeView({
   const onBodyChangeRef = useRef(onBodyChange);
   const dictSessionRef = useRef(null);
   const cleanAbortRef = useRef(null);
+  const docInputRef = useRef(null);
+
+  const handleDocPick = async e => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !onAddFile) return;
+    try {
+      await onAddFile(file);
+    } catch (err) {
+      toast(err?.message || 'Could not attach document', { type: 'error' });
+    }
+  };
 
   useEffect(() => {
     bodyRef.current = body;
@@ -672,6 +690,12 @@ export default function EditModeView({
           zeroAi={isZeroAi}
         />
 
+        <FileAttachmentStrip
+          files={files}
+          onOpenFile={onViewFile}
+          onRemoveFile={onRemoveFile}
+        />
+
         {!isZeroAi && grammarOpen && (
           <div className="grammar-bar">
             <div className="flex justify-between items-center" style={{ marginBottom: 8 }}>
@@ -1061,6 +1085,27 @@ export default function EditModeView({
         >
           <ImageIcon size={17} />
         </button>
+        {onAddFile && (
+          <>
+            <button
+              type="button"
+              className="fmt-btn"
+              onClick={() => docInputRef.current?.click()}
+              title="Attach PDF, PowerPoint, Word, or text file"
+              aria-label="Attach document"
+            >
+              <Paperclip size={16} />
+              <span>File</span>
+            </button>
+            <input
+              ref={docInputRef}
+              type="file"
+              accept=".pdf,.pptx,.docx,.md,.markdown,.txt,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown"
+              style={{ display: 'none' }}
+              onChange={handleDocPick}
+            />
+          </>
+        )}
         {!isZeroAi && (
           <button
             type="button"

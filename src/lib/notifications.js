@@ -11,12 +11,12 @@ import { Capacitor } from '@capacitor/core';
 import { db, localDateKey } from '../store/db';
 
 let _localNotifMod = null;
-async function getLocalNotifications() {
-  if (!Capacitor.isNativePlatform?.()) return null;
+async function loadLocalNotifications() {
+  if (!Capacitor.isNativePlatform?.()) return { plugin: null };
   if (!_localNotifMod) {
     _localNotifMod = await import('@capacitor/local-notifications').catch(() => null);
   }
-  return _localNotifMod?.LocalNotifications || null;
+  return { plugin: _localNotifMod?.LocalNotifications || null };
 }
 
 export const NOTIF_ENABLED_KEY = 'aicn:notifsEnabled';
@@ -209,7 +209,7 @@ export function buildDeadlineSchedules(items = [], nowMs = Date.now(), { stickyO
 
 export async function requestNotificationPermission() {
   try {
-    const localNotifs = await getLocalNotifications();
+    const { plugin: localNotifs } = await loadLocalNotifications();
     if (localNotifs) {
       const status = await localNotifs.requestPermissions();
       return status?.display === 'granted';
@@ -228,7 +228,7 @@ export async function requestNotificationPermission() {
 /** Reconcile native Android scheduled reminders & sticky notification with current Dexie items. */
 export async function syncDeadlineNotifications() {
   const cfg = getNotificationSettings();
-  const localNotifs = await getLocalNotifications();
+  const { plugin: localNotifs } = await loadLocalNotifications();
   if (!localNotifs) {
     return { scheduledCount: 0, stickyActive: false };
   }
@@ -307,7 +307,7 @@ export async function notifyNewCanvasAnnouncements(newAnnouncements = []) {
       : newAnnouncements.slice(0, 3).map(a => a.title).join(' · ');
 
   try {
-    const localNotifs = await getLocalNotifications();
+    const { plugin: localNotifs } = await loadLocalNotifications();
     if (localNotifs) {
       const perm = await localNotifs.checkPermissions();
       if (perm?.display === 'granted') {

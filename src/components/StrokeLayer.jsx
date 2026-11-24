@@ -288,6 +288,7 @@ export default function StrokeLayer({
   const currentRef = useRef(null);
   const pointerDownRef = useRef(false);
   const scrollModeRef = useRef(null);
+  const moveRafRef = useRef(0);
 
   const [bounds, setBounds] = useState({ top: 0, left: 0, width: 0, height: 0 });
   const [textDraft, setTextDraft] = useState(null); // { clientX, clientY, contentPt, value }
@@ -370,6 +371,23 @@ export default function StrokeLayer({
   useEffect(() => {
     redrawRef.current = redraw;
   }, [redraw]);
+
+  const scheduleRedraw = useCallback(() => {
+    if (moveRafRef.current) return;
+    moveRafRef.current = requestAnimationFrame(() => {
+      moveRafRef.current = 0;
+      redrawRef.current();
+    });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (moveRafRef.current) {
+        cancelAnimationFrame(moveRafRef.current);
+        moveRafRef.current = 0;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -516,7 +534,7 @@ export default function StrokeLayer({
         cur.points.push(p);
       }
     }
-    redraw();
+    scheduleRedraw();
   };
 
   const handleEnd = e => {
@@ -524,6 +542,10 @@ export default function StrokeLayer({
     if (e.touches && e.touches.length >= 1) return;
     scrollModeRef.current = null;
     pointerDownRef.current = false;
+    if (moveRafRef.current) {
+      cancelAnimationFrame(moveRafRef.current);
+      moveRafRef.current = 0;
+    }
 
     const cur = currentRef.current;
     currentRef.current = null;

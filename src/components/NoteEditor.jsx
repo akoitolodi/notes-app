@@ -47,6 +47,8 @@ import {
   saveImageAttachment,
   deleteImageAttachment,
   resolveImageDataUrl,
+  saveFileAttachment,
+  deleteFileAttachment,
   diffAndRemapBlocks,
   getHiddenLockedFolderIds,
   getZeroAiFolderIds,
@@ -56,6 +58,8 @@ import {
 } from '../store/db';
 import StrokeLayer, { renderStrokesToCanvas } from './StrokeLayer';
 import ImageStrip, { pickImage, compressImage } from './ImageManager';
+import FileAttachmentStrip from './FileAttachmentStrip';
+import { detectDocKind } from '../lib/docViewerParser';
 import { summarizeNote, ocrImage, findRelatedNotes } from '../lib/aiFeatures';
 import { instantiateTemplate } from '../lib/templates';
 import { groupNoteLines } from '../lib/codeHighlight';
@@ -78,6 +82,7 @@ const ChatSheet = lazy(() => import('./ChatSheet'));
 const AudioStudySheet = lazy(() => import('./AudioStudySheet'));
 const BaiDropSheet = lazy(() => import('./BaiDropSheet'));
 const FolderPickerSheet = lazy(() => import('./FolderPickerSheet'));
+const DocumentViewerModal = lazy(() => import('./DocumentViewerModal'));
 
 function normalizeDrawings(d) {
   if (Array.isArray(d)) return { refWidth: 0, strokes: d };
@@ -147,6 +152,8 @@ export default function NoteEditor({
   const [audioOpen, setAudioOpen] = useState(false);
   const [baiDropOpen, setBaiDropOpen] = useState(false);
   const [images, setImages] = useState(note?.images || []);
+  const [files, setFiles] = useState(note?.files || []);
+  const [viewingDoc, setViewingDoc] = useState(null);
   const [drawings, setDrawings] = useState(() => normalizeDrawings(note?.drawings));
 
   // Stroke undo/redo history
@@ -429,6 +436,10 @@ export default function NoteEditor({
   useEffect(() => {
     if (!onRegisterBack) return undefined;
     onRegisterBack(() => {
+      if (viewingDoc) {
+        setViewingDoc(null);
+        return true;
+      }
       if (chatOpen) {
         setChatOpen(false);
         return true;
@@ -468,7 +479,7 @@ export default function NoteEditor({
       return false;
     });
     return () => onRegisterBack(null);
-  }, [onRegisterBack, chatOpen, panelOpen, moreOpen, exportOpen, moveOpen, relatedOpen, audioOpen, baiDropOpen, drawMode]);
+  }, [onRegisterBack, viewingDoc, chatOpen, panelOpen, moreOpen, exportOpen, moveOpen, relatedOpen, audioOpen, baiDropOpen, drawMode]);
 
   // Persist current text immediately
   const persistCurrentText = useCallback(async () => {
@@ -870,6 +881,51 @@ export default function NoteEditor({
     [note.id, onNoteChanged]
   );
 
+  const addFileAttachment = useCallback(
+    async rawFile => {
+      if (!rawFile) return;
+      const entry = await saveFileAttachment(note.id, rawFile, {
+        kind: detectDocKind(rawFile.name, rawFile.type),
+        mime: rawFile.type || '',
+        name: rawFile.name || 'document',
+      });
+      setFiles(prev => {
+        const next = [...prev, entry];
+        updateNote(note.id, { files: next }).catch(() => {});
+        return next;
+      });
+      onNoteChanged?.();
+      toast(`Attached "${entry.name}"`, { type: 'success' });
+    },
+    [note.id, onNoteChanged, toast]
+  );
+
+  const removeFileAttachment = useCallback(
+    async fileId => {
+      await deleteFileAttachment(fileId);
+      setFiles(prev => {
+        const next = prev.filter(f => f.id !== fileId);
+        updateNote(note.id, { files: next }).catch(() => {});
+        return next;
+      });
+      onNoteChanged?.();
+    },
+    [note.id, onNoteChanged]
+  );
+
+  const openDocumentMeta = useCallback(fileMeta => {
+    if (!fileMeta) return;
+    setViewingDoc({
+      title: fileMeta.name || 'Document',
+      fileName: fileMeta.name || '',
+      kind: fileMeta.kind || detectDocKind(fileMeta.name, fileMeta.mime),
+      mime: fileMeta.mime || '',
+      attachmentId: fileMeta.id,
+      size: fileMeta.size || 0,
+      pageCount: fileMeta.pageCount || 0,
+    });
+  }, []);
+
   // Drawings with Undo / Redo / Clear All
   const updateDrawings = useCallback(
     async nextDoc => {
@@ -1168,45 +1224,58 @@ export default function NoteEditor({
         )
       : null;
 
+  const viewerOverlay = viewingDoc ? (
+    <Suspense fallback={null}>
+      <DocumentViewerModal doc={viewingDoc} onClose={() => setViewingDoc(null)} />
+    </Suspense>
+  ) : null;
+
   // ---------- Edit Mode ----------
   if (mode === 'edit') {
     return (
-      <EditModeView
-        title={title}
-        onTitleChange={handleTitleChange}
-        subject={subject}
-        onSubjectChange={handleSubjectChange}
-        body={body}
-        onBodyChange={handleBodyChange}
-        textareaRef={textareaRef}
-        images={images}
-        onAddImage={addImage}
-        onRemoveImage={removeImage}
-        onAppendText={appendTextToNote}
-        onOcrScan={handleOcrScan}
-        ocrBusy={ocrBusy}
-        isScanning={isScanning}
-        onCancelScan={() => scanAbortRef.current?.abort()}
-        scanError={scanError}
-        saveState={saveState}
-        canUndo={undoMeta.canUndo}
-        canRedo={undoMeta.canRedo}
-        onUndo={undo}
-        onRedo={redo}
-        onBackToList={handleBackFromEdit}
-        onSaveOnly={handleSaveOnly}
-        onSaveAndExplain={handleSaveAndExplain}
-        onApplyTemplate={handleApplyTemplate}
-        onSaveFlashcards={handleSaveOfflineFlashcards}
-        onMoveToFolder={handleMove}
-        onOpenRelatedNote={async targetId => {
-          const target = await getNote(targetId);
-          if (target) onOpenNote?.(target);
-        }}
-        noteMode={activeNoteMode}
-        currentNoteId={note.id}
-        currentFolderId={folderId}
-      />
+      <>
+        <EditModeView
+          title={title}
+          onTitleChange={handleTitleChange}
+          subject={subject}
+          onSubjectChange={handleSubjectChange}
+          body={body}
+          onBodyChange={handleBodyChange}
+          textareaRef={textareaRef}
+          images={images}
+          onAddImage={addImage}
+          onRemoveImage={removeImage}
+          files={files}
+          onAddFile={addFileAttachment}
+          onRemoveFile={removeFileAttachment}
+          onViewFile={openDocumentMeta}
+          onAppendText={appendTextToNote}
+          onOcrScan={handleOcrScan}
+          ocrBusy={ocrBusy}
+          isScanning={isScanning}
+          onCancelScan={() => scanAbortRef.current?.abort()}
+          scanError={scanError}
+          saveState={saveState}
+          canUndo={undoMeta.canUndo}
+          canRedo={undoMeta.canRedo}
+          onUndo={undo}
+          onRedo={redo}
+          onBackToList={handleBackFromEdit}
+          onSaveOnly={handleSaveOnly}
+          onSaveAndExplain={handleSaveAndExplain}
+          onApplyTemplate={handleApplyTemplate}
+          onSaveFlashcards={handleSaveOfflineFlashcards}
+          onMoveToFolder={handleMove}
+          onOpenRelatedNote={async targetId => {
+            const target = await getNote(targetId);
+            if (target) onOpenNote?.(target);
+          }}
+          noteMode={activeNoteMode}
+          currentNoteId={note.id}
+          currentFolderId={folderId}
+        />
+        {viewerOverlay}
+      </>
     );
   }
 
@@ -1389,6 +1458,10 @@ export default function NoteEditor({
             />
           )}
 
+          {files.length > 0 && (
+            <FileAttachmentStrip files={files} onOpenFile={openDocumentMeta} />
+          )}
+
           {/* Note Lines (groups fenced code blocks & Markdown tables cleanly while preserving per-line AI explanations) */}
           <div className="note-lines">
             {groupNoteLines(lines).map(seg => {
@@ -1460,25 +1533,6 @@ export default function NoteEditor({
                 </button>
               ))}
             </div>
-          )}
-
-          {!isZeroAi && body.trim() && (
-            <button
-              type="button"
-              className="related-trigger"
-              onClick={handleRelated}
-              disabled={relatedBusy}
-            >
-              {relatedBusy ? (
-                <>
-                  <span className="spinner" style={{ width: 14, height: 14 }} /> Finding related notes…
-                </>
-              ) : (
-                <>
-                  <Link2 size={16} /> Find related notes
-                </>
-              )}
-            </button>
           )}
 
           {(drawMode || drawings.strokes.length > 0) && (
@@ -1610,6 +1664,19 @@ export default function NoteEditor({
                 }}
               >
                 <Sparkles size={18} /> Re-scan ({activeModeMeta.actionLabel})
+              </button>
+            )}
+            {!isZeroAi && body.trim() && (
+              <button
+                type="button"
+                className="export-btn"
+                disabled={relatedBusy}
+                onClick={() => {
+                  setMoreOpen(false);
+                  handleRelated();
+                }}
+              >
+                <Link2 size={18} /> {relatedBusy ? 'Finding related notes…' : 'Find related notes'}
               </button>
             )}
             <button type="button" className="export-btn" onClick={handleTogglePin}>
@@ -1856,6 +1923,7 @@ export default function NoteEditor({
         </Suspense>
       )}
 
+      {viewerOverlay}
       {printPortal}
     </div>
   );
