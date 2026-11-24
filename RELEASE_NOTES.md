@@ -1,17 +1,10 @@
-## What's New in Notes by Bai v2.0.4
+## What's New in Notes by Bai v2.0.5
 
-### 1. Major App & Bundle Optimization
-- **~70% Smaller Initial Launch**: Code-split secondary screens, modals, `NotesListScreen`, `NoteEditor`, and KaTeX out of the initial boot path + idle-prefetch after Home loads so opening the app feels crisp and instant.
-- **Asset & Dead-Weight Removal (~1.15 MB pruned)**: Stripped redundant legacy KaTeX `.ttf`/`.woff` fonts (keeping modern `.woff2` only), stubbed unused optional jsPDF dependencies (`html2canvas` & `canvg`), and targeted `es2020`.
-- **Android R8 Shrinking (`versionCode 56`)**: Enabled `minifyEnabled true` + `shrinkResources true` in release Gradle builds with ProGuard keep rules protecting `BaiNativeTts`, `BaiNativeSpeech`, and Capacitor plugins.
-- **Zero-Lag Editor & Lightweight DB Index**: Added shared `getNoteIndexLite()` cache, stopped full `db.notes` scans while typing, stopped triggering full Home refreshes during paragraph autosaves, memoized Markdown/code cards + `250`-entry KaTeX LRU cache, used `useDeferredValue` for global search, deduplicated `plannerItems` reads, and added `content-visibility: auto` on long lists.
-
-### 2. Improved Annotate Colorization
-- **Studio Ink vs. Pastel Highlighter Palettes**: Separate curated palettes for ink (`Pen`, `Arrow`, `Line`, `Text`) and luminous pastel `Highlighter`, each with **remembered tool colors** so switching between Highlighter and Pen keeps your color!
-- **Adjustable Stroke Opacity & Recent Custom Colors**: Pick `25% | 40% | 65%` Highlighter opacity (`50% | 80% | 100%` for ink), save up to 5 recent custom hex colors, and view an active-color indicator pill in the toolbar.
-
-### 3. Custom Note Fonts (`Times New Roman`, `Georgia`, `Garamond`, etc.)
-- **8 Zero-Download Note Typefaces**: Choose **Clean Sans**, **Times New Roman**, **Georgia**, **Garamond**, **Palatino**, **Friendly Rounded**, **Courier Typewriter**, or **Code Mono** inside **Themes & Palettes Studio** or **Settings → Appearance**.
-- **Applied Everywhere + PDF Support**: Updates Editor, Clean Visual Edit Mode, Read Mode, Theme Live Preview, and Note PDF exports cleanly while keeping code blocks monospace.
+### 1. True iOS 26 "Liquid Glass" Surface System (60fps-Safe)
+- **Three Instant Surface Finishes**: Switch anytime between **Frosted Glass** (default), **Aurora Glass** (luminous translucent mesh + crystal cards), and **Studio** (classic `v2.0.4` solid matte) inside **Themes & Palettes Studio** or **Settings → Appearance**.
+- **Detached Floating Capsule Headers**: Top navigation bars lift off the page into detached translucent liquid glass capsules (`< Back`, screen title, brand badge, and grouped action pill bars) so notes and folders visibly glide and blur underneath.
+- **Glossy Specular Cards & Recessed Glass Controls**: Cards use diagonal specular sheen gradients and double-bevel top-left catch-lights over subtle multi-orb ambient wallpaper, paired with recessed segmented glass tracks, active specular lenses, refractive pill FABs, and floating editor/annotate docks.
+- **Engineered for Smooth 60fps on Android**: Zero live `backdrop-filter` blur on scrolling lists or segmented controls — live GPU blur stays strictly bounded to small floating chrome capsules, docks, and modals.
+- **Full Theme, Dark, OLED & Reduce-Motion Parity**: Works across Auto, Light, Dark, OLED True-Black, and all 12 curated presets & accent palettes, and respects **Reduce animations** by removing all live `backdrop-filter` blur cleanly.
 
 > **Update Note**: Install `Notes-by-Bai.apk` directly over your current version (do not uninstall).
