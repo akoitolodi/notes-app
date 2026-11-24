@@ -67,6 +67,23 @@ import ImportSheet from './ImportSheet';
 import PinLockSheet from './PinLockSheet';
 import { useDialog } from './ui/DialogProvider';
 
+function getStudioGreeting() {
+  const hr = new Date().getHours();
+  if (hr < 12) return 'Good morning';
+  if (hr < 18) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function getFolderBadgeClass(folder, vaultUnlocked) {
+  if (folder.locked && !vaultUnlocked) return 'tone-slate';
+  if (folder.isSystemVault || folder.locked) return 'tone-slate';
+  const mode = folder.mode || 'study';
+  if (mode === 'code') return 'tone-emerald';
+  if (mode === 'journal') return 'tone-rose';
+  if (mode === 'explore') return 'tone-violet';
+  return 'tone-indigo';
+}
+
 function highlightMatch(text, query) {
   const s = String(text || '');
   const q = String(query || '').trim();
@@ -438,43 +455,50 @@ export default function FoldersScreen({
 
   return (
     <div className="screen list-pad-bottom">
-      <header className="navbar">
-        <span className="navbar-title" style={{ opacity: 0 }}>Folders</span>
+      <header className="navbar navbar-home">
+        <span className="home-brand-eyebrow">Notes by Bai</span>
         <div className="flex items-center gap-6">
           <button
             type="button"
-            className={`navbar-btn${vaultUnlocked ? ' navbar-btn-active' : ''}`}
+            className={`navbar-btn navbar-glass-btn${vaultUnlocked ? ' navbar-btn-active' : ''}`}
             aria-label={vaultUnlocked ? 'Hide & lock Hidden Vault' : 'Unlock Hidden Vault'}
             title={vaultUnlocked ? 'Hide & lock Hidden Vault' : 'Unlock Hidden Vault (Passwords & Keys)'}
             onClick={handleToggleHiddenVault}
           >
-            {vaultUnlocked ? <Unlock size={18} /> : <Lock size={18} />}
+            {vaultUnlocked ? <Unlock size={17} /> : <Lock size={17} />}
           </button>
           <button
-            className={`navbar-btn${searching ? ' navbar-btn-active' : ''}`}
+            className={`navbar-btn navbar-glass-btn${searching ? ' navbar-btn-active' : ''}`}
             aria-label="Search all notes"
             onClick={toggleSearch}
           >
-            <Search size={19} />
+            <Search size={18} />
           </button>
-          <button className="navbar-btn" aria-label="Settings" onClick={onOpenSettings}>
-            <Settings size={19} />
+          <button className="navbar-btn navbar-glass-btn" aria-label="Settings" onClick={onOpenSettings}>
+            <Settings size={18} />
           </button>
-          <button className="navbar-btn" aria-label="New folder" onClick={handleNewFolder}>
-            <FolderPlus size={20} />
+          <button className="navbar-btn navbar-glass-btn" aria-label="New folder" onClick={handleNewFolder}>
+            <FolderPlus size={18} />
           </button>
         </div>
       </header>
 
       <div
-        className="large-title"
+        className="home-hero-header"
         onContextMenu={e => {
           e.preventDefault();
           handleToggleHiddenVault();
         }}
         title="Tap the lock icon in the top bar (or right-click/long-press here) to open Hidden Vault"
       >
-        Folders
+        <div className="home-hero-eyebrow">{getStudioGreeting()}</div>
+        <div className="home-hero-row">
+          <h1 className="home-hero-title">Folders</h1>
+          <span className="home-hero-sub">
+            {totalNotes} {totalNotes === 1 ? 'note' : 'notes'} · {folders.length}{' '}
+            {folders.length === 1 ? 'subject' : 'subjects'}
+          </span>
+        </div>
       </div>
 
       {searching && (
@@ -633,6 +657,59 @@ export default function FoldersScreen({
         </div>
       )}
 
+      {/* Compact 3-Chip Quick Stat Bento Strip */}
+      <div className="home-stat-strip" role="region" aria-label="Quick Collections">
+        <button
+          type="button"
+          className="home-stat-card"
+          onClick={() => onOpenFolder({ id: '__all__', name: 'All Notes', isSmart: true })}
+        >
+          <div className="home-stat-top">
+            <span className="home-stat-icon tone-indigo">
+              <FileText size={15} />
+            </span>
+            <span className="home-stat-val">{totalNotes}</span>
+          </div>
+          <div className="home-stat-label">All Notes</div>
+        </button>
+
+        <button
+          type="button"
+          className="home-stat-card"
+          onClick={() => onOpenFolder({ id: '__pinned__', name: 'Pinned', isSmart: true })}
+        >
+          <div className="home-stat-top">
+            <span className="home-stat-icon tone-amber">
+              <Pin size={15} />
+            </span>
+            <span className="home-stat-val">{pinnedCount}</span>
+          </div>
+          <div className="home-stat-label">Pinned</div>
+        </button>
+
+        <button
+          type="button"
+          className={`home-stat-card${dueCardsCount > 0 ? ' has-due' : ''}`}
+          onClick={onOpenReview}
+        >
+          <div className="home-stat-top">
+            <span className="home-stat-icon tone-violet">
+              <Brain size={15} />
+            </span>
+            {reviewStats.streak > 0 ? (
+              <span className="streak-pill" style={{ padding: '2px 6px', fontSize: 10.5 }}>
+                <Flame size={10} /> {reviewStats.streak}d
+              </span>
+            ) : (
+              <span className="home-stat-val">{dueCardsCount > 0 ? dueCardsCount : totalCardsCount}</span>
+            )}
+          </div>
+          <div className="home-stat-label">
+            {dueCardsCount > 0 ? `${dueCardsCount} Due Review` : 'Daily Review'}
+          </div>
+        </button>
+      </div>
+
       {/* Dedicated Live Announcements Command Card */}
       {onOpenAnnouncements && (
         <section className={`home-ann-panel${annPreview.unread > 0 ? ' has-unread' : ''}`}>
@@ -727,74 +804,6 @@ export default function FoldersScreen({
         </section>
       )}
 
-      {/* Daily Spaced Repetition Review Card */}
-      <button
-        type="button"
-        className={`review-banner${dueCardsCount > 0 ? ' has-due' : ''}`}
-        onClick={onOpenReview}
-      >
-        <span className="review-banner-icon">
-          <Brain size={20} />
-        </span>
-        <div className="review-banner-body">
-          <div className="review-banner-title">Daily Review</div>
-          <div className="review-banner-sub">
-            {totalCardsCount === 0
-              ? 'Spaced repetition · Tap Explain on a note'
-              : dueCardsCount > 0
-                ? `${dueCardsCount} card${dueCardsCount === 1 ? '' : 's'} due across your subjects`
-                : `All caught up · ${totalCardsCount} card${totalCardsCount === 1 ? '' : 's'} scheduled`}
-          </div>
-        </div>
-        <div className="review-banner-right">
-          {reviewStats.streak > 0 && (
-            <span className="streak-pill">
-              <Flame size={13} /> {reviewStats.streak}d
-            </span>
-          )}
-          <ChevronRight size={17} className="list-item-chevron" />
-        </div>
-      </button>
-
-      {/* Smart Collections */}
-      <div className="list-group">
-        <button
-          type="button"
-          className="list-item"
-          onClick={() => onOpenFolder({ id: '__all__', name: 'All Notes', isSmart: true })}
-        >
-          <span className="list-item-icon">
-            <FileText size={17} />
-          </span>
-          <div className="list-item-body">
-            <div className="list-item-title">All Notes</div>
-          </div>
-          <span className="list-item-meta">
-            <span>{totalNotes}</span>
-            <ChevronRight size={17} className="list-item-chevron" />
-          </span>
-        </button>
-
-        {pinnedCount > 0 && (
-          <button
-            type="button"
-            className="list-item"
-            onClick={() => onOpenFolder({ id: '__pinned__', name: 'Pinned', isSmart: true })}
-          >
-            <span className="list-item-icon">
-              <Pin size={17} />
-            </span>
-            <div className="list-item-body">
-              <div className="list-item-title">Pinned</div>
-            </div>
-            <span className="list-item-meta">
-              <span>{pinnedCount}</span>
-              <ChevronRight size={17} className="list-item-chevron" />
-            </span>
-          </button>
-        )}
-      </div>
-
       {/* Quick Creation & Import Row */}
       <div className="quick-action-row">
         <button
@@ -802,82 +811,72 @@ export default function FoldersScreen({
           className="quick-action-btn"
           onClick={() => setImportOpen(true)}
         >
-          <FileUp size={16} />
-          <span>Import PDF / DOCX / Page</span>
+          <span className="quick-action-icon tone-indigo">
+            <FileUp size={15} />
+          </span>
+          <span>Import PDF / Doc</span>
         </button>
         <button
           type="button"
           className="quick-action-btn"
           onClick={() => setTemplatesOpen(true)}
         >
-          <LayoutTemplate size={16} />
+          <span className="quick-action-icon tone-amber">
+            <LayoutTemplate size={15} />
+          </span>
           <span>Templates</span>
         </button>
       </div>
 
-      {/* Course Dashboard + School Planner & Canvas LMS + Learn Coding + Dev & IT Toolkit */}
-      <div className="list-group" style={{ marginTop: 8, marginBottom: 8 }}>
-        <button type="button" className="list-item" onClick={onOpenCourses}>
-          <span className="list-item-icon">
-            <BookOpen size={17} />
-          </span>
-          <div className="list-item-body">
-            <div className="list-item-title">
-              <span>Course Dashboard</span>
-              {courseCount > 0 && <span className="mode-badge mode-code">{courseCount}</span>}
-            </div>
-            <div className="list-item-subtitle">
-              Canvas-style courses, uploaded modules &amp; Course AI
-            </div>
-          </div>
-          <ChevronRight size={17} className="list-item-chevron" />
-        </button>
-        <button type="button" className="list-item" onClick={onOpenPlanner}>
-          <span className="list-item-icon">
-            <Calendar size={17} />
-          </span>
-          <div className="list-item-body">
-            <div className="list-item-title">
-              <span>School Planner &amp; Canvas</span>
-              {plannerDueCount > 0 && (
-                <span className="mode-badge mode-study">{plannerDueCount} due</span>
-              )}
-            </div>
-            <div className="list-item-subtitle">
-              Calendar, Canvas sync, timetable, GWA &amp; heatmap
-            </div>
-          </div>
-          <ChevronRight size={17} className="list-item-chevron" />
-        </button>
-        {showCoding && (
-          <button type="button" className="list-item" onClick={onOpenCoding}>
-            <span className="list-item-icon">
-              <Code2 size={17} />
+      {/* 2x2 Bento Workspace Hub Grid */}
+      <div className="home-bento-grid" role="region" aria-label="Student Workspace Hubs">
+        <button type="button" className="bento-tile bento-indigo" onClick={onOpenCourses}>
+          <div className="bento-tile-top">
+            <span className="bento-tile-icon">
+              <BookOpen size={18} />
             </span>
-            <div className="list-item-body">
-              <div className="list-item-title">
-                <span>Learn Coding</span>
-                <span className="mode-badge mode-code">18 Langs</span>
-              </div>
-              <div className="list-item-subtitle">
-                Live guides, challenges, visualizer &amp; runner
-              </div>
+            {courseCount > 0 && <span className="bento-tile-pill">{courseCount}</span>}
+          </div>
+          <div className="bento-tile-title">Courses</div>
+          <div className="bento-tile-sub">Modules &amp; Course AI</div>
+        </button>
+
+        <button type="button" className="bento-tile bento-rose" onClick={onOpenPlanner}>
+          <div className="bento-tile-top">
+            <span className="bento-tile-icon">
+              <Calendar size={18} />
+            </span>
+            {plannerDueCount > 0 && (
+              <span className="bento-tile-pill is-alert">{plannerDueCount} due</span>
+            )}
+          </div>
+          <div className="bento-tile-title">Planner &amp; Canvas</div>
+          <div className="bento-tile-sub">Calendar, sync &amp; GWA</div>
+        </button>
+
+        {showCoding && (
+          <button type="button" className="bento-tile bento-emerald" onClick={onOpenCoding}>
+            <div className="bento-tile-top">
+              <span className="bento-tile-icon">
+                <Code2 size={18} />
+              </span>
+              <span className="bento-tile-pill">18 Langs</span>
             </div>
-            <ChevronRight size={17} className="list-item-chevron" />
+            <div className="bento-tile-title">Learn Coding</div>
+            <div className="bento-tile-sub">Guides, runner &amp; algo</div>
           </button>
         )}
+
         {showToolkit && (
-          <button type="button" className="list-item" onClick={onOpenToolkit}>
-            <span className="list-item-icon">
-              <Wrench size={17} />
-            </span>
-            <div className="list-item-body">
-              <div className="list-item-title">Dev &amp; IT Toolkit</div>
-              <div className="list-item-subtitle">
-                Math grapher, bug log &amp; offline IT tools
-              </div>
+          <button type="button" className="bento-tile bento-violet" onClick={onOpenToolkit}>
+            <div className="bento-tile-top">
+              <span className="bento-tile-icon">
+                <Wrench size={18} />
+              </span>
+              <span className="bento-tile-pill">Offline</span>
             </div>
-            <ChevronRight size={17} className="list-item-chevron" />
+            <div className="bento-tile-title">IT Toolkit</div>
+            <div className="bento-tile-sub">Grapher, bugs &amp; tools</div>
           </button>
         )}
       </div>
@@ -984,7 +983,7 @@ export default function FoldersScreen({
 
       {/* Subject Folders */}
       <div className="section-heading">Subjects</div>
-      <div className="list-group">
+      <div className="list-group folder-cards-group">
         {folders.length === 0 ? (
           <div className="list-item list-item-static">
             <span className="list-item-subtitle">No folders yet — tap the + icon to add one.</span>
@@ -1017,8 +1016,8 @@ export default function FoldersScreen({
                 setMenuFolder(folder);
               }}
             >
-              <span className="list-item-icon">
-                {folder.locked && !vaultUnlocked ? <Lock size={16} /> : <Folder size={17} />}
+              <span className={`list-item-icon folder-icon-badge ${getFolderBadgeClass(folder, vaultUnlocked)}`}>
+                {folder.locked && !vaultUnlocked ? <Lock size={15} /> : <Folder size={16} />}
               </span>
               <div className="list-item-body">
                 <div className="list-item-title">
@@ -1241,15 +1240,16 @@ export default function FoldersScreen({
         />
       )}
 
-      {/* Quick New Note FAB */}
+      {/* Quick New Note Pill FAB */}
       <button
         type="button"
-        className="fab"
+        className="fab fab-pill"
         onClick={handleQuickNewNote}
         aria-label="New note"
         title="New note"
       >
-        <SquarePen size={22} />
+        <SquarePen size={18} />
+        <span>New Note</span>
       </button>
     </div>
   );

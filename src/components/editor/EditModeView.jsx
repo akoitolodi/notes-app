@@ -432,7 +432,7 @@ export default function EditModeView({
           ) : isZeroAi ? (
             <button
               type="button"
-              className="btn btn-primary btn-sm"
+              className="btn btn-primary btn-sm btn-pill"
               onClick={onSaveOnly}
               title="Save locally without AI (Ctrl+S)"
             >
@@ -442,7 +442,7 @@ export default function EditModeView({
             <>
               <button
                 type="button"
-                className="btn btn-secondary btn-sm"
+                className="btn btn-secondary btn-sm btn-pill"
                 onClick={onSaveOnly}
                 title="Save without running AI (Ctrl+S)"
               >
@@ -450,7 +450,7 @@ export default function EditModeView({
               </button>
               <button
                 type="button"
-                className="btn btn-primary btn-sm"
+                className="btn btn-primary btn-sm btn-pill"
                 onClick={onSaveAndExplain}
                 title={`Save and ${modeMeta.actionLabel.toLowerCase()} with AI (Ctrl+Shift+S)`}
               >
@@ -590,10 +590,12 @@ export default function EditModeView({
                 <span className="spinner" style={{ width: 11, height: 11 }} /> Saving…
               </>
             ) : saveState === 'dirty' ? (
-              'Unsaved edits'
+              <>
+                <span className="save-live-dot is-dirty" /> Unsaved edits
+              </>
             ) : (
               <>
-                <Check size={13} /> Saved offline
+                <span className="save-live-dot" /> Saved offline
               </>
             )}
           </span>

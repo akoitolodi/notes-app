@@ -196,7 +196,7 @@ function NoteRow({
       </div>
 
       <div
-        className={`list-item${active ? ' selected' : ''}`}
+        className={`list-item note-card-item${note.pinned ? ' is-pinned' : ''}${active ? ' selected' : ''}`}
         role="button"
         tabIndex={0}
         style={{
@@ -513,7 +513,7 @@ export default function NotesListScreen({
         </div>
       )}
 
-      <div className="list-group">
+      <div className="list-group note-cards-list">
         {notes.length === 0 ? (
           <div className="list-item list-item-static">
             <span className="list-item-subtitle">
@@ -652,12 +652,13 @@ export default function NotesListScreen({
 
       <button
         type="button"
-        className="fab"
+        className="fab fab-pill"
         onClick={handleNewNote}
         aria-label="New note"
         title="New note"
       >
-        <SquarePen size={22} />
+        <SquarePen size={18} />
+        <span>New Note</span>
       </button>
     </div>
   );

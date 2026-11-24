@@ -1,4 +1,4 @@
-# Notes by Bai (v2.0.0)
+# Notes by Bai (v2.0.1)
 
 An offline-first Android, desktop & web notes app styled like iOS Notes — built for class study, Canvas LMS & school planning, personal journaling, curiosity deep-dives, and coding — enhanced with a fast AI layer, Study Commute audio, answerable & printable bond-paper exams, Learn Coding Studio + Algorithm Visualizer, 2D Math Grapher, SM-2 spaced repetition, and Zero-Cloud BaiDrop sync.
 

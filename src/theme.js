@@ -16,45 +16,61 @@ export const PAPER_STYLES = [
 ];
 
 export const ACCENTS = {
+  indigo: {
+    c: '#6366f1',
+    p: '#4f46e5',
+    text: '#ffffff',
+    inkLight: '#4338ca',
+    tint: 'rgba(99, 102, 241, 0.14)',
+    label: 'Indigo',
+  },
   yellow: {
-    c: '#ffcc00',
-    p: '#e6b800',
-    text: '#000000',
-    inkLight: '#8f6300',
-    tint: 'rgba(255, 204, 0, 0.2)',
-    label: 'Yellow',
+    c: '#f59e0b',
+    p: '#d97706',
+    text: '#14151a',
+    inkLight: '#b45309',
+    tint: 'rgba(245, 158, 11, 0.16)',
+    label: 'Amber',
   },
   blue: {
-    c: '#0a84ff',
-    p: '#0060df',
+    c: '#2563eb',
+    p: '#1d4ed8',
     text: '#ffffff',
-    inkLight: '#0060df',
-    tint: 'rgba(10, 132, 255, 0.16)',
+    inkLight: '#1d4ed8',
+    tint: 'rgba(37, 99, 235, 0.14)',
     label: 'Blue',
   },
-  green: {
-    c: '#28b44c',
-    p: '#1e8c3a',
+  teal: {
+    c: '#14b8a6',
+    p: '#0d9488',
     text: '#ffffff',
-    inkLight: '#1b7a34',
-    tint: 'rgba(40, 180, 76, 0.16)',
-    label: 'Green',
+    inkLight: '#0f766e',
+    tint: 'rgba(20, 184, 166, 0.15)',
+    label: 'Teal',
+  },
+  green: {
+    c: '#10b981',
+    p: '#059669',
+    text: '#ffffff',
+    inkLight: '#047857',
+    tint: 'rgba(16, 185, 129, 0.15)',
+    label: 'Emerald',
   },
   pink: {
-    c: '#ff375f',
-    p: '#d11e42',
+    c: '#f43f5e',
+    p: '#e11d48',
     text: '#ffffff',
-    inkLight: '#c81c40',
-    tint: 'rgba(255, 55, 95, 0.16)',
-    label: 'Pink',
+    inkLight: '#be123c',
+    tint: 'rgba(244, 63, 94, 0.15)',
+    label: 'Rose',
   },
   purple: {
-    c: '#af52de',
-    p: '#8e38bd',
+    c: '#8b5cf6',
+    p: '#7c3aed',
     text: '#ffffff',
-    inkLight: '#822db2',
-    tint: 'rgba(175, 82, 222, 0.16)',
-    label: 'Purple',
+    inkLight: '#6d28d9',
+    tint: 'rgba(139, 92, 246, 0.15)',
+    label: 'Violet',
   },
 };
 
@@ -62,12 +78,12 @@ export function getSettings() {
   try {
     return {
       theme: localStorage.getItem(THEME_KEY) || 'auto',
-      accent: localStorage.getItem(ACCENT_KEY) || 'yellow',
+      accent: localStorage.getItem(ACCENT_KEY) || 'indigo',
       size: localStorage.getItem(SIZE_KEY) || 'medium',
       paper: localStorage.getItem(PAPER_KEY) || 'blank',
     };
   } catch {
-    return { theme: 'auto', accent: 'yellow', size: 'medium', paper: 'blank' };
+    return { theme: 'auto', accent: 'indigo', size: 'medium', paper: 'blank' };
   }
 }
 
@@ -79,9 +95,9 @@ export function isDarkTheme() {
   return Boolean(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
 }
 
-function updateMetaThemeColor(dark) {
+function updateMetaThemeColor(dark, themeSetting = 'auto') {
   if (typeof document === 'undefined') return;
-  const color = dark ? '#000000' : '#f2f2f7';
+  const color = dark ? (themeSetting === 'oled' ? '#000000' : '#090a0e') : '#f4f2ec';
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', color);
   const statusMeta = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
@@ -111,7 +127,7 @@ export function applySettings() {
   else root.removeAttribute('data-paper');
 
   const dark = isDarkTheme();
-  const a = ACCENTS[accent] || ACCENTS.yellow;
+  const a = ACCENTS[accent] || ACCENTS.indigo;
 
   root.style.setProperty('--accent', a.c);
   root.style.setProperty('--accent-pressed', a.p);
@@ -123,7 +139,7 @@ export function applySettings() {
   root.classList.remove('fs-small', 'fs-large');
   if (size !== 'medium') root.classList.add('fs-' + size);
 
-  updateMetaThemeColor(dark);
+  updateMetaThemeColor(dark, theme);
 
   // Keep auto theme synchronized if system appearance flips while app is open
   if (!mediaListenerAttached && typeof window !== 'undefined' && window.matchMedia) {
