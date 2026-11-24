@@ -33,15 +33,16 @@ function createMockStorage() {
 }
 
 describe('iOS 26 Liquid Glass Surface System (Studio | Frosted Glass | Aurora Glass)', () => {
-  it('exposes 3 valid Surface Finish modes and defaults to Frosted Glass', () => {
+  it('exposes 3 valid Surface Finish modes and defaults to Studio', () => {
     expect(SURFACE_STYLES.map(([id]) => id)).toEqual([
       'studio',
       'glass-frosted',
       'glass-aurora',
     ]);
-    expect(normalizeSurface(null)).toBe('glass-frosted');
-    expect(normalizeSurface('unknown')).toBe('glass-frosted');
+    expect(normalizeSurface(null)).toBe('studio');
+    expect(normalizeSurface('unknown')).toBe('studio');
     expect(normalizeSurface('studio')).toBe('studio');
+    expect(normalizeSurface('glass-frosted')).toBe('glass-frosted');
     expect(normalizeSurface('glass-aurora')).toBe('glass-aurora');
   });
 
@@ -64,7 +65,11 @@ describe('iOS 26 Liquid Glass Surface System (Studio | Frosted Glass | Aurora Gl
       matchMedia: () => ({ matches: false, addEventListener: () => {} }),
     };
 
-    expect(getSettings().surface).toBe('glass-frosted');
+    expect(getSettings().surface).toBe('studio');
+    applySettings();
+    expect(dataset.surface).toBe('studio');
+
+    localStorage.setItem(SURFACE_KEY, 'glass-frosted');
     applySettings();
     expect(dataset.surface).toBe('glass-frosted');
 
@@ -80,7 +85,18 @@ describe('iOS 26 Liquid Glass Surface System (Studio | Frosted Glass | Aurora Gl
 
 describe('Pass 2 True Liquid Glass CSS Architecture (60fps-Safe)', () => {
   const glassStart = stylesCss.indexOf('iOS 26 "Liquid Glass" Surface System');
+  const studioCss = glassStart >= 0 ? stylesCss.slice(0, glassStart) : stylesCss;
   const glassCss = glassStart >= 0 ? stylesCss.slice(glassStart) : '';
+
+  it('keeps default Studio chrome zero-blur for fastest launch and 60fps scrolling', () => {
+    const baseNavbar = studioCss.match(/\.navbar\s*\{[\s\S]*?\}/);
+    expect(baseNavbar).not.toBeNull();
+    expect(baseNavbar[0]).not.toContain('backdrop-filter');
+
+    const studioToolbar = studioCss.match(/\.format-toolbar\s*\{\s*\n\s*background:\s*var\(--card-bg\);[\s\S]*?\}/);
+    expect(studioToolbar).not.toBeNull();
+    expect(studioToolbar[0]).not.toContain('backdrop-filter');
+  });
 
   it('uses detached transparent .navbar with floating capsule headers', () => {
     expect(glassStart).toBeGreaterThan(-1);

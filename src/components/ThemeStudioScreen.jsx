@@ -91,20 +91,20 @@ export default function ThemeStudioScreen({ onBack }) {
     persistAndApply({
       theme: 'auto',
       themePreset: 'default',
-      surface: 'glass-frosted',
+      surface: 'studio',
       accent: 'indigo',
       size: 'medium',
       paper: 'blank',
       font: 'system',
     });
-    toast('Reset to default Liquid Glass theme');
+    toast('Reset to default Studio theme');
   };
 
   const lightPresets = THEME_PRESETS.filter(p => p.mode === 'light');
   const darkPresets = THEME_PRESETS.filter(p => p.mode === 'dark');
   const activeAccentMeta = ACCENTS[accent] || ACCENTS.indigo;
   const activeFontMeta = getFontPreset(font);
-  const activeSurfaceLabel = SURFACE_STYLES.find(([id]) => id === surface)?.[1] || 'Frosted Glass';
+  const activeSurfaceLabel = SURFACE_STYLES.find(([id]) => id === surface)?.[1] || 'Studio';
 
   return (
     <div className="screen list-pad-bottom">
@@ -156,9 +156,9 @@ export default function ThemeStudioScreen({ onBack }) {
           </div>
         </div>
 
-        {/* Surface Finish (Studio vs iOS Liquid Glass) */}
+        {/* Surface Finish (Studio default vs opt-in iOS Liquid Glass) */}
         <div className="settings-section-title">Surface Finish</div>
-        <div className="view-switcher view-switcher-inline" style={{ marginBottom: 14 }}>
+        <div className="view-switcher view-switcher-inline" style={{ marginBottom: 8 }}>
           {SURFACE_STYLES.map(([id, label]) => (
             <button
               key={id}
@@ -169,6 +169,9 @@ export default function ThemeStudioScreen({ onBack }) {
               {label}
             </button>
           ))}
+        </div>
+        <div className="settings-tip" style={{ marginBottom: 14 }}>
+          Studio is the fastest zero-blur default. Turn on Frosted Glass or Aurora Glass anytime for iOS Liquid Glass.
         </div>
 
         {/* Quick Base Mode */}

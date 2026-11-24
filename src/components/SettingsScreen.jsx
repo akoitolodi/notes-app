@@ -537,6 +537,9 @@ export default function SettingsScreen({ onBack, onDataImported, onOpenThemes })
           value={surface}
           onChange={v => setPref(SURFACE_KEY, v, setSurface)}
         />
+        <div className="settings-tip">
+          Studio is default for fastest launch &amp; 60fps scrolling. Turn on Frosted Glass or Aurora Glass for iOS Liquid Glass.
+        </div>
 
         <div className="settings-label mt-16">Note paper style</div>
         <Segmented
@@ -1384,7 +1387,7 @@ export default function SettingsScreen({ onBack, onDataImported, onOpenThemes })
           • Press <strong>Ctrl+S</strong> to save immediately or <strong>Ctrl+Shift+S</strong> to save & explain.
         </div>
         <div className="settings-tip" style={{ marginTop: 10, opacity: 0.7 }}>
-          Notes by Bai v2.0.4
+          Notes by Bai v2.0.6
         </div>
       </div>
 

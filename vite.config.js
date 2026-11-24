@@ -50,7 +50,6 @@ export default defineConfig({
           react: ['react', 'react-dom'],
           dexie: ['dexie'],
           katex: ['katex'],
-          icons: ['lucide-react'],
         },
       },
     },

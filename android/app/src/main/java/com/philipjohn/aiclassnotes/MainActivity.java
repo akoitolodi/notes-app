@@ -32,6 +32,8 @@ public class MainActivity extends BridgeActivity {
     private static final int REQ_RECORD_AUDIO = 4201;
     private TextToSpeech tts;
     private volatile boolean ttsReady = false;
+    private volatile boolean ttsInitializing = false;
+    private Runnable pendingTtsAction = null;
     private SpeechRecognizer speechRecognizer;
     private volatile boolean speechListening = false;
     private String speechLang = "";
@@ -84,6 +86,10 @@ public class MainActivity extends BridgeActivity {
             // ignore speech shutdown error
         }
         try {
+            pendingTtsAction = null;
+            pendingTtsUtteranceId = null;
+            ttsInitializing = false;
+            ttsReady = false;
             if (tts != null) {
                 tts.stop();
                 tts.shutdown();
@@ -95,11 +101,29 @@ public class MainActivity extends BridgeActivity {
         super.onDestroy();
     }
 
+    private String pendingTtsUtteranceId = null;
+
     private void initNativeTts() {
         try {
             if (getBridge() != null && getBridge().getWebView() != null) {
                 getBridge().getWebView().addJavascriptInterface(new AndroidTtsBridge(), "BaiNativeTts");
             }
+        } catch (Exception ignored) {
+            ttsReady = false;
+        }
+    }
+
+    private void ensureTtsInitialized() {
+        if (ttsReady && tts != null) {
+            Runnable action = pendingTtsAction;
+            pendingTtsAction = null;
+            pendingTtsUtteranceId = null;
+            if (action != null) mainHandler.post(action);
+            return;
+        }
+        if (ttsInitializing) return;
+        ttsInitializing = true;
+        try {
             tts = new TextToSpeech(getApplicationContext(), status -> {
                 if (status == TextToSpeech.SUCCESS && tts != null) {
                     int langRes = tts.setLanguage(Locale.US);
@@ -127,10 +151,28 @@ public class MainActivity extends BridgeActivity {
                         }
                     });
                     ttsReady = true;
+                    ttsInitializing = false;
+                    Runnable action = pendingTtsAction;
+                    pendingTtsAction = null;
+                    pendingTtsUtteranceId = null;
+                    if (action != null) mainHandler.post(action);
+                } else {
+                    ttsReady = false;
+                    ttsInitializing = false;
+                    tts = null;
+                    String failedId = pendingTtsUtteranceId;
+                    pendingTtsAction = null;
+                    pendingTtsUtteranceId = null;
+                    if (failedId != null) notifyTtsJs(failedId, "error");
                 }
             });
         } catch (Exception ignored) {
             ttsReady = false;
+            ttsInitializing = false;
+            String failedId = pendingTtsUtteranceId;
+            pendingTtsAction = null;
+            pendingTtsUtteranceId = null;
+            if (failedId != null) notifyTtsJs(failedId, "error");
         }
     }
 
@@ -156,19 +198,22 @@ public class MainActivity extends BridgeActivity {
 
         @JavascriptInterface
         public boolean isAvailable() {
-            return tts != null;
+            return true;
         }
 
         @JavascriptInterface
         public void speak(final String text, final float rate, final float pitch, final String utteranceId) {
             mainHandler.post(() -> {
-                if (tts == null || text == null || text.trim().isEmpty()) {
+                if (text == null || text.trim().isEmpty()) {
                     notifyTtsJs(utteranceId, "error");
                     return;
                 }
                 Runnable doSpeak = () -> {
                     try {
-                        if (tts == null) return;
+                        if (tts == null) {
+                            notifyTtsJs(utteranceId, "error");
+                            return;
+                        }
                         tts.setSpeechRate(Math.max(0.5f, Math.min(2.0f, rate)));
                         tts.setPitch(Math.max(0.6f, Math.min(1.6f, pitch)));
                         Bundle params = new Bundle();
@@ -181,11 +226,12 @@ public class MainActivity extends BridgeActivity {
                         notifyTtsJs(utteranceId, "error");
                     }
                 };
-                if (ttsReady) {
+                if (tts != null && ttsReady) {
                     doSpeak.run();
                 } else {
-                    // Wait briefly if TTS engine is still binding on cold start
-                    mainHandler.postDelayed(doSpeak, 450);
+                    pendingTtsAction = doSpeak;
+                    pendingTtsUtteranceId = utteranceId;
+                    ensureTtsInitialized();
                 }
             });
         }
@@ -193,6 +239,8 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public void stop() {
             mainHandler.post(() -> {
+                pendingTtsAction = null;
+                pendingTtsUtteranceId = null;
                 try {
                     if (tts != null) tts.stop();
                 } catch (Exception ignored) {

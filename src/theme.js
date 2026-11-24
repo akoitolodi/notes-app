@@ -21,7 +21,7 @@ export const SURFACE_STYLES = [
 
 export function normalizeSurface(val) {
   if (val === 'studio' || val === 'glass-frosted' || val === 'glass-aurora') return val;
-  return 'glass-frosted';
+  return 'studio';
 }
 
 export const FONT_PRESETS = [

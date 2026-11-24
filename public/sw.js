@@ -5,7 +5,7 @@
  * - Never caches /api/* backend calls.
  * - Network-first for navigations; stale-while-revalidate for same-origin static assets.
  */
-const CACHE = 'ai-class-notes:v42';
+const CACHE = 'ai-class-notes:v43';
 const SHELL = ['./', './index.html', './manifest.json', './icons/icon-192.png'];
 
 self.addEventListener('install', event => {

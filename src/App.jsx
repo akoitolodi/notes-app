@@ -9,10 +9,29 @@ import { Capacitor } from '@capacitor/core';
 import { FileText } from 'lucide-react';
 import FoldersScreen from './components/FoldersScreen';
 import { db, ensureSeeded, purgeOldTrash, noteHasContent } from './store/db';
-import { autoSyncCanvasIfStale } from './lib/canvasSync';
-import { syncDeadlineNotifications } from './lib/notifications';
 import { lockVault, subscribeVault } from './lib/vault';
-import { REDUCE_MOTION_KEY, applySettings } from './theme';
+
+const HOME_CACHE_KEY = 'aicn:homeCache:v1';
+const LAST_TRASH_PURGE_KEY = 'aicn:lastTrashPurge';
+const TRASH_PURGE_INTERVAL_MS = 12 * 3600 * 1000;
+
+function hasCanvasConfigured() {
+  try {
+    return Boolean(
+      (localStorage.getItem('aicn:canvasIcsUrl') || '').trim() ||
+        (localStorage.getItem('aicn:canvasRssUrls') || '').trim() ||
+        (localStorage.getItem('aicn:canvasToken') || '').trim()
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function runBackgroundCanvasSyncIfConfigured() {
+  if (!hasCanvasConfigured()) return null;
+  const { autoSyncCanvasIfStale } = await import('./lib/canvasSync');
+  return autoSyncCanvasIfStale();
+}
 
 const NotesListScreen = lazy(() => import('./components/NotesListScreen'));
 const NoteEditor = lazy(() => import('./components/NoteEditor'));
@@ -41,14 +60,11 @@ function ScreenLoading({ label = 'Loading…' }) {
 }
 
 export default function App() {
-  const [ready, setReady] = useState(false);
-  const [splashPhase, setSplashPhase] = useState(() => {
+  const [ready, setReady] = useState(() => {
     try {
-      const reduced = localStorage.getItem(REDUCE_MOTION_KEY) === 'true';
-      const alreadySplashed = sessionStorage.getItem('aicn:splashed') === '1';
-      return reduced || alreadySplashed ? 'gone' : 'visible';
+      return Boolean(localStorage.getItem(HOME_CACHE_KEY));
     } catch {
-      return 'gone';
+      return false;
     }
   });
   const [screen, setScreen] = useState('folders'); // folders | list | editor | study | exam | trash | settings
@@ -95,49 +111,76 @@ export default function App() {
     };
   }, []);
 
-  // Seed default folders & purge 30-day-old trash on boot, then quietly auto-sync Canvas if configured
+  // Fast cold start: seed folders if needed, defer trash purge, notifications & Canvas sync past startup window
   useEffect(() => {
-    applySettings();
-    Promise.all([ensureSeeded(), purgeOldTrash()]).finally(() => {
-      setReady(true);
-      syncDeadlineNotifications().catch(() => {});
-      autoSyncCanvasIfStale()
+    let alive = true;
+    ensureSeeded()
+      .then(mutated => {
+        if (!alive) return;
+        setReady(true);
+        if (mutated) bumpSidebar();
+      })
+      .catch(() => {
+        if (alive) setReady(true);
+      });
+
+    const tNotif = setTimeout(() => {
+      if (!alive || !Capacitor.isNativePlatform?.()) return;
+      import('./lib/notifications')
+        .then(m => m.syncDeadlineNotifications?.())
+        .catch(() => {});
+    }, 1800);
+
+    const tPurge = setTimeout(() => {
+      if (!alive) return;
+      try {
+        const last = Number(localStorage.getItem(LAST_TRASH_PURGE_KEY) || 0) || 0;
+        if (Date.now() - last < TRASH_PURGE_INTERVAL_MS) return;
+        localStorage.setItem(LAST_TRASH_PURGE_KEY, String(Date.now()));
+      } catch {
+        // ignore storage errors
+      }
+      purgeOldTrash().catch(() => {});
+    }, 2500);
+
+    const tCanvas = setTimeout(() => {
+      if (!alive) return;
+      runBackgroundCanvasSyncIfConfigured()
         .then(res => {
-          if (res?.ran && (res.added > 0 || res.updated > 0)) bumpSidebar();
+          if (alive && res?.ran && (res.added > 0 || res.updated > 0)) bumpSidebar();
         })
         .catch(() => {});
-    });
+    }, 3000);
+
+    return () => {
+      alive = false;
+      clearTimeout(tNotif);
+      clearTimeout(tPurge);
+      clearTimeout(tCanvas);
+    };
   }, [bumpSidebar]);
 
-  // Brief purposeful launch splash (<= 0.8s total, never blocks interaction once leaving)
-  useEffect(() => {
-    if (!ready || splashPhase !== 'visible') return;
-    try {
-      sessionStorage.setItem('aicn:splashed', '1');
-    } catch {
-      // ignore
-    }
-    const tLeave = setTimeout(() => setSplashPhase('leaving'), 420);
-    const tGone = setTimeout(() => setSplashPhase('gone'), 760);
-    return () => {
-      clearTimeout(tLeave);
-      clearTimeout(tGone);
-    };
-  }, [ready, splashPhase]);
-
-  // Idle-prefetch list & editor chunks once Home is interactive so tapping a note feels instant
+  // Idle-prefetch list & editor chunks well after first interactive paint
   useEffect(() => {
     if (!ready || typeof window === 'undefined') return undefined;
+    let idleId = null;
     const warm = () => {
       import('./components/NotesListScreen').catch(() => {});
       import('./components/NoteEditor').catch(() => {});
     };
-    if (typeof window.requestIdleCallback === 'function') {
-      const id = window.requestIdleCallback(warm, { timeout: 2200 });
-      return () => window.cancelIdleCallback?.(id);
-    }
-    const t = setTimeout(warm, 900);
-    return () => clearTimeout(t);
+    const t = setTimeout(() => {
+      if (typeof window.requestIdleCallback === 'function') {
+        idleId = window.requestIdleCallback(warm, { timeout: 4000 });
+      } else {
+        warm();
+      }
+    }, 2600);
+    return () => {
+      clearTimeout(t);
+      if (idleId !== null && typeof window.cancelIdleCallback === 'function') {
+        window.cancelIdleCallback(idleId);
+      }
+    };
   }, [ready]);
 
   // Android "Share to Notes by Bai" Intent Receiver (PDF, PPTX, DOCX, image, or text/link)
@@ -399,7 +442,7 @@ export default function App() {
       if (document.visibilityState === 'hidden') {
         lockVault();
       } else if (document.visibilityState === 'visible') {
-        autoSyncCanvasIfStale()
+        runBackgroundCanvasSyncIfConfigured()
           .then(res => {
             if (res?.ran && (res.added > 0 || res.updated > 0)) bumpSidebar();
           })
@@ -413,7 +456,7 @@ export default function App() {
         if (!isActive) {
           lockVault();
         } else {
-          autoSyncCanvasIfStale()
+          runBackgroundCanvasSyncIfConfigured()
             .then(res => {
               if (res?.ran && (res.added > 0 || res.updated > 0)) bumpSidebar();
             })
@@ -713,23 +756,6 @@ export default function App() {
             onClose={() => setSharedImport(null)}
           />
         </Suspense>
-      )}
-      {splashPhase !== 'gone' && (
-        <div
-          className={`app-splash-overlay${splashPhase === 'leaving' ? ' is-leaving' : ''}`}
-          aria-hidden="true"
-        >
-          <div className="app-splash-card">
-            <div className="app-splash-logo">
-              <img src="./icons/icon-192.png" alt="" width={46} height={46} />
-            </div>
-            <div className="app-splash-title">Notes by Bai</div>
-            <div className="app-splash-sub">Study workspace</div>
-            <div className="app-splash-bar">
-              <span />
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );

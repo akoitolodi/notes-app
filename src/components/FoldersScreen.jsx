@@ -46,7 +46,6 @@ import {
   searchNotes,
   createNote,
 } from '../store/db';
-import { instantiateTemplate } from '../lib/templates';
 import { getReviewStats } from '../lib/spacedRepetition';
 import { NOTE_MODE_LIST, getModeMeta } from '../lib/noteModes';
 import { isDevToolkitEnabled, isLearnCodingEnabled } from '../lib/aiConfig';
@@ -62,12 +61,44 @@ import {
   markAllAnnouncementsRead,
   snoozeInAppBanner,
 } from '../lib/notifications';
-import { markPastTasksDone, autoSyncCanvasIfStale } from '../lib/canvasSync';
 import { useDialog } from './ui/DialogProvider';
 
 const TemplatePickerSheet = lazy(() => import('./TemplatePickerSheet'));
 const ImportSheet = lazy(() => import('./ImportSheet'));
 const PinLockSheet = lazy(() => import('./PinLockSheet'));
+
+const HOME_CACHE_KEY = 'aicn:homeCache:v1';
+const EMPTY_SUMMARY = {
+  folders: [],
+  vaultFolders: [],
+  hiddenVaultCount: 0,
+  totalNotes: 0,
+  pinnedCount: 0,
+  trashCount: 0,
+  dueCardsCount: 0,
+  totalCardsCount: 0,
+  hasLockedFolders: false,
+  tags: [],
+};
+
+function readHomeCache() {
+  try {
+    const raw = localStorage.getItem(HOME_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeHomeCache(payload) {
+  try {
+    localStorage.setItem(HOME_CACHE_KEY, JSON.stringify(payload));
+  } catch {
+    // ignore storage quota errors
+  }
+}
 
 function getStudioGreeting() {
   const hr = new Date().getHours();
@@ -117,26 +148,20 @@ export default function FoldersScreen({
   onOpenThemes,
 }) {
   const { confirm, prompt, toast } = useDialog();
-  const [summary, setSummary] = useState({
-    folders: [],
-    vaultFolders: [],
-    hiddenVaultCount: 0,
-    totalNotes: 0,
-    pinnedCount: 0,
-    trashCount: 0,
-    dueCardsCount: 0,
-    totalCardsCount: 0,
-    hasLockedFolders: false,
-    tags: [],
-  });
+  const [initialCache] = useState(() => readHomeCache());
+  const [summary, setSummary] = useState(() =>
+    initialCache?.summary ? { ...EMPTY_SUMMARY, ...initialCache.summary, vaultFolders: [] } : EMPTY_SUMMARY
+  );
   const [reviewStats, setReviewStats] = useState(() => getReviewStats());
   const [vaultUnlocked, setVaultUnlocked] = useState(() => isVaultUnlocked());
   const [pinRequest, setPinRequest] = useState(null); // { mode: 'unlock'|'setup', onDone }
   const [showToolkit, setShowToolkit] = useState(() => isDevToolkitEnabled());
   const [showCoding, setShowCoding] = useState(() => isLearnCodingEnabled());
-  const [plannerDueCount, setPlannerDueCount] = useState(0);
-  const [courseCount, setCourseCount] = useState(0);
-  const [annPreview, setAnnPreview] = useState({ total: 0, unread: 0, pinned: 0, latest: [] });
+  const [plannerDueCount, setPlannerDueCount] = useState(() => Number(initialCache?.plannerDueCount || 0));
+  const [courseCount, setCourseCount] = useState(() => Number(initialCache?.courseCount || 0));
+  const [annPreview, setAnnPreview] = useState(() =>
+    initialCache?.annPreview || { total: 0, unread: 0, pinned: 0, latest: [] }
+  );
   const [syncingAnn, setSyncingAnn] = useState(false);
   const [alertSummary, setAlertSummary] = useState(null);
   const [searching, setSearching] = useState(false);
@@ -145,15 +170,6 @@ export default function FoldersScreen({
   const [results, setResults] = useState([]);
   const [folderMap, setFolderMap] = useState({});
   const [menuFolder, setMenuFolder] = useState(null);
-  const [homeStagger] = useState(() => {
-    try {
-      if (sessionStorage.getItem('aicn:homeAnimated') === '1') return false;
-      sessionStorage.setItem('aicn:homeAnimated', '1');
-      return true;
-    } catch {
-      return false;
-    }
-  });
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
 
@@ -179,20 +195,15 @@ export default function FoldersScreen({
   useEffect(() => () => cancelLongPress(), []);
 
   const refresh = useCallback(async () => {
-    setSummary(await getHomeSummary());
-    setReviewStats(getReviewStats());
-    setShowToolkit(isDevToolkitEnabled());
-    setShowCoding(isLearnCodingEnabled());
-    setVaultUnlocked(isVaultUnlocked());
     try {
-      const [pItems, crs] = await Promise.all([
-        db.plannerItems.toArray(),
+      const [homeSum, pItems, crs] = await Promise.all([
+        getHomeSummary(),
+        db.plannerItems.toArray().catch(() => []),
         db.courses.toArray().catch(() => []),
       ]);
       const alerts = await getInAppAlertSummary(pItems);
-      setPlannerDueCount(pItems.filter(it => !it.done && it.type !== 'announcement').length);
-      setCourseCount(crs.length);
-      setAlertSummary(alerts);
+      const nextDueCount = pItems.filter(it => !it.done && it.type !== 'announcement').length;
+      const nextCourseCount = crs.length;
 
       const anns = pItems
         .filter(it => it.type === 'announcement')
@@ -202,13 +213,36 @@ export default function FoldersScreen({
           if (a._read !== b._read) return a._read ? 1 : -1;
           return (b.dueAt || b.createdAt || 0) - (a.dueAt || a.createdAt || 0);
         });
-      setAnnPreview({
+      const nextAnnPreview = {
         total: anns.length,
         unread: anns.filter(a => !a._read).length,
         pinned: anns.filter(a => a.pinned).length,
         latest: anns.slice(0, 2),
+      };
+
+      setSummary(homeSum);
+      setReviewStats(getReviewStats());
+      setShowToolkit(isDevToolkitEnabled());
+      setShowCoding(isLearnCodingEnabled());
+      setVaultUnlocked(isVaultUnlocked());
+      setPlannerDueCount(nextDueCount);
+      setCourseCount(nextCourseCount);
+      setAlertSummary(alerts);
+      setAnnPreview(nextAnnPreview);
+
+      writeHomeCache({
+        summary: { ...homeSum, vaultFolders: [] },
+        plannerDueCount: nextDueCount,
+        courseCount: nextCourseCount,
+        annPreview: nextAnnPreview,
       });
     } catch {
+      const homeSum = await getHomeSummary().catch(() => EMPTY_SUMMARY);
+      setSummary(homeSum);
+      setReviewStats(getReviewStats());
+      setShowToolkit(isDevToolkitEnabled());
+      setShowCoding(isLearnCodingEnabled());
+      setVaultUnlocked(isVaultUnlocked());
       setPlannerDueCount(0);
       setCourseCount(0);
       setAlertSummary(null);
@@ -353,6 +387,7 @@ export default function FoldersScreen({
 
   const handlePickTemplate = async templateId => {
     setTemplatesOpen(false);
+    const { instantiateTemplate } = await import('../lib/templates');
     const createFromTpl = async targetFolder => {
       const { title, body } = instantiateTemplate(templateId);
       const created = await createNote(
@@ -644,6 +679,7 @@ export default function FoldersScreen({
                     type="button"
                     className="row-action-chip"
                     onClick={async () => {
+                      const { markPastTasksDone } = await import('../lib/canvasSync');
                       const n = await markPastTasksDone();
                       refresh();
                       toast(`Marked ${n} past/submitted item${n === 1 ? '' : 's'} as Done!`, { type: 'success' });
@@ -763,6 +799,7 @@ export default function FoldersScreen({
                 onClick={async () => {
                   setSyncingAnn(true);
                   try {
+                    const { autoSyncCanvasIfStale } = await import('../lib/canvasSync');
                     const res = await autoSyncCanvasIfStale({ force: true });
                     await refresh();
                     if (res?.reason === 'unconfigured') {
@@ -853,8 +890,8 @@ export default function FoldersScreen({
       </div>
 
       {/* 2x2 Bento Workspace Hub Grid */}
-      <div className={`home-bento-grid${homeStagger ? ' is-entering' : ''}`} role="region" aria-label="Student Workspace Hubs">
-        <button type="button" className="bento-tile bento-indigo" style={{ '--stagger-idx': 0 }} onClick={onOpenCourses}>
+      <div className="home-bento-grid" role="region" aria-label="Student Workspace Hubs">
+        <button type="button" className="bento-tile bento-indigo" onClick={onOpenCourses}>
           <div className="bento-tile-top">
             <span className="bento-tile-icon">
               <BookOpen size={18} />
@@ -865,7 +902,7 @@ export default function FoldersScreen({
           <div className="bento-tile-sub">Modules &amp; Course AI</div>
         </button>
 
-        <button type="button" className="bento-tile bento-rose" style={{ '--stagger-idx': 1 }} onClick={onOpenPlanner}>
+        <button type="button" className="bento-tile bento-rose" onClick={onOpenPlanner}>
           <div className="bento-tile-top">
             <span className="bento-tile-icon">
               <Calendar size={18} />
@@ -879,7 +916,7 @@ export default function FoldersScreen({
         </button>
 
         {showCoding && (
-          <button type="button" className="bento-tile bento-emerald" style={{ '--stagger-idx': 2 }} onClick={onOpenCoding}>
+          <button type="button" className="bento-tile bento-emerald" onClick={onOpenCoding}>
             <div className="bento-tile-top">
               <span className="bento-tile-icon">
                 <Code2 size={18} />
@@ -892,7 +929,7 @@ export default function FoldersScreen({
         )}
 
         {showToolkit && (
-          <button type="button" className="bento-tile bento-violet" style={{ '--stagger-idx': 3 }} onClick={onOpenToolkit}>
+          <button type="button" className="bento-tile bento-violet" onClick={onOpenToolkit}>
             <div className="bento-tile-top">
               <span className="bento-tile-icon">
                 <Wrench size={18} />

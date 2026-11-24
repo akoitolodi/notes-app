@@ -17,11 +17,60 @@
       (function () {
         try {
           var t = localStorage.getItem('aicn:theme') || 'auto';
-          var dark = t === 'dark' || (t === 'auto' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
-          if (t !== 'auto') document.documentElement.dataset.theme = t;
-          document.documentElement.style.backgroundColor = dark ? '#000000' : '#f2f2f7';
+          var preset = localStorage.getItem('aicn:themePreset') || 'default';
+          var surfRaw = localStorage.getItem('aicn:surface');
+          var surface =
+            surfRaw === 'glass-frosted' || surfRaw === 'glass-aurora' || surfRaw === 'studio'
+              ? surfRaw
+              : 'studio';
+          var d = document.documentElement;
+          d.dataset.surface = surface;
+          var oled =
+            t === 'oled' ||
+            preset === 'amoled-gold' ||
+            (preset === 'default' && t === 'oled');
+          var darkPresets = {
+            'midnight-ocean': '#071120',
+            'catppuccin-mocha': '#181825',
+            'tokyo-night': '#131522',
+            'forest-night': '#08120c',
+            'dracula-plum': '#15111f',
+          };
+          var lightPresets = {
+            'warm-ivory': '#f4f2ec',
+            'matcha-sage': '#ecf3ec',
+            'blush-quartz': '#f8eef1',
+            'sky-paper': '#ecf3fb',
+            'paper-mint': '#ebf5f2',
+          };
+          var dark =
+            oled ||
+            Boolean(darkPresets[preset]) ||
+            (!lightPresets[preset] &&
+              (t === 'dark' ||
+                (t === 'auto' &&
+                  window.matchMedia &&
+                  window.matchMedia('(prefers-color-scheme: dark)').matches)));
+          if (darkPresets[preset]) {
+            d.dataset.theme = 'dark';
+            d.dataset.themePreset = preset;
+          } else if (lightPresets[preset]) {
+            d.dataset.theme = 'light';
+            d.dataset.themePreset = preset;
+          } else if (oled) {
+            d.dataset.theme = 'dark';
+            d.dataset.oled = 'true';
+          } else if (t !== 'auto') {
+            d.dataset.theme = t;
+          }
+          var bg = oled
+            ? '#000000'
+            : darkPresets[preset] ||
+              lightPresets[preset] ||
+              (dark ? '#090a0e' : '#f4f2ec');
+          d.style.backgroundColor = bg;
           var m = document.querySelector('meta[name="theme-color"]');
-          if (m) m.setAttribute('content', dark ? '#000000' : '#f2f2f7');
+          if (m) m.setAttribute('content', bg);
         } catch (e) {}
       })();
     </script>

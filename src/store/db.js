@@ -362,7 +362,7 @@ export async function ensureSeeded() {
         createdAt: Date.now(),
       },
     ]);
-    return;
+    return true;
   }
 
   const all = await db.folders.toArray();
@@ -377,13 +377,17 @@ export async function ensureSeeded() {
       isSystemVault: true,
       createdAt: Date.now(),
     });
-  } else if (!existingVault.isSystemVault || existingVault.mode !== 'vault' || !existingVault.locked) {
+    return true;
+  }
+  if (!existingVault.isSystemVault || existingVault.mode !== 'vault' || !existingVault.locked) {
     await db.folders.update(existingVault.id, {
       mode: 'vault',
       locked: true,
       isSystemVault: true,
     });
+    return true;
   }
+  return false;
 }
 
 /** All folders with note counts (trashed notes excluded; locked folders hidden when vault is locked). */
@@ -496,16 +500,18 @@ export async function getHomeSummary() {
       }
     }
 
-    const seen = new Set();
     const combined = `${note.title || ''} ${note.body || ''}`;
-    combined.replace(/#([A-Za-z0-9_-]+)/g, (m, t) => {
-      const lower = t.toLowerCase();
-      if (!seen.has(lower)) {
-        seen.add(lower);
-        tagCounts.set(t, (tagCounts.get(t) || 0) + 1);
-      }
-      return m;
-    });
+    if (combined.includes('#')) {
+      const seen = new Set();
+      combined.replace(/#([A-Za-z0-9_-]+)/g, (m, t) => {
+        const lower = t.toLowerCase();
+        if (!seen.has(lower)) {
+          seen.add(lower);
+          tagCounts.set(t, (tagCounts.get(t) || 0) + 1);
+        }
+        return m;
+      });
+    }
   });
 
   const allWithCounts = folders

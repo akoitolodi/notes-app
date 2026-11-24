@@ -8,8 +8,16 @@
  *   Overdue tasks, and unread Canvas Announcements.
  */
 import { Capacitor } from '@capacitor/core';
-import { LocalNotifications } from '@capacitor/local-notifications';
 import { db, localDateKey } from '../store/db';
+
+let _localNotifMod = null;
+async function getLocalNotifications() {
+  if (!Capacitor.isNativePlatform?.()) return null;
+  if (!_localNotifMod) {
+    _localNotifMod = await import('@capacitor/local-notifications').catch(() => null);
+  }
+  return _localNotifMod?.LocalNotifications || null;
+}
 
 export const NOTIF_ENABLED_KEY = 'aicn:notifsEnabled';
 export const NOTIF_STICKY_KEY = 'aicn:notifsSticky';
@@ -201,8 +209,9 @@ export function buildDeadlineSchedules(items = [], nowMs = Date.now(), { stickyO
 
 export async function requestNotificationPermission() {
   try {
-    if (Capacitor.isNativePlatform?.() && LocalNotifications) {
-      const status = await LocalNotifications.requestPermissions();
+    const localNotifs = await getLocalNotifications();
+    if (localNotifs) {
+      const status = await localNotifs.requestPermissions();
       return status?.display === 'granted';
     }
     if (typeof Notification !== 'undefined') {
@@ -219,12 +228,13 @@ export async function requestNotificationPermission() {
 /** Reconcile native Android scheduled reminders & sticky notification with current Dexie items. */
 export async function syncDeadlineNotifications() {
   const cfg = getNotificationSettings();
-  if (!Capacitor.isNativePlatform?.() || !LocalNotifications) {
+  const localNotifs = await getLocalNotifications();
+  if (!localNotifs) {
     return { scheduledCount: 0, stickyActive: false };
   }
 
   try {
-    const perm = await LocalNotifications.checkPermissions();
+    const perm = await localNotifs.checkPermissions();
     if (perm?.display !== 'granted') {
       return { scheduledCount: 0, stickyActive: false, needsPermission: true };
     }
@@ -238,7 +248,7 @@ export async function syncDeadlineNotifications() {
     }
     const toCancel = [...new Set([...prevIds, STICKY_NOTIF_ID])].map(id => ({ id: Number(id) })).filter(x => x.id);
     if (toCancel.length > 0) {
-      await LocalNotifications.cancel({ notifications: toCancel }).catch(() => {});
+      await localNotifs.cancel({ notifications: toCancel }).catch(() => {});
     }
 
     if (!cfg.enabled) {
@@ -271,7 +281,7 @@ export async function syncDeadlineNotifications() {
     }
 
     if (payload.length > 0) {
-      await LocalNotifications.schedule({ notifications: payload });
+      await localNotifs.schedule({ notifications: payload });
     }
     localStorage.setItem(SCHEDULED_IDS_KEY, JSON.stringify(payload.map(p => p.id)));
     return { scheduledCount: scheduled.length, stickyActive: Boolean(sticky) };
@@ -297,10 +307,11 @@ export async function notifyNewCanvasAnnouncements(newAnnouncements = []) {
       : newAnnouncements.slice(0, 3).map(a => a.title).join(' · ');
 
   try {
-    if (Capacitor.isNativePlatform?.() && LocalNotifications) {
-      const perm = await LocalNotifications.checkPermissions();
+    const localNotifs = await getLocalNotifications();
+    if (localNotifs) {
+      const perm = await localNotifs.checkPermissions();
       if (perm?.display === 'granted') {
-        await LocalNotifications.schedule({
+        await localNotifs.schedule({
           notifications: [
             {
               id: stableNotifId(`ann:${Date.now()}:${first.title}`),
