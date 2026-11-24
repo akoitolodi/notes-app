@@ -13,10 +13,13 @@ import {
   SIZE_KEY,
   PAPER_KEY,
   FONT_KEY,
+  SURFACE_KEY,
   PAPER_STYLES,
+  SURFACE_STYLES,
   THEME_PRESETS,
   FONT_PRESETS,
   getFontPreset,
+  normalizeSurface,
   ACCENTS,
   getSettings,
   applySettings,
@@ -29,6 +32,7 @@ export default function ThemeStudioScreen({ onBack }) {
 
   const [theme, setTheme] = useState(initial.theme);
   const [preset, setPreset] = useState(initial.themePreset || 'default');
+  const [surface, setSurface] = useState(() => normalizeSurface(initial.surface));
   const [accent, setAccent] = useState(initial.accent);
   const [size, setSize] = useState(initial.size);
   const [paper, setPaper] = useState(initial.paper);
@@ -43,6 +47,11 @@ export default function ThemeStudioScreen({ onBack }) {
       if (patch.themePreset !== undefined) {
         localStorage.setItem(THEME_PRESET_KEY, patch.themePreset);
         setPreset(patch.themePreset);
+      }
+      if (patch.surface !== undefined) {
+        const cleanSurface = normalizeSurface(patch.surface);
+        localStorage.setItem(SURFACE_KEY, cleanSurface);
+        setSurface(cleanSurface);
       }
       if (patch.accent !== undefined) {
         localStorage.setItem(ACCENT_KEY, patch.accent);
@@ -82,18 +91,20 @@ export default function ThemeStudioScreen({ onBack }) {
     persistAndApply({
       theme: 'auto',
       themePreset: 'default',
+      surface: 'glass-frosted',
       accent: 'indigo',
       size: 'medium',
       paper: 'blank',
       font: 'system',
     });
-    toast('Reset to default Studio theme');
+    toast('Reset to default Liquid Glass theme');
   };
 
   const lightPresets = THEME_PRESETS.filter(p => p.mode === 'light');
   const darkPresets = THEME_PRESETS.filter(p => p.mode === 'dark');
   const activeAccentMeta = ACCENTS[accent] || ACCENTS.indigo;
   const activeFontMeta = getFontPreset(font);
+  const activeSurfaceLabel = SURFACE_STYLES.find(([id]) => id === surface)?.[1] || 'Frosted Glass';
 
   return (
     <div className="screen list-pad-bottom">
@@ -139,10 +150,25 @@ export default function ThemeStudioScreen({ onBack }) {
             </div>
             <div className="theme-preview-actions">
               <span className="theme-preview-cta">Explain Note</span>
-              <span className="theme-preview-chip">#exam-prep</span>
+              <span className="theme-preview-chip">{activeSurfaceLabel}</span>
               <span className="theme-preview-chip">{activeFontMeta.name}</span>
             </div>
           </div>
+        </div>
+
+        {/* Surface Finish (Studio vs iOS Liquid Glass) */}
+        <div className="settings-section-title">Surface Finish</div>
+        <div className="view-switcher view-switcher-inline" style={{ marginBottom: 14 }}>
+          {SURFACE_STYLES.map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              className={`view-switch-btn${surface === id ? ' active' : ''}`}
+              onClick={() => persistAndApply({ surface: id })}
+            >
+              {label}
+            </button>
+          ))}
         </div>
 
         {/* Quick Base Mode */}

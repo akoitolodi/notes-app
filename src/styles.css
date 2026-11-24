@@ -7516,3 +7516,293 @@ a:hover {
   color: var(--text-secondary);
 }
 
+/* ============================================================
+   iOS 26 "Liquid Glass" Surface System (glass-frosted | glass-aurora)
+   Zero-blur specular scrolling cards + real backdrop-filter on
+   floating chrome for locked 60fps performance on Android WebView.
+   ============================================================ */
+
+:root[data-surface='glass-frosted'] {
+  --glass-base: #eef1f7;
+  --glass-wallpaper:
+    radial-gradient(85% 60% at 12% 8%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 65%),
+    radial-gradient(75% 55% at 88% 18%, color-mix(in srgb, var(--accent-2, var(--accent)) 11%, transparent), transparent 62%),
+    radial-gradient(80% 55% at 50% 92%, rgba(148, 163, 184, 0.16), transparent 68%);
+  --glass-card-bg: rgba(255, 255, 255, 0.72);
+  --glass-card-subtle: rgba(255, 255, 255, 0.56);
+  --glass-chrome-bg: rgba(255, 255, 255, 0.64);
+  --glass-paper-bg: rgba(252, 252, 254, 0.88);
+  --glass-border: rgba(255, 255, 255, 0.82);
+  --glass-border-subtle: rgba(15, 23, 42, 0.08);
+  --glass-pill-active: rgba(255, 255, 255, 0.92);
+  --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.92), inset 0 0 0 0.5px rgba(255, 255, 255, 0.48);
+  --glass-shadow: var(--glass-rim), 0 6px 22px rgba(15, 23, 42, 0.065), 0 1px 3px rgba(15, 23, 42, 0.04);
+}
+
+:root[data-surface='glass-aurora'] {
+  --glass-base: #e7ebf8;
+  --glass-wallpaper:
+    radial-gradient(90% 65% at 8% 6%, color-mix(in srgb, var(--accent) 30%, transparent), transparent 60%),
+    radial-gradient(85% 60% at 92% 14%, color-mix(in srgb, var(--accent-2, var(--accent)) 28%, transparent), transparent 58%),
+    radial-gradient(80% 60% at 18% 84%, rgba(56, 189, 248, 0.22), transparent 62%),
+    radial-gradient(75% 55% at 86% 88%, rgba(244, 114, 182, 0.19), transparent 60%);
+  --glass-card-bg: rgba(255, 255, 255, 0.58);
+  --glass-card-subtle: rgba(255, 255, 255, 0.44);
+  --glass-chrome-bg: rgba(255, 255, 255, 0.52);
+  --glass-paper-bg: rgba(255, 255, 255, 0.84);
+  --glass-border: rgba(255, 255, 255, 0.86);
+  --glass-border-subtle: rgba(15, 23, 42, 0.07);
+  --glass-pill-active: rgba(255, 255, 255, 0.94);
+  --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.96), inset 0 -1px 0 rgba(255, 255, 255, 0.28);
+  --glass-shadow: var(--glass-rim), 0 10px 30px rgba(15, 23, 42, 0.09), 0 2px 6px rgba(15, 23, 42, 0.04);
+}
+
+/* Dark Glass Overrides (explicit Dark / OLED) */
+:root[data-theme='dark'][data-surface='glass-frosted'] {
+  --glass-base: #070910;
+  --glass-wallpaper:
+    radial-gradient(85% 60% at 14% 10%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 64%),
+    radial-gradient(75% 55% at 88% 18%, color-mix(in srgb, var(--accent-2, var(--accent)) 13%, transparent), transparent 62%),
+    radial-gradient(75% 55% at 50% 92%, rgba(99, 102, 241, 0.09), transparent 66%);
+  --glass-card-bg: rgba(23, 27, 41, 0.72);
+  --glass-card-subtle: rgba(30, 35, 54, 0.56);
+  --glass-chrome-bg: rgba(18, 22, 34, 0.68);
+  --glass-paper-bg: rgba(12, 15, 23, 0.9);
+  --glass-border: rgba(255, 255, 255, 0.14);
+  --glass-border-subtle: rgba(255, 255, 255, 0.09);
+  --glass-pill-active: rgba(255, 255, 255, 0.18);
+  --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+  --glass-shadow: var(--glass-rim), 0 10px 28px rgba(0, 0, 0, 0.36);
+}
+
+:root[data-theme='dark'][data-surface='glass-aurora'] {
+  --glass-base: #050711;
+  --glass-wallpaper:
+    radial-gradient(90% 65% at 10% 8%, color-mix(in srgb, var(--accent) 32%, transparent), transparent 60%),
+    radial-gradient(85% 60% at 90% 16%, color-mix(in srgb, var(--accent-2, var(--accent)) 28%, transparent), transparent 58%),
+    radial-gradient(75% 55% at 20% 86%, rgba(56, 189, 248, 0.18), transparent 62%),
+    radial-gradient(70% 55% at 85% 88%, rgba(244, 114, 182, 0.15), transparent 60%);
+  --glass-card-bg: rgba(20, 24, 38, 0.56);
+  --glass-card-subtle: rgba(28, 34, 52, 0.44);
+  --glass-chrome-bg: rgba(15, 19, 30, 0.56);
+  --glass-paper-bg: rgba(11, 14, 22, 0.86);
+  --glass-border: rgba(255, 255, 255, 0.18);
+  --glass-border-subtle: rgba(255, 255, 255, 0.11);
+  --glass-pill-active: rgba(255, 255, 255, 0.22);
+  --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.24), inset 0 -1px 0 rgba(255, 255, 255, 0.06);
+  --glass-shadow: var(--glass-rim), 0 12px 34px rgba(0, 0, 0, 0.44);
+}
+
+/* Auto-Dark System Preference Mirror for Glass */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light'])[data-surface='glass-frosted'] {
+    --glass-base: #070910;
+    --glass-wallpaper:
+      radial-gradient(85% 60% at 14% 10%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 64%),
+      radial-gradient(75% 55% at 88% 18%, color-mix(in srgb, var(--accent-2, var(--accent)) 13%, transparent), transparent 62%),
+      radial-gradient(75% 55% at 50% 92%, rgba(99, 102, 241, 0.09), transparent 66%);
+    --glass-card-bg: rgba(23, 27, 41, 0.72);
+    --glass-card-subtle: rgba(30, 35, 54, 0.56);
+    --glass-chrome-bg: rgba(18, 22, 34, 0.68);
+    --glass-paper-bg: rgba(12, 15, 23, 0.9);
+    --glass-border: rgba(255, 255, 255, 0.14);
+    --glass-border-subtle: rgba(255, 255, 255, 0.09);
+    --glass-pill-active: rgba(255, 255, 255, 0.18);
+    --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 0 0 0.5px rgba(255, 255, 255, 0.08);
+    --glass-shadow: var(--glass-rim), 0 10px 28px rgba(0, 0, 0, 0.36);
+  }
+  :root:not([data-theme='light'])[data-surface='glass-aurora'] {
+    --glass-base: #050711;
+    --glass-wallpaper:
+      radial-gradient(90% 65% at 10% 8%, color-mix(in srgb, var(--accent) 32%, transparent), transparent 60%),
+      radial-gradient(85% 60% at 90% 16%, color-mix(in srgb, var(--accent-2, var(--accent)) 28%, transparent), transparent 58%),
+      radial-gradient(75% 55% at 20% 86%, rgba(56, 189, 248, 0.18), transparent 62%),
+      radial-gradient(70% 55% at 85% 88%, rgba(244, 114, 182, 0.15), transparent 60%);
+    --glass-card-bg: rgba(20, 24, 38, 0.56);
+    --glass-card-subtle: rgba(28, 34, 52, 0.44);
+    --glass-chrome-bg: rgba(15, 19, 30, 0.56);
+    --glass-paper-bg: rgba(11, 14, 22, 0.86);
+    --glass-border: rgba(255, 255, 255, 0.18);
+    --glass-border-subtle: rgba(255, 255, 255, 0.11);
+    --glass-pill-active: rgba(255, 255, 255, 0.22);
+    --glass-rim: inset 0 1px 0 rgba(255, 255, 255, 0.24), inset 0 -1px 0 rgba(255, 255, 255, 0.06);
+    --glass-shadow: var(--glass-rim), 0 12px 34px rgba(0, 0, 0, 0.44);
+  }
+}
+
+/* Shared Glass Shell & Ambient Wallpaper */
+:root[data-surface^='glass-'] .app-root {
+  position: relative;
+  isolation: isolate;
+  background-color: var(--glass-base);
+}
+:root[data-surface^='glass-'] .app-root::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--glass-wallpaper);
+}
+:root[data-surface^='glass-'] .split-sidebar,
+:root[data-surface^='glass-'] .split-main,
+:root[data-surface^='glass-'] .screen {
+  background: transparent;
+}
+:root[data-surface^='glass-'] .screen.screen-paper {
+  background: var(--glass-paper-bg);
+}
+
+/* Layer 1 — Floating Liquid Chrome (real backdrop blur + specular rim) */
+:root[data-surface^='glass-'] .navbar {
+  background: var(--glass-chrome-bg);
+  border-bottom: 1px solid var(--glass-border-subtle);
+  box-shadow: var(--glass-rim);
+  backdrop-filter: blur(22px) saturate(185%);
+  -webkit-backdrop-filter: blur(22px) saturate(185%);
+}
+:root[data-surface^='glass-'] .screen-paper .navbar {
+  background: var(--glass-chrome-bg);
+}
+:root[data-surface^='glass-'] .navbar .navbar-btn {
+  border-radius: 999px;
+  padding: 5px 10px;
+  transition: background 0.15s ease, transform 0.12s ease;
+}
+:root[data-surface^='glass-'] .navbar .navbar-btn:hover {
+  background: var(--glass-card-subtle);
+}
+:root[data-surface^='glass-'] .navbar .navbar-btn:active {
+  transform: scale(0.95);
+}
+
+:root[data-surface^='glass-'] .fab.fab-pill {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 78%, rgba(255, 255, 255, 0.16));
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 12px 28px color-mix(in srgb, var(--accent) 34%, rgba(0, 0, 0, 0.25));
+  backdrop-filter: blur(18px) saturate(180%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+}
+:root[data-surface^='glass-'] .fab.fab-pill:active {
+  transform: scale(0.96);
+}
+
+:root[data-surface^='glass-'] .view-switcher,
+:root[data-surface^='glass-'] .feynman-lang-switch {
+  background: var(--glass-chrome-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  padding: 3px;
+  box-shadow: var(--glass-rim);
+  backdrop-filter: blur(16px) saturate(165%);
+  -webkit-backdrop-filter: blur(16px) saturate(165%);
+}
+:root[data-surface^='glass-'] .view-switch-btn,
+:root[data-surface^='glass-'] .feynman-lang-btn {
+  border-radius: 999px;
+  transition: background 0.18s cubic-bezier(0.22, 1, 0.36, 1), color 0.15s ease, transform 0.1s ease, box-shadow 0.18s ease;
+}
+:root[data-surface^='glass-'] .view-switch-btn:active,
+:root[data-surface^='glass-'] .feynman-lang-btn:active {
+  transform: scale(0.96);
+}
+:root[data-surface^='glass-'] .view-switch-btn.active,
+:root[data-surface^='glass-'] .feynman-lang-btn.active {
+  background: var(--glass-pill-active);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.62),
+    0 2px 8px rgba(15, 23, 42, 0.12);
+}
+
+:root[data-surface^='glass-'] .hub-tab-btn.active {
+  box-shadow: var(--glass-rim), 0 2px 8px rgba(15, 23, 42, 0.1);
+}
+
+:root[data-surface^='glass-'] .format-toolbar,
+:root[data-surface^='glass-'] .annotate-bar {
+  background: var(--glass-chrome-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+
+:root[data-surface^='glass-'] .export-sheet,
+:root[data-surface^='glass-'] .modal-card,
+:root[data-surface^='glass-'] .panel {
+  background: var(--glass-chrome-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(24px) saturate(190%);
+  -webkit-backdrop-filter: blur(24px) saturate(190%);
+}
+:root[data-surface^='glass-'] .app-splash-logo {
+  background: var(--glass-chrome-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  backdrop-filter: blur(16px) saturate(170%);
+  -webkit-backdrop-filter: blur(16px) saturate(170%);
+}
+
+/* Layer 2 — Zero-Blur Specular Glass Scrolling Surfaces (60fps smooth) */
+:root[data-surface^='glass-'] .list-group,
+:root[data-surface^='glass-'] .bento-tile,
+:root[data-surface^='glass-'] .home-ann-panel,
+:root[data-surface^='glass-'] .course-card,
+:root[data-surface^='glass-'] .course-summary-tile,
+:root[data-surface^='glass-'] .schedule-now-card,
+:root[data-surface^='glass-'] .schedule-directory-strip,
+:root[data-surface^='glass-'] .study-load-card,
+:root[data-surface^='glass-'] .study-load-totals,
+:root[data-surface^='glass-'] .explanation-card,
+:root[data-surface^='glass-'] .theme-preview-card,
+:root[data-surface^='glass-'] .theme-preset-card,
+:root[data-surface^='glass-'] .palette-combo-card,
+:root[data-surface^='glass-'] .font-pick-card,
+:root[data-surface^='glass-'] .quick-action-btn,
+:root[data-surface^='glass-'] .note-cards-list .swipe-row-wrap {
+  background: var(--glass-card-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  border-radius: 18px;
+}
+
+:root[data-surface^='glass-'] .search-input-wrap,
+:root[data-surface^='glass-'] .quick-stat-chip,
+:root[data-surface^='glass-'] .row-action-chip,
+:root[data-surface^='glass-'] .feynman-persona-chip,
+:root[data-surface^='glass-'] .schedule-roster-chip {
+  background: var(--glass-card-subtle);
+  border: 1px solid var(--glass-border-subtle);
+  box-shadow: var(--glass-rim);
+}
+:root[data-surface^='glass-'] .row-action-chip.active-chip,
+:root[data-surface^='glass-'] .feynman-persona-chip.active {
+  background: var(--accent-tint);
+  border-color: var(--accent);
+}
+
+:root[data-surface^='glass-'] .timetable-board {
+  box-shadow: var(--glass-shadow);
+  border-color: var(--glass-border);
+}
+
+/* Reduce Motion / Low-End GPU Fallback for Glass */
+:root[data-reduce-motion='true'][data-surface^='glass-'] .navbar,
+:root[data-reduce-motion='true'][data-surface^='glass-'] .fab.fab-pill,
+:root[data-reduce-motion='true'][data-surface^='glass-'] .view-switcher,
+:root[data-reduce-motion='true'][data-surface^='glass-'] .feynman-lang-switch,
+:root[data-reduce-motion='true'][data-surface^='glass-'] .format-toolbar,
+:root[data-reduce-motion='true'][data-surface^='glass-'] .annotate-bar,
+:root[data-reduce-motion='true'][data-surface^='glass-'] .export-sheet,
+:root[data-reduce-motion='true'][data-surface^='glass-'] .modal-card,
+:root[data-reduce-motion='true'][data-surface^='glass-'] .panel,
+:root[data-reduce-motion='true'][data-surface^='glass-'] .app-splash-logo {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: var(--card-bg);
+}
+

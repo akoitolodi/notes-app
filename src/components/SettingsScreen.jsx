@@ -34,6 +34,9 @@ import {
   PAPER_STYLES,
   FONT_KEY,
   FONT_PRESETS,
+  SURFACE_KEY,
+  SURFACE_STYLES,
+  normalizeSurface,
   HINT_KEY,
   REDUCE_MOTION_KEY,
   ACCENTS,
@@ -189,6 +192,7 @@ export default function SettingsScreen({ onBack, onDataImported, onOpenThemes })
   const { confirm, toast } = useDialog();
   const initial = getSettings();
   const [theme, setTheme] = useState(initial.theme);
+  const [surface, setSurface] = useState(() => normalizeSurface(initial.surface));
   const [accent, setAccent] = useState(initial.accent);
   const [size, setSize] = useState(initial.size);
   const [paper, setPaper] = useState(initial.paper || 'blank');
@@ -525,6 +529,13 @@ export default function SettingsScreen({ onBack, onDataImported, onOpenThemes })
           ]}
           value={theme}
           onChange={v => setPref(THEME_KEY, v, setTheme)}
+        />
+
+        <div className="settings-label mt-16">Surface finish</div>
+        <Segmented
+          options={SURFACE_STYLES}
+          value={surface}
+          onChange={v => setPref(SURFACE_KEY, v, setSurface)}
         />
 
         <div className="settings-label mt-16">Note paper style</div>

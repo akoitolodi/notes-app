@@ -9,8 +9,20 @@ export const ACCENT_KEY = 'aicn:accent';           // key into ACCENTS
 export const SIZE_KEY = 'aicn:size';               // 'small' | 'medium' | 'large'
 export const PAPER_KEY = 'aicn:paper';             // 'blank' | 'ruled' | 'dot' | 'grid'
 export const FONT_KEY = 'aicn:font';               // key into FONT_PRESETS
+export const SURFACE_KEY = 'aicn:surface';         // 'studio' | 'glass-frosted' | 'glass-aurora'
 export const HINT_KEY = 'aicn:showHint';           // boolean string
 export const REDUCE_MOTION_KEY = 'aicn:reduceMotion'; // 'true' | 'false'
+
+export const SURFACE_STYLES = [
+  ['studio', 'Studio'],
+  ['glass-frosted', 'Frosted Glass'],
+  ['glass-aurora', 'Aurora Glass'],
+];
+
+export function normalizeSurface(val) {
+  if (val === 'studio' || val === 'glass-frosted' || val === 'glass-aurora') return val;
+  return 'glass-frosted';
+}
 
 export const FONT_PRESETS = [
   {
@@ -335,6 +347,7 @@ export function getSettings() {
     return {
       theme: localStorage.getItem(THEME_KEY) || 'auto',
       themePreset: localStorage.getItem(THEME_PRESET_KEY) || 'default',
+      surface: normalizeSurface(localStorage.getItem(SURFACE_KEY)),
       accent: localStorage.getItem(ACCENT_KEY) || 'indigo',
       size: localStorage.getItem(SIZE_KEY) || 'medium',
       paper: localStorage.getItem(PAPER_KEY) || 'blank',
@@ -345,6 +358,7 @@ export function getSettings() {
     return {
       theme: 'auto',
       themePreset: 'default',
+      surface: 'glass-frosted',
       accent: 'indigo',
       size: 'medium',
       paper: 'blank',
@@ -389,8 +403,9 @@ let mediaListenerAttached = false;
 export function applySettings() {
   if (typeof document === 'undefined') return;
   const root = document.documentElement;
-  const { theme, themePreset, accent, size, paper, font, reduceMotion } = getSettings();
+  const { theme, themePreset, surface, accent, size, paper, font, reduceMotion } = getSettings();
   const preset = THEME_PRESETS.find(p => p.id === themePreset) || null;
+  root.dataset.surface = normalizeSurface(surface);
 
   if (preset) {
     root.dataset.theme = preset.mode;
