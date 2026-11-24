@@ -32,10 +32,19 @@ import {
   Wand2,
   SpellCheck,
   Link2,
+  PlusSquare,
+  Zap,
+  ZapOff,
 } from 'lucide-react';
 import ImageStrip, { pickImage, compressImage } from '../ImageManager';
 import TemplatePickerSheet from '../TemplatePickerSheet';
+import InsertBlockSheet from './InsertBlockSheet';
+import SmartDetectBar from './SmartDetectBar';
 import CleanRichEditor from './CleanRichEditor';
+import {
+  isSmartDetectEnabled,
+  setSmartDetectEnabled,
+} from '../../lib/smartNoteDetect';
 import {
   DICTATION_LANGS,
   createDictationSession,
@@ -73,6 +82,7 @@ export default function EditModeView({
   onSaveOnly,
   onSaveAndExplain,
   onApplyTemplate = null,
+  onSaveFlashcards = null,
   noteMode = 'study',
   currentNoteId = null,
 }) {
@@ -80,6 +90,15 @@ export default function EditModeView({
   const modeMeta = getModeMeta(noteMode);
   const isZeroAi = isZeroAiMode(noteMode);
   const [templateSheetOpen, setTemplateSheetOpen] = useState(false);
+  const [blockSheetOpen, setBlockSheetOpen] = useState(false);
+  const [smartDetectOn, setSmartDetectOn] = useState(() => isSmartDetectEnabled());
+
+  const handleToggleSmartDetect = nextVal => {
+    const val = typeof nextVal === 'boolean' ? nextVal : !smartDetectOn;
+    setSmartDetectOn(val);
+    setSmartDetectEnabled(val);
+    toast(val ? 'Smart Blank-Note Auto-Detect ON' : 'Smart Auto-Detect muted (tap ⚡ in toolbar to re-enable)');
+  };
 
   // Clean visual edit mode (default — zero raw ## or ** clutter!) vs Raw Markdown mode
   const [editorMode, setEditorMode] = useState(() => {
@@ -883,8 +902,50 @@ export default function EditModeView({
         )}
       </div>
 
+      {/* Smart Blank-Note Auto-Detection Strip — docked right above toolbar (hidden on plain text & Zero-AI Vault) */}
+      <SmartDetectBar
+        body={body}
+        subject={subject}
+        isZeroAi={isZeroAi}
+        enabled={smartDetectOn}
+        onToggleEnabled={handleToggleSmartDetect}
+        onAppendText={text => {
+          const clean = String(text || '').trim();
+          if (!clean) return;
+          const next = (body ? `${body.replace(/\s+$/, '')}\n\n` : '') + clean;
+          onBodyChange(next);
+        }}
+        onReplaceBody={nextBody => onBodyChange(nextBody)}
+        onSaveFlashcards={onSaveFlashcards}
+      />
+
       {/* Mobile-friendly Formatting & Attachment Bar */}
       <div className="format-toolbar" role="toolbar" aria-label="Formatting and media">
+        <button
+          type="button"
+          className="fmt-btn"
+          onClick={() => setBlockSheetOpen(true)}
+          title="Insert smart building block (table, code, math, checklist)"
+          aria-label="Insert block"
+        >
+          <PlusSquare size={17} />
+          <span>Block</span>
+        </button>
+        {!isZeroAi && (
+          <button
+            type="button"
+            className={`fmt-btn${smartDetectOn ? ' active-smart' : ''}`}
+            onClick={() => handleToggleSmartDetect(!smartDetectOn)}
+            title={smartDetectOn ? 'Smart Auto-Detect ON (tap to mute)' : 'Smart Auto-Detect OFF (tap to enable)'}
+            aria-label="Toggle Smart Auto-Detect"
+          >
+            {smartDetectOn ? <Zap size={16} /> : <ZapOff size={16} />}
+            <span>Smart</span>
+          </button>
+        )}
+
+        <span className="fmt-sep" />
+
         <button
           type="button"
           className="fmt-btn"
@@ -1035,11 +1096,32 @@ export default function EditModeView({
       {templateSheetOpen && (
         <TemplatePickerSheet
           title="Apply Template"
-          onPick={id => {
+          onPick={idOrCustom => {
             setTemplateSheetOpen(false);
-            onApplyTemplate?.(id);
+            onApplyTemplate?.(idOrCustom);
           }}
           onClose={() => setTemplateSheetOpen(false)}
+        />
+      )}
+
+      {blockSheetOpen && (
+        <InsertBlockSheet
+          onInsert={(snippet, blockName) => {
+            if (!snippet) return;
+            if (editorMode === 'raw' && textareaRef.current) {
+              const el = textareaRef.current;
+              const start = el.selectionStart ?? body.length;
+              const end = el.selectionEnd ?? body.length;
+              const prefix = start > 0 && body[start - 1] !== '\n' ? '\n' : '';
+              const next = body.slice(0, start) + prefix + snippet + '\n' + body.slice(end);
+              onBodyChange(next);
+            } else {
+              const next = (body ? `${body.replace(/\s+$/, '')}\n\n` : '') + snippet;
+              onBodyChange(next);
+            }
+            toast(`Inserted ${blockName}`, { type: 'success' });
+          }}
+          onClose={() => setBlockSheetOpen(false)}
         />
       )}
     </div>

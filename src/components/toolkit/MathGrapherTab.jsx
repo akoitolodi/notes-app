@@ -23,9 +23,11 @@ const PRESETS = [
   ['ln(x)', 'x - 1', ''],
 ];
 
-export default function MathGrapherTab({ onOpenNote }) {
+export default function MathGrapherTab({ onOpenNote, initialExpr = '' }) {
   const { toast } = useDialog();
-  const [eqs, setEqs] = useState(['sin(x)', 'x^2 - 4', '']);
+  const [eqs, setEqs] = useState(() =>
+    initialExpr && initialExpr.trim() ? [initialExpr.trim(), '', ''] : ['sin(x)', 'x^2 - 4', '']
+  );
   const [xCenter, setXCenter] = useState(0);
   const [yCenter, setYCenter] = useState(0);
   const [xHalfSpan, setXHalfSpan] = useState(8);

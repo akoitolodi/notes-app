@@ -30,6 +30,7 @@ import {
   FileSpreadsheet,
   ArrowUpRight,
   Headphones,
+  LayoutTemplate,
 } from 'lucide-react';
 import { scanNote } from '../api/scan';
 import { scanLine } from '../api/scanLine';
@@ -50,6 +51,7 @@ import {
   getHiddenLockedFolderIds,
   getZeroAiFolderIds,
   logStudyActivity,
+  saveCustomTemplate,
 } from '../store/db';
 import StrokeLayer, { renderStrokesToCanvas } from './StrokeLayer';
 import ImageStrip, { pickImage, compressImage } from './ImageManager';
@@ -94,7 +96,7 @@ export default function NoteEditor({
   onNoteChanged,
   onRegisterBack,
 }) {
-  const { confirm, toast } = useDialog();
+  const { confirm, prompt, toast } = useDialog();
 
   const [mode, setMode] = useState(() => initialMode || (noteHasContent(note) ? 'read' : 'edit'));
   const [noteModeOverride, setNoteModeOverride] = useState(note?.mode || '');
@@ -901,6 +903,51 @@ export default function NoteEditor({
     }
   };
 
+  const handleSaveAsTemplate = async () => {
+    setMoreOpen(false);
+    if (isZeroAi) return;
+    if (!body.trim()) {
+      toast('Add some structure to this note before saving as a template');
+      return;
+    }
+    const tplName = await prompt({
+      title: 'Save as Personal Template',
+      defaultValue: (title || '').trim() || 'My Layout',
+      placeholder: 'e.g. My Lab Notes, Weekly Plan',
+      confirmLabel: 'Save Template',
+    });
+    if (!tplName) return;
+    await saveCustomTemplate({
+      name: tplName,
+      category: 'custom',
+      description: `Saved from "${title || 'Note'}"`,
+      title: title || '',
+      body,
+      icon: 'file',
+    });
+    toast(`Saved "${tplName}" to Templates → Mine!`, { type: 'success' });
+  };
+
+  const handleSaveOfflineFlashcards = useCallback(
+    async extractedCards => {
+      if (!Array.isArray(extractedCards) || extractedCards.length === 0) return;
+      const existingQs = new Set((flashcards || []).map(c => String(c.q || '').trim().toLowerCase()));
+      const fresh = extractedCards.filter(c => !existingQs.has(String(c.q || '').trim().toLowerCase()));
+      if (fresh.length === 0) {
+        toast('All those flashcards are already saved on this note!');
+        return;
+      }
+      const nextCards = [...(flashcards || []), ...fresh];
+      setFlashcards(nextCards);
+      await updateNote(note.id, { flashcards: nextCards });
+      onNoteChanged?.();
+      toast(`Created ${fresh.length} offline flashcard${fresh.length === 1 ? '' : 's'} — tap Study to review!`, {
+        type: 'success',
+      });
+    },
+    [flashcards, note.id, onNoteChanged, toast]
+  );
+
   const handleMove = async f => {
     setMoveOpen(false);
     await moveNote(note.id, f.id);
@@ -1109,6 +1156,7 @@ export default function NoteEditor({
         onSaveOnly={handleSaveOnly}
         onSaveAndExplain={handleSaveAndExplain}
         onApplyTemplate={handleApplyTemplate}
+        onSaveFlashcards={handleSaveOfflineFlashcards}
         noteMode={activeNoteMode}
         currentNoteId={note.id}
       />
@@ -1531,6 +1579,11 @@ export default function NoteEditor({
             <button type="button" className="export-btn" onClick={handleDuplicate}>
               <Copy size={18} /> Duplicate note
             </button>
+            {!isZeroAi && (
+              <button type="button" className="export-btn" onClick={handleSaveAsTemplate}>
+                <LayoutTemplate size={18} /> Save as Personal Template
+              </button>
+            )}
             <button type="button" className="export-btn danger" onClick={handleDeleteNote}>
               <Trash2 size={18} /> Delete note
             </button>

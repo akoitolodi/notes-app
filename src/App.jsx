@@ -27,6 +27,7 @@ const DevToolkitScreen = lazy(() => import('./components/DevToolkitScreen'));
 const LearnCodingScreen = lazy(() => import('./components/LearnCodingScreen'));
 const StudentHubScreen = lazy(() => import('./components/StudentHubScreen'));
 const CoursesDashboardScreen = lazy(() => import('./components/CoursesDashboardScreen'));
+const AnnouncementsScreen = lazy(() => import('./components/AnnouncementsScreen'));
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -238,6 +239,11 @@ export default function App() {
     pushHistoryEntry('courses');
   }, [pushHistoryEntry]);
 
+  const handleOpenAnnouncements = useCallback(() => {
+    setScreen('announcements');
+    pushHistoryEntry('announcements');
+  }, [pushHistoryEntry]);
+
   const handleOpenExamPaper = useCallback(
     ({ sourceNote = null, sourceFolder = null, sourceCourse = null }) => {
       setExamPaperTarget({
@@ -303,6 +309,7 @@ export default function App() {
       screen === 'coding' ||
       screen === 'planner' ||
       screen === 'courses' ||
+      screen === 'announcements' ||
       screen === 'trash' ||
       screen === 'settings'
     ) {
@@ -537,6 +544,25 @@ export default function App() {
         </Suspense>
       );
     }
+    if (screen === 'announcements') {
+      return (
+        <Suspense
+          fallback={
+            <div className="screen" style={{ alignItems: 'center', justifyContent: 'center' }}>
+              <div className="scan-indicator">
+                <span className="spinner" /> Loading Announcements…
+              </div>
+            </div>
+          }
+        >
+          <AnnouncementsScreen
+            onBack={handleBackToFolders}
+            onOpenNote={handleOpenNote}
+            onChanged={bumpSidebar}
+          />
+        </Suspense>
+      );
+    }
     if (screen === 'exam' && folder) {
       return (
         <ExamSummaryScreen
@@ -580,6 +606,7 @@ export default function App() {
               onOpenNote={handleOpenNote}
               onOpenReview={handleOpenReview}
               onOpenCourses={handleOpenCourses}
+              onOpenAnnouncements={handleOpenAnnouncements}
               onOpenPlanner={handleOpenPlanner}
               onOpenToolkit={handleOpenToolkit}
               onOpenCoding={handleOpenCoding}

@@ -32,6 +32,8 @@ import {
   Calendar,
   BookOpen,
   Bell,
+  Megaphone,
+  RefreshCw,
 } from 'lucide-react';
 import {
   db,
@@ -55,10 +57,11 @@ import {
 } from '../lib/vault';
 import {
   getInAppAlertSummary,
+  isAnnouncementRead,
   markAllAnnouncementsRead,
   snoozeInAppBanner,
 } from '../lib/notifications';
-import { markPastTasksDone } from '../lib/canvasSync';
+import { markPastTasksDone, autoSyncCanvasIfStale } from '../lib/canvasSync';
 import TemplatePickerSheet from './TemplatePickerSheet';
 import ImportSheet from './ImportSheet';
 import PinLockSheet from './PinLockSheet';
@@ -86,6 +89,7 @@ export default function FoldersScreen({
   onOpenNote,
   onOpenReview,
   onOpenCourses,
+  onOpenAnnouncements,
   onOpenPlanner,
   onOpenToolkit,
   onOpenCoding,
@@ -112,6 +116,8 @@ export default function FoldersScreen({
   const [showCoding, setShowCoding] = useState(() => isLearnCodingEnabled());
   const [plannerDueCount, setPlannerDueCount] = useState(0);
   const [courseCount, setCourseCount] = useState(0);
+  const [annPreview, setAnnPreview] = useState({ total: 0, unread: 0, pinned: 0, latest: [] });
+  const [syncingAnn, setSyncingAnn] = useState(false);
   const [alertSummary, setAlertSummary] = useState(null);
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState('');
@@ -157,10 +163,26 @@ export default function FoldersScreen({
       setPlannerDueCount(pItems.filter(it => !it.done && it.type !== 'announcement').length);
       setCourseCount(crs.length);
       setAlertSummary(alerts);
+
+      const anns = pItems
+        .filter(it => it.type === 'announcement')
+        .map(it => ({ ...it, _read: isAnnouncementRead(it) }))
+        .sort((a, b) => {
+          if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
+          if (a._read !== b._read) return a._read ? 1 : -1;
+          return (b.dueAt || b.createdAt || 0) - (a.dueAt || a.createdAt || 0);
+        });
+      setAnnPreview({
+        total: anns.length,
+        unread: anns.filter(a => !a._read).length,
+        pinned: anns.filter(a => a.pinned).length,
+        latest: anns.slice(0, 2),
+      });
     } catch {
       setPlannerDueCount(0);
       setCourseCount(0);
       setAlertSummary(null);
+      setAnnPreview({ total: 0, unread: 0, pinned: 0, latest: [] });
     }
   }, []);
 
@@ -555,9 +577,20 @@ export default function FoldersScreen({
                 {(alertSummary.overdue[0] || alertSummary.dueToday[0] || alertSummary.unreadAnnouncements[0])?.title}
               </div>
               <div className="flex gap-6 mt-8" style={{ flexWrap: 'wrap' }}>
-                <button type="button" className="row-action-chip active-chip" onClick={onOpenPlanner}>
-                  View Tasks
-                </button>
+                {(alertSummary.overdue.length > 0 || alertSummary.dueToday.length > 0) && (
+                  <button type="button" className="row-action-chip active-chip" onClick={onOpenPlanner}>
+                    View Tasks
+                  </button>
+                )}
+                {alertSummary.unreadAnnouncements.length > 0 && onOpenAnnouncements && (
+                  <button
+                    type="button"
+                    className="row-action-chip active-chip"
+                    onClick={onOpenAnnouncements}
+                  >
+                    Open Announcements
+                  </button>
+                )}
                 {alertSummary.overdue.length > 0 && (
                   <button
                     type="button"
@@ -598,6 +631,100 @@ export default function FoldersScreen({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Dedicated Live Announcements Command Card */}
+      {onOpenAnnouncements && (
+        <section className={`home-ann-panel${annPreview.unread > 0 ? ' has-unread' : ''}`}>
+          <div className="home-ann-header">
+            <button
+              type="button"
+              className="home-ann-title-btn"
+              onClick={onOpenAnnouncements}
+            >
+              <span className="home-ann-icon">
+                <Megaphone size={17} />
+              </span>
+              <span className="home-ann-title">Announcements</span>
+              {annPreview.unread > 0 ? (
+                <span className="home-ann-badge is-new">{annPreview.unread} new</span>
+              ) : annPreview.total > 0 ? (
+                <span className="home-ann-badge">{annPreview.total}</span>
+              ) : null}
+            </button>
+            <div className="flex items-center gap-6">
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label="Sync announcements"
+                title="Sync Canvas announcements"
+                disabled={syncingAnn}
+                onClick={async () => {
+                  setSyncingAnn(true);
+                  try {
+                    const res = await autoSyncCanvasIfStale({ force: true });
+                    await refresh();
+                    if (res?.reason === 'unconfigured') {
+                      onOpenAnnouncements();
+                    } else if (res?.error) {
+                      toast(res.error, { type: 'error' });
+                    } else {
+                      toast(
+                        res?.added > 0
+                          ? `Synced — ${res.added} new post${res.added === 1 ? '' : 's'}`
+                          : 'Announcements up to date'
+                      );
+                    }
+                  } finally {
+                    setSyncingAnn(false);
+                  }
+                }}
+              >
+                <RefreshCw size={14} className={syncingAnn ? 'spin-icon' : ''} />
+              </button>
+              <button
+                type="button"
+                className="row-action-chip"
+                onClick={onOpenAnnouncements}
+              >
+                Open <ChevronRight size={13} />
+              </button>
+            </div>
+          </div>
+
+          {annPreview.latest.length === 0 ? (
+            <button
+              type="button"
+              className="home-ann-empty"
+              onClick={onOpenAnnouncements}
+            >
+              <span>Connect Canvas Course RSS feeds or paste class announcements so you never miss teacher updates.</span>
+              <ChevronRight size={15} style={{ flexShrink: 0, opacity: 0.6 }} />
+            </button>
+          ) : (
+            <div className="home-ann-items">
+              {annPreview.latest.map(item => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="home-ann-item"
+                  onClick={onOpenAnnouncements}
+                >
+                  <div className="home-ann-item-top">
+                    {!item._read && <span className="ann-unread-dot" />}
+                    {item.pinned && <Pin size={11} style={{ color: '#ff9f0a', flexShrink: 0 }} />}
+                    <span className="home-ann-course">{item.course || 'Canvas'}</span>
+                    <span className="home-ann-date">{item.timeLabel || item.dateKey}</span>
+                  </div>
+                  <div className="home-ann-item-title">{item.title}</div>
+                  {item.author && (
+                    <div className="home-ann-item-sub">by {item.author}</div>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
       )}
 
       {/* Daily Spaced Repetition Review Card */}

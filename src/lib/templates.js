@@ -1,330 +1,384 @@
 /**
- * Built-in study note templates — instant, 100% offline, zero API calls.
+ * Built-in note templates & mid-note Smart Building Blocks (v2.0.0).
+ * Short, zero-filler, phone-first layouts with live visual mini-previews.
  */
 
+function todayLabel() {
+  try {
+    return new Date().toLocaleDateString([], { month: 'short', day: 'numeric' });
+  } catch {
+    return '';
+  }
+}
+
+export const TEMPLATE_CATEGORIES = [
+  { id: 'quick', label: 'Quick' },
+  { id: 'school', label: 'School' },
+  { id: 'coding', label: 'Coding' },
+  { id: 'personal', label: 'Personal' },
+  { id: 'custom', label: 'Mine' },
+];
+
 export const NOTE_TEMPLATES = [
+  // ---------- QUICK START ----------
   {
     id: 'blank',
-    category: 'general',
+    category: 'quick',
     name: 'Blank Note',
-    description: 'Start fresh with a clean empty page',
+    description: 'Clean canvas — auto-detects code, math & dates',
     icon: 'file',
+    accent: '#0a84ff',
+    previewLines: ['Start typing anything…', 'Code · Math · Dates', 'Auto-detected live'],
     title: '',
     body: '',
   },
   {
-    id: 'cornell',
-    category: 'general',
-    name: 'Cornell Notes',
-    description: 'Cues & questions, structured class notes, and bottom summary',
-    icon: 'columns',
-    title: 'Cornell Notes — ',
-    body: `## Key Cues & Questions
-- What is the main concept or thesis?
-- How does this connect to previous lessons?
-- What could show up on the exam?
-
-## Main Notes
-- **Core Idea:** 
-- **Key Mechanism / Steps:**
-  1. 
-  2. 
-- **Example:** 
-
-## Summary (2–3 sentences in your own words)
-- 
-
-#cornell`,
-  },
-  {
-    id: 'lecture',
-    category: 'general',
-    name: 'Lecture Outline',
-    description: 'Objectives, main topics, worked examples, and follow-up tasks',
+    id: 'class_note',
+    category: 'quick',
+    name: 'Class Notes',
+    description: 'Date, topic, bullets & questions — zero clutter',
     icon: 'book',
-    title: 'Lecture — ',
-    body: `## Learning Objectives
+    accent: '#28b44c',
+    previewLines: ['# Topic', '• Key point', '• Example', '☐ Follow-up'],
+    getTitle: () => `Class — ${todayLabel()}`,
+    body: `## Topic
 - 
 
-## Core Concepts
-### 1. Topic One
-- **Definition:** 
-- **Why it matters:** 
-
-### 2. Topic Two
+## Examples
 - 
 
-## Worked Example
-- **Problem:** 
-- **Solution:** 
-
-## Action Items & Review
-- [ ] Re-read and highlight confusing lines
-- [ ] Generate flashcards and quiz in Study mode
-
-#lecture`,
+## Questions
+- [ ] `,
   },
   {
-    id: 'formula',
-    category: 'general',
-    name: 'Formula & Concept Sheet',
-    description: 'LaTeX equations, variable units, conditions, and common traps',
-    icon: 'sigma',
-    title: 'Formula Sheet — ',
-    body: `## Core Equations
-- **Equation Name:** $y = mx + b$
-  - Where $m$ = slope, $b$ = y-intercept
-  - Valid when: linear relationship
-- **Second Formula:**
-$$F = m \\cdot a$$
+    id: 'quick_todo',
+    category: 'quick',
+    name: 'Daily Focus',
+    description: 'Top 3 priorities & quick checklist',
+    icon: 'check',
+    accent: '#ff9f0a',
+    previewLines: ['# Top 3 Today', '☐ Priority 1', '☐ Priority 2', '• Notes'],
+    getTitle: () => `Focus — ${todayLabel()}`,
+    body: `## Top 3 Today
+- [ ] 
+- [ ] 
+- [ ] 
 
-## Key Constants & Units
+## Quick Notes
+- `,
+  },
+  {
+    id: 'assignment',
+    category: 'quick',
+    name: 'Assignment Tracker',
+    description: 'Due date, requirements & submission checklist',
+    icon: 'clipboard',
+    accent: '#af52de',
+    previewLines: ['Due: ___', '☐ Draft', '☐ Review', '☐ Submit'],
+    title: 'Assignment — ',
+    body: `**Course:** 
+**Due:** 
+
+## Tasks
+- [ ] Read instructions
+- [ ] Draft work
+- [ ] Review & submit
+
+## Links & Draft
+- `,
+  },
+  {
+    id: 'meeting',
+    category: 'quick',
+    name: 'Group / Meeting',
+    description: 'Agenda, decisions & who does what',
+    icon: 'users',
+    accent: '#30b0c7',
+    previewLines: ['# Agenda', '• Decisions', '☐ Action items'],
+    getTitle: () => `Group Notes — ${todayLabel()}`,
+    body: `## Agenda
 - 
 
-## Edge Cases & Common Traps
-- Watch sign conventions and unit conversions
+## Decisions
 - 
 
-#formulas #exam`,
+## Action Items
+- [ ] `,
+  },
+
+  // ---------- SCHOOL & STUDY ----------
+  {
+    id: 'cheatsheet',
+    category: 'school',
+    name: 'Exam Cheat Sheet',
+    description: 'Compact terms, formulas & high-yield reminders',
+    icon: 'zap',
+    accent: '#ff375f',
+    previewLines: ['# Key Terms', '# Formulas', '• Watch out for'],
+    title: 'Cheat Sheet — ',
+    body: `## Key Terms
+- 
+
+## Formulas & Rules
+- 
+
+## Watch Out For
+- `,
+  },
+  {
+    id: 'study_qa',
+    category: 'school',
+    name: 'Flashcard Q&A',
+    description: 'Term: Definition format -> 1-tap offline flashcards',
+    icon: 'layers',
+    accent: '#5856d6',
+    previewLines: ['Term: Definition', 'Term: Definition', '→ 1-Tap Flashcards'],
+    title: 'Study Cards — ',
+    body: `Concept 1: Write a short definition here
+Concept 2: Write a short definition here
+Concept 3: Write a short definition here`,
+  },
+  {
+    id: 'cornell',
+    category: 'school',
+    name: 'Clean Cornell',
+    description: 'Questions, main notes & 2-line takeaway',
+    icon: 'columns',
+    accent: '#0a84ff',
+    previewLines: ['# Questions', '# Notes', '# Summary'],
+    title: 'Cornell — ',
+    body: `## Questions
+- 
+
+## Notes
+- 
+
+## Summary
+- `,
   },
   {
     id: 'lab',
-    category: 'general',
-    name: 'Lab Report',
-    description: 'Objective, hypothesis, procedure checklist, data, and analysis',
+    category: 'school',
+    name: 'Lab Notes',
+    description: 'Goal, data table & concise conclusion',
     icon: 'flask',
-    title: 'Lab Report — ',
-    body: `## Objective
+    accent: '#28b44c',
+    previewLines: ['# Goal', '| Trial | Result |', '# Conclusion'],
+    title: 'Lab — ',
+    body: `## Goal
 - 
 
-## Hypothesis
-- If …, then … because …
-
-## Materials & Procedure
-- [ ] Prepare equipment and calibrate sensors
-- [ ] Record baseline control measurement
-- [ ] Run trials and log raw observations
-
-## Data & Observations
-- **Trial 1:** 
-- **Trial 2:** 
-- **Key Trend:** 
-
-## Analysis & Sources of Error
-- **What the data shows:** 
-- **Possible errors:** 
+## Data
+| Trial | Measurement | Notes |
+| --- | --- | --- |
+| 1 |  |  |
+| 2 |  |  |
 
 ## Conclusion
-- 
-
-#lab`,
+- `,
   },
+
+  // ---------- CODING & TECH ----------
   {
-    id: 'cheatsheet',
-    category: 'general',
-    name: 'Exam Cheat Sheet',
-    description: 'High-yield definitions, must-know formulas, and self-test checklist',
-    icon: 'zap',
-    title: 'Exam Cheat Sheet — ',
-    body: `## Must-Know Definitions
-- **Term 1:** 
-- **Term 2:** 
+    id: 'code_lab',
+    category: 'coding',
+    name: 'Code Scratchpad',
+    description: 'Runnable code block with 1-tap output & notes',
+    icon: 'code',
+    accent: '#0a84ff',
+    previewLines: ['```js', 'console.log(...)', '```', '▶ 1-Tap Run'],
+    title: 'Code — ',
+    body: `\`\`\`js
+console.log("Hello, Bai!");
+\`\`\`
 
-## High-Yield Formulas & Rules
-- $E = mc^2$
-- 
-
-## Common Exam Traps
-- Don't confuse … with …
-- Always check …
-
-## Quick Self-Test
-- [ ] Explain the core concept aloud without looking (Feynman test)
-- [ ] Build a custom Bond-Paper Exam from this note
-- [ ] Review all due flashcards
-
-#exam #review`,
-  },
-  {
-    id: 'journal',
-    category: 'general',
-    name: 'Daily Reflection / Vent',
-    description: 'Unfiltered thoughts, what is weighing on you, and one gentle next step',
-    icon: 'heart',
-    title: `Journal — ${new Date().toLocaleDateString()}`,
-    body: `## Brain Dump (No filter)
-- 
-
-## What's Weighing on Me Most
-- 
-
-## One Kind Thing / Small Next Step
-- 
-
-#journal`,
-  },
-  {
-    id: 'curiosity',
-    category: 'general',
-    name: 'Curiosity Deep-Dive',
-    description: 'Explore psychology, brain science, or rabbit-hole questions + [[Wiki-Links]]',
-    icon: 'compass',
-    title: 'Deep Dive — ',
-    body: `## What Sparked My Curiosity
-- 
-
-## Core Mechanism (How It Actually Works)
-- 
-
-## Myths vs. Evidence
-| Common Claim | What Evidence Actually Shows |
-| --- | --- |
-| Example myth | Nuanced reality |
-
-## Connections & Questions to Explore Next
-- Related note: [[Another Topic]]
-- 
-
-#explore #curiosity`,
-  },
-  {
-    id: 'password_entry',
-    category: 'general',
-    name: 'Password & Key Record',
-    description: 'Local-only template for accounts, passwords, API keys & recovery codes',
-    icon: 'key',
-    title: 'Account / Key — ',
-    body: `## Account Details
-- **Service / App:** 
-- **Username / Email:** 
-- **Password / Key:** 
-
-## 2FA & Recovery Codes
-- 
-
-## Security Notes
+## Notes
 - `,
   },
   {
     id: 'buglog',
-    category: 'tech',
-    name: 'Bug & Debug Log',
-    description: 'Error stack trace, root cause hypothesis, code snippet & final fix',
+    category: 'coding',
+    name: 'Bug Fix Log',
+    description: 'Error message, cause & working fix snippet',
     icon: 'bug',
-    title: 'Bug Log — ',
-    body: `## Symptom / Error Message
+    accent: '#ff375f',
+    previewLines: ['# Error', '# Root Cause', '``` Fix ```'],
+    title: 'Bug Fix — ',
+    body: `## Error
 \`\`\`
-Paste error message or stack trace here
 \`\`\`
 
-## Steps to Reproduce
-1. 
-2. 
+## Cause & Fix
+- 
 
-## Root Cause & Code Fix
 \`\`\`js
-// Before / After fix
-\`\`\`
-
-## Lesson Learned (Prevent Next Time)
-- 
-
-#debug #coding`,
+\`\`\``,
   },
   {
-    id: 'algorithm',
-    category: 'tech',
-    name: 'Algorithm & Big-O Sheet',
-    description: 'Problem intuition, code template, complexity table & edge cases',
-    icon: 'code',
-    title: 'Algorithm — ',
-    body: `## Core Intuition
-- 
-
-## Complexity
-| Case | Time | Space |
-| --- | --- | --- |
-| Best / Average | $O(n \\log n)$ | $O(n)$ |
-| Worst | $O(n^2)$ | $O(n)$ |
-
-## Implementation
-\`\`\`python
-def solve(items):
-    # Write clean reference code
-    return items
-\`\`\`
-
-## Edge Cases to Test
-- [ ] Empty input / single element
-- [ ] Duplicate values / negative numbers
-
-#algorithms #dsa`,
-  },
-  {
-    id: 'dbschema',
-    category: 'tech',
-    name: 'Database Schema & SQL',
-    description: 'Tables, keys, normalization notes & sample queries',
+    id: 'project_plan',
+    category: 'coding',
+    name: 'Project Plan',
+    description: 'Goal, stack & build milestones',
     icon: 'database',
-    title: 'DB Schema — ',
-    body: `## Entities & Columns
-| Table | Primary Key | Key Columns | Relations |
-| --- | --- | --- | --- |
-| users | id | email, role | 1:N with orders |
-
-## Sample Queries
-\`\`\`sql
-SELECT * FROM users WHERE role = 'student';
-\`\`\`
-
-## Indexing & Normalization Notes
+    accent: '#af52de',
+    previewLines: ['# Goal', '• Tech Stack', '☐ Milestones'],
+    title: 'Project — ',
+    body: `## Goal
 - 
 
-#database #sql`,
-  },
-  {
-    id: 'systemspec',
-    category: 'tech',
-    name: 'System / Capstone Spec',
-    description: 'Problem statement, architecture, API routes & milestone checklist',
-    icon: 'layers',
-    title: 'System Spec — ',
-    body: `## Problem Statement & Users
+## Stack
 - 
-
-## Architecture & Tech Stack
-- **Frontend:** 
-- **Backend / Database:** 
-
-## Key API Endpoints / Features
-| Endpoint / Module | Method | Purpose |
-| --- | --- | --- |
-| /api/example | GET | Fetch items |
 
 ## Milestones
-- [ ] MVP prototype
-- [ ] Testing & edge cases
-- [ ] Deployment
+- [ ] MVP working
+- [ ] Test & polish`,
+  },
 
-#capstone #architecture`,
+  // ---------- PERSONAL & VAULT ----------
+  {
+    id: 'journal',
+    category: 'personal',
+    name: 'Daily Journal',
+    description: 'Quick thoughts, highlight & tomorrow',
+    icon: 'heart',
+    accent: '#ff6b81',
+    previewLines: ['# On My Mind', '# Highlight', '# Tomorrow'],
+    getTitle: () => `Journal — ${todayLabel()}`,
+    body: `## On My Mind
+- 
+
+## Highlight Today
+- 
+
+## Tomorrow
+- `,
+  },
+  {
+    id: 'pros_cons',
+    category: 'personal',
+    name: 'Pros & Cons',
+    description: 'Clean 2-column decision table',
+    icon: 'scale',
+    accent: '#ff9f0a',
+    previewLines: ['| Pros | Cons |', '| --- | --- |', '# Decision'],
+    title: 'Decision — ',
+    body: `| Pros | Cons |
+| --- | --- |
+|  |  |
+|  |  |
+
+## Decision
+- `,
+  },
+  {
+    id: 'password_entry',
+    category: 'personal',
+    name: 'Password & Key',
+    description: 'Stored 100% locally in Zero-AI Vault',
+    icon: 'key',
+    accent: '#30b0c7',
+    previewLines: ['🔒 Zero-AI Vault', 'User: ___', 'Pass: ___'],
+    title: 'Account — ',
+    body: `- **Service:** 
+- **Username / Email:** 
+- **Password / Key:** 
+- **Recovery / 2FA:** `,
   },
 ];
 
-/**
- * Instantiate a template into { title, body }, optionally preserving a tag prefix
- * (e.g. when creating a note inside a #tag smart view).
- */
-export function instantiateTemplate(templateId, { tagPrefix = '' } = {}) {
-  const tpl = NOTE_TEMPLATES.find(t => t.id === templateId) || NOTE_TEMPLATES[0];
-  let body = tpl.body || '';
-  if (tagPrefix) {
-    const cleanTag = tagPrefix.trim();
-    if (cleanTag && !body.toLowerCase().includes(cleanTag.toLowerCase())) {
-      body = body ? `${body}\n${cleanTag}` : `${cleanTag}\n`;
-    }
-  }
-  return {
-    title: tpl.title || '',
-    body,
+/** Backward-compatibility aliases for older template IDs */
+const LEGACY_TEMPLATE_MAP = {
+  lecture: 'class_note',
+  formula: 'cheatsheet',
+  curiosity: 'class_note',
+  algorithm: 'code_lab',
+  sql: 'code_lab',
+  capstone: 'project_plan',
+};
+
+/** Mid-note 1-tap Smart Building Blocks for the Edit Toolbar ("+ Block"). */
+export const INSERT_BLOCKS = [
+  {
+    id: 'checklist',
+    name: 'Checklist',
+    desc: 'Interactive tasks',
+    icon: 'check',
+    snippet: '- [ ] \n- [ ] ',
+  },
+  {
+    id: 'table2',
+    name: '2-Col Table',
+    desc: 'Compare side by side',
+    icon: 'table',
+    snippet: '| Column A | Column B |\n| --- | --- |\n|  |  |',
+  },
+  {
+    id: 'code_js',
+    name: 'JS Code Block',
+    desc: 'Runnable offline JS',
+    icon: 'code',
+    snippet: '```js\nconsole.log("Hello");\n```',
+  },
+  {
+    id: 'code_py',
+    name: 'Python Block',
+    desc: '1-tap Python runner',
+    icon: 'code',
+    snippet: '```py\nprint("Hello")\n```',
+  },
+  {
+    id: 'math_pad',
+    name: 'Math Scratchpad',
+    desc: 'Auto-solving variables',
+    icon: 'sigma',
+    snippet: 'a = 10\nb = 5\na * b + 2',
+  },
+  {
+    id: 'callout',
+    name: 'Key Callout',
+    desc: 'Highlighted takeaway',
+    icon: 'zap',
+    snippet: '> **Key Takeaway:** ',
+  },
+  {
+    id: 'qa_block',
+    name: 'Flashcard Terms',
+    desc: 'Auto-makes flashcards',
+    icon: 'layers',
+    snippet: 'Term 1: Definition here\nTerm 2: Definition here\nTerm 3: Definition here',
+  },
+  {
+    id: 'class_hdr',
+    name: 'Class Header',
+    desc: 'Dated topic section',
+    icon: 'book',
+    getSnippet: () => `## Class — ${todayLabel()}\n- `,
+  },
+];
+
+export function instantiateTemplate(templateOrId, opts = {}) {
+  const tagPrefix = opts?.tagPrefix ? String(opts.tagPrefix).trim() : '';
+  const appendTag = body => {
+    if (!tagPrefix) return body;
+    return body ? `${body}\n\n${tagPrefix}` : tagPrefix;
   };
+  if (templateOrId && typeof templateOrId === 'object') {
+    return {
+      title: String(templateOrId.title || ''),
+      body: appendTag(String(templateOrId.body || '')),
+    };
+  }
+  const resolvedId = LEGACY_TEMPLATE_MAP[templateOrId] || templateOrId;
+  const tpl = NOTE_TEMPLATES.find(t => t.id === resolvedId) || NOTE_TEMPLATES[0];
+  const title = typeof tpl.getTitle === 'function' ? tpl.getTitle() : tpl.title || '';
+  return {
+    title,
+    body: appendTag(tpl.body || ''),
+  };
+}
+
+export function getInsertBlockSnippet(blockId) {
+  const b = INSERT_BLOCKS.find(x => x.id === blockId);
+  if (!b) return '';
+  return typeof b.getSnippet === 'function' ? b.getSnippet() : b.snippet || '';
 }

@@ -304,6 +304,7 @@ export function parseRssAnnouncements(xmlText, fallbackCourse = 'Canvas') {
     const validDt = Number.isNaN(dt.getTime()) ? new Date() : dt;
 
     if (title) {
+      const detectedDateKey = detectDateInText(`${title}\n${desc}`);
       out.push({
         externalUid: guid || `rss:${title}:${localDateKey(validDt)}`,
         title,
@@ -312,6 +313,7 @@ export function parseRssAnnouncements(xmlText, fallbackCourse = 'Canvas') {
         type: 'announcement',
         source: 'canvas',
         dateKey: localDateKey(validDt),
+        detectedDateKey: detectedDateKey || '',
         timeLabel: validDt.toLocaleDateString([], { month: 'short', day: 'numeric' }),
         dueAt: validDt.getTime(),
         description: desc.slice(0, 2000),
@@ -328,6 +330,76 @@ const MONTH_MAP = {
   sep: 8, sept: 8, september: 8, oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11,
 };
 
+const WEEKDAY_MAP = {
+  sunday: 0, sun: 0,
+  monday: 1, mon: 1,
+  tuesday: 2, tue: 2, tues: 2,
+  wednesday: 3, wed: 3,
+  thursday: 4, thu: 4, thur: 4, thurs: 4,
+  friday: 5, fri: 5,
+  saturday: 6, sat: 6,
+};
+
+/**
+ * Detect a mentioned date (ISO, Month Day, relative "tomorrow"/"next Friday", or MM/DD)
+ * inside announcement text or plain class notes. Returns YYYY-MM-DD or null.
+ */
+export function detectDateInText(rawText, refDate = new Date()) {
+  const clean = String(rawText || '').trim();
+  if (!clean) return null;
+
+  const base = refDate instanceof Date ? new Date(refDate.getTime()) : new Date();
+  base.setHours(12, 0, 0, 0);
+
+  // 1. ISO YYYY-MM-DD
+  const isoMatch = /\b(20\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01]))\b/.exec(clean);
+  if (isoMatch) return isoMatch[1];
+
+  // 2. Month name + day (e.g. "Nov 28", "December 4, 2026", "Jan 15th")
+  const monMatch = /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(20\d{2}))?\b/i.exec(clean);
+  if (monMatch) {
+    const mIdx = MONTH_MAP[monMatch[1].toLowerCase()];
+    const day = parseInt(monMatch[2], 10);
+    const yr = monMatch[3] ? parseInt(monMatch[3], 10) : base.getFullYear();
+    if (mIdx !== undefined && day >= 1 && day <= 31) {
+      return localDateKey(new Date(yr, mIdx, day));
+    }
+  }
+
+  // 3. Explicit numeric date with deadline keyword ("due 12/05", "on 11/29/2026")
+  const slashMatch = /\b(?:due|on|by|until|deadline[:\s]*)\s*(\d{1,2})\/(\d{1,2})(?:\/(20\d{2}))?\b/i.exec(clean);
+  if (slashMatch) {
+    const m = parseInt(slashMatch[1], 10);
+    const d = parseInt(slashMatch[2], 10);
+    const yr = slashMatch[3] ? parseInt(slashMatch[3], 10) : base.getFullYear();
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return localDateKey(new Date(yr, m - 1, d));
+    }
+  }
+
+  // 4. Relative words ("tomorrow", "bukas", "next Friday", "on Monday")
+  if (/\b(?:tomorrow|tmrw|bukas)\b/i.test(clean)) {
+    const dt = new Date(base.getTime());
+    dt.setDate(dt.getDate() + 1);
+    return localDateKey(dt);
+  }
+
+  const wdMatch = /\b(?:next|this|on|by|until)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\b/i.exec(clean);
+  if (wdMatch) {
+    const targetDow = WEEKDAY_MAP[wdMatch[1].toLowerCase()];
+    if (targetDow !== undefined) {
+      const curDow = base.getDay();
+      let delta = (targetDow - curDow + 7) % 7;
+      if (delta === 0) delta = 7;
+      const dt = new Date(base.getTime());
+      dt.setDate(dt.getDate() + delta);
+      return localDateKey(dt);
+    }
+  }
+
+  return null;
+}
+
 /**
  * Parse a copy-pasted Canvas announcement and automatically detect any mentioned due date!
  */
@@ -336,22 +408,7 @@ export function parsePastedAnnouncement(rawText, course = 'Canvas') {
   const lines = clean.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   const title = (lines[0] || 'Canvas Announcement').slice(0, 96);
   const body = lines.slice(1).join('\n') || clean;
-
-  let detectedDateKey = null;
-  const isoMatch = /\b(20\d{2}-\d{2}-\d{2})\b/.exec(clean);
-  if (isoMatch) {
-    detectedDateKey = isoMatch[1];
-  } else {
-    const monMatch = /\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(20\d{2}))?\b/i.exec(clean);
-    if (monMatch) {
-      const mIdx = MONTH_MAP[monMatch[1].toLowerCase()];
-      const day = parseInt(monMatch[2], 10);
-      const yr = monMatch[3] ? parseInt(monMatch[3], 10) : new Date().getFullYear();
-      if (mIdx !== undefined && day >= 1 && day <= 31) {
-        detectedDateKey = localDateKey(new Date(yr, mIdx, day));
-      }
-    }
-  }
+  const detectedDateKey = detectDateInText(clean);
 
   return {
     title,
@@ -461,12 +518,13 @@ export async function syncCanvasFeeds({ icsUrl = '', rssUrls = '', host = '', to
   for (const item of fetchedItems) {
     const prev = byUid.get(item.externalUid);
     if (prev) {
-      // Never overwrite user's `done` / submitted check-off on re-sync!
+      // Never overwrite user's `done` / submitted check-off or `pinned` state on re-sync!
       await db.plannerItems.update(prev.id, {
         title: item.title,
         course: item.course,
         author: item.author || prev.author || '',
         dateKey: item.dateKey,
+        detectedDateKey: item.detectedDateKey || prev.detectedDateKey || '',
         timeLabel: item.timeLabel,
         dueAt: item.dueAt,
         description: item.description,

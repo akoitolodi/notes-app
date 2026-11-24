@@ -82,6 +82,24 @@ db.version(7).stores({
   materialChunks: '++id, courseId, materialId',
 });
 
+// v8: additive custom user templates (personal reusable note layouts)
+db.version(8).stores({
+  folders: '++id, name, createdAt',
+  notes: '++id, folderId, title, updatedAt, pinned, createdAt',
+  examCache: 'folderId',
+  attachments: 'id, noteId, createdAt',
+  learnerMemory: '++id, subject, topic, mastery, mistakesCount, lastPracticedAt',
+  codingCache: 'key, updatedAt',
+  plannerItems: '++id, type, dateKey, done, source, externalUid',
+  classSchedule: '++id, dayOfWeek, startTime, subject',
+  bugLogs: '++id, language, errorType, createdAt',
+  activityLog: 'dateKey',
+  courses: '++id, code, name, folderId, createdAt',
+  courseMaterials: '++id, courseId, moduleName, kind, createdAt',
+  materialChunks: '++id, courseId, materialId',
+  customTemplates: '++id, name, category, createdAt',
+});
+
 export const COURSE_PALETTE = [
   '#0a84ff',
   '#28b44c',
@@ -829,6 +847,7 @@ export async function exportBackup() {
   const folders = await db.folders.toArray();
   const rawNotes = await db.notes.toArray();
   const examCache = await db.examCache.toArray();
+  const customTemplates = await db.customTemplates.toArray().catch(() => []);
 
   // Inline any v4 Blob attachments as dataUrls for portable JSON export
   const notes = [];
@@ -843,11 +862,12 @@ export async function exportBackup() {
 
   return {
     app: 'ai-class-notes',
-    schemaVersion: 4,
+    schemaVersion: 8,
     exportedAt: new Date().toISOString(),
     folders,
     notes,
     examCache,
+    customTemplates,
   };
 }
 
@@ -864,12 +884,33 @@ export async function importBackup(payload, { mode = 'merge' } = {}) {
   let foldersAdded = 0;
   let notesAdded = 0;
 
-  await db.transaction('rw', db.folders, db.notes, db.examCache, db.attachments, async () => {
+  await db.transaction('rw', db.folders, db.notes, db.examCache, db.attachments, db.customTemplates, async () => {
     if (mode === 'replace') {
       await db.attachments.clear();
       await db.examCache.clear();
       await db.notes.clear();
       await db.folders.clear();
+      await db.customTemplates.clear();
+    }
+
+    if (Array.isArray(payload.customTemplates) && payload.customTemplates.length > 0) {
+      const existingNames = new Set(
+        (await db.customTemplates.toArray()).map(t => String(t.name || '').toLowerCase())
+      );
+      for (const tpl of payload.customTemplates) {
+        const cleanName = String(tpl?.name || '').trim();
+        if (!cleanName || existingNames.has(cleanName.toLowerCase())) continue;
+        await db.customTemplates.add({
+          name: cleanName.slice(0, 48),
+          category: tpl.category || 'custom',
+          description: String(tpl.description || '').slice(0, 120),
+          title: String(tpl.title || ''),
+          body: String(tpl.body || ''),
+          icon: tpl.icon || 'file',
+          createdAt: tpl.createdAt || Date.now(),
+        });
+        existingNames.add(cleanName.toLowerCase());
+      }
     }
 
     const existingFolders = await db.folders.toArray();
@@ -1016,4 +1057,49 @@ export async function saveCardReviewResult(noteId, cardIndex, nextCardState) {
   cardProgress[cardIndex] = nextCardState;
   studyData.cardProgress = cardProgress;
   await db.notes.update(noteId, { studyData });
+}
+
+// ---------- Custom Templates & Announcements Pinning (v2.0.0) ----------
+
+export async function listCustomTemplates() {
+  try {
+    const rows = await db.customTemplates.toArray();
+    return rows.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  } catch {
+    return [];
+  }
+}
+
+export async function saveCustomTemplate({
+  name,
+  category = 'custom',
+  description = '',
+  title = '',
+  body = '',
+  icon = 'file',
+}) {
+  const cleanName = String(name || '').trim().slice(0, 48);
+  if (!cleanName) throw new Error('Template name is required');
+  const id = await db.customTemplates.add({
+    name: cleanName,
+    category,
+    description: String(description || 'Personal saved template').trim().slice(0, 120),
+    title: String(title || ''),
+    body: String(body || ''),
+    icon: icon || 'file',
+    createdAt: Date.now(),
+  });
+  return db.customTemplates.get(id);
+}
+
+export async function deleteCustomTemplate(id) {
+  await db.customTemplates.delete(id);
+}
+
+export async function togglePinPlannerItem(id) {
+  const item = await db.plannerItems.get(id);
+  if (!item) return false;
+  const next = !item.pinned;
+  await db.plannerItems.update(id, { pinned: next, updatedAt: Date.now() });
+  return next;
 }

@@ -13,6 +13,19 @@ import { getCodapiConfig } from './aiConfig';
 import { getLanguageMeta } from './codingCatalog';
 import { getAdaptiveTimeouts } from './netResilience';
 
+/**
+ * Inject a lightweight iteration guard into JS loops (for/while/do) so accidental
+ * infinite loops (e.g. while(true){}) abort cleanly instead of freezing Android WebView.
+ */
+export function guardJavaScriptLoops(src, maxIterations = 200000) {
+  const counterDecl = `let __baiLoopOps = 0; const __baiTick = () => { if (++__baiLoopOps > ${maxIterations}) throw new Error('Infinite loop stopped (exceeded ${maxIterations.toLocaleString()} iterations)'); };\n`;
+  const guarded = String(src || '')
+    .replace(/\b(while\s*\([^)]*\)\s*\{)/g, '$1 __baiTick();')
+    .replace(/\b(for\s*\([^)]*\)\s*\{)/g, '$1 __baiTick();')
+    .replace(/\b(do\s*\{)/g, '$1 __baiTick();');
+  return counterDecl + guarded;
+}
+
 /** Run JavaScript safely inside a captured-console Function scope (instant & offline). */
 export function runJavaScriptLocally(code) {
   const logs = [];
@@ -41,14 +54,15 @@ export function runJavaScriptLocally(code) {
 
   const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   try {
-    // Prevent direct window/document mutation by shadowing common globals
+    // Prevent direct window/document mutation by shadowing common globals + loop safety guard
+    const safeBody = guardJavaScriptLoops(code);
     const fn = new Function(
       'console',
       'window',
       'document',
       'localStorage',
       'fetch',
-      `"use strict";\n${code}`
+      `"use strict";\n${safeBody}`
     );
     const ret = fn(mockConsole, undefined, undefined, undefined, undefined);
     if (ret !== undefined && logs.length === 0) {

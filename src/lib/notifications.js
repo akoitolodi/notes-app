@@ -64,11 +64,25 @@ function saveReadAnnouncementSet(set) {
   }
 }
 
+export function isAnnouncementRead(item) {
+  const key = item?.externalUid || String(item?.id || '');
+  if (!key) return false;
+  return getReadAnnouncementSet().has(key);
+}
+
 export function markAnnouncementRead(item) {
   const key = item?.externalUid || String(item?.id || '');
   if (!key) return;
   const set = getReadAnnouncementSet();
   set.add(key);
+  saveReadAnnouncementSet(set);
+}
+
+export function markAnnouncementUnread(item) {
+  const key = item?.externalUid || String(item?.id || '');
+  if (!key) return;
+  const set = getReadAnnouncementSet();
+  set.delete(key);
   saveReadAnnouncementSet(set);
 }
 
