@@ -327,12 +327,19 @@ export async function saveExamPaperPDF(doc, baseName = 'exam-paper') {
       data: b64,
       directory: Directory.Cache,
     });
-    await Share.share({
-      title: filename,
-      url: written.uri,
-      dialogTitle: 'Print or Save Exam Paper PDF',
-    });
-    return 'shared';
+    try {
+      await Share.share({
+        title: filename,
+        files: [written.uri],
+        dialogTitle: 'Print or Save Exam Paper PDF',
+      });
+      return 'shared';
+    } catch (err) {
+      if (/cancel|abort/i.test(String(err?.message || err))) {
+        return 'cancelled';
+      }
+      throw err;
+    }
   }
 
   doc.save(filename);

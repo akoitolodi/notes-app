@@ -34,6 +34,7 @@ import {
   Bell,
   Megaphone,
   RefreshCw,
+  Palette,
 } from 'lucide-react';
 import {
   db,
@@ -112,6 +113,7 @@ export default function FoldersScreen({
   onOpenCoding,
   onOpenTrash,
   onOpenSettings,
+  onOpenThemes,
 }) {
   const { confirm, prompt, toast } = useDialog();
   const [summary, setSummary] = useState({
@@ -474,6 +476,16 @@ export default function FoldersScreen({
           >
             <Search size={18} />
           </button>
+          {onOpenThemes && (
+            <button
+              className="navbar-btn navbar-glass-btn"
+              aria-label="Themes & Palettes"
+              title="Themes & Palettes Studio"
+              onClick={onOpenThemes}
+            >
+              <Palette size={18} />
+            </button>
+          )}
           <button className="navbar-btn navbar-glass-btn" aria-label="Settings" onClick={onOpenSettings}>
             <Settings size={18} />
           </button>

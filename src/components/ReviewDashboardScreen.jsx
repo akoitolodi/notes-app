@@ -26,6 +26,7 @@ import {
   deleteLearnerTopic,
   clearLearnerMemory,
 } from '../lib/learnerMemory';
+import { buildUserPatternProfile } from '../lib/userPatterns';
 import {
   scheduleCard,
   previewIntervals,
@@ -63,13 +64,31 @@ export default function ReviewDashboardScreen({ onBack, onOpenNote, onChanged })
   const [sessionReviewed, setSessionReviewed] = useState(0);
   const [stats, setStats] = useState(() => getReviewStats());
   const [memoryRows, setMemoryRows] = useState([]);
+  const [patternProfile, setPatternProfile] = useState(null);
   const [audioCardsOpen, setAudioCardsOpen] = useState(false);
 
   const loadDeck = useCallback(async () => {
     setLoading(true);
-    const [data, mem] = await Promise.all([getDueFlashcards(), getLearnerMemory()]);
+    const [data, mem, folders, notes, activityLog, bugLogs] = await Promise.all([
+      getDueFlashcards(),
+      getLearnerMemory(),
+      db.folders.toArray().catch(() => []),
+      db.notes.toArray().catch(() => []),
+      db.activityLog.toArray().catch(() => []),
+      db.bugLogs.toArray().catch(() => []),
+    ]);
     setSummary(data);
     setMemoryRows(mem);
+    setPatternProfile(
+      buildUserPatternProfile({
+        folders,
+        notes,
+        activityLog,
+        learnerMemory: mem,
+        allCards: data.allCards,
+        bugLogs,
+      })
+    );
     setQueue(data.dueCards);
     setPracticeMode(false);
     setFlipped(false);
@@ -337,6 +356,53 @@ export default function ReviewDashboardScreen({ onBack, onOpenNote, onChanged })
               </div>
             )}
           </>
+        )}
+
+        {/* 100% Offline User Pattern Recognition Insights */}
+        {patternProfile && (
+          <div className="list-group settings-group" style={{ margin: '18px 0 0' }}>
+            <div className="flex justify-between items-center" style={{ marginBottom: 8 }}>
+              <span className="settings-label flex items-center gap-6" style={{ marginBottom: 0 }}>
+                <Brain size={14} /> Your Study Patterns (100% Offline)
+              </span>
+              <span className="mode-badge mode-code">Local ML</span>
+            </div>
+
+            <div className="pattern-stats-grid">
+              <div className="pattern-mini-card">
+                <div className="pattern-mini-label">Peak Focus</div>
+                <div className="pattern-mini-val">{patternProfile.rhythm.peakWindow}</div>
+              </div>
+              <div className="pattern-mini-card">
+                <div className="pattern-mini-label">Strongest Day</div>
+                <div className="pattern-mini-val">{patternProfile.rhythm.bestDay}</div>
+              </div>
+              <div className="pattern-mini-card">
+                <div className="pattern-mini-label">Note Habit</div>
+                <div className="pattern-mini-val">{patternProfile.rhythm.dominantHabit}</div>
+              </div>
+            </div>
+
+            {patternProfile.topSubjects.length > 0 && (
+              <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
+                Top subjects:{' '}
+                <strong>
+                  {patternProfile.topSubjects.map(s => `${s.name} (${s.count})`).join(' · ')}
+                </strong>
+              </div>
+            )}
+
+            {patternProfile.weakInsights.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
+                {patternProfile.weakInsights.map((ins, i) => (
+                  <div key={i} className="pattern-insight-row">
+                    <div style={{ fontSize: 12.5, fontWeight: 700 }}>{ins.title}</div>
+                    <div style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>{ins.detail}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         )}
 
         {/* DeepTutor Persistent Learner Memory Panel */}

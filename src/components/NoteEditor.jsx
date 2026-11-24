@@ -74,6 +74,7 @@ import EditModeView from './editor/EditModeView';
 import AnnotateBar from './editor/AnnotateBar';
 import MarkdownContent from './ui/MarkdownContent';
 import { useDialog } from './ui/DialogProvider';
+import { PDF_STYLES, detectPdfStyle } from '../lib/pdfThemes';
 import { isDarkTheme, HINT_KEY } from '../theme';
 
 function normalizeDrawings(d) {
@@ -169,6 +170,7 @@ export default function NoteEditor({
   });
   const [moreOpen, setMoreOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [pdfStyle, setPdfStyle] = useState('auto');
   const [exporting, setExporting] = useState(false);
   const [printPayload, setPrintPayload] = useState(null);
   const [moveOpen, setMoveOpen] = useState(false);
@@ -1016,20 +1018,29 @@ export default function NoteEditor({
     toast(ok ? 'Copied to clipboard' : 'Copy failed');
   };
 
-  const handleExportPDF = async withExpl => {
+  const handleExportPDF = async (withExpl, saveToDocs = false) => {
     setExportOpen(false);
     setExporting(true);
     try {
-      const { buildNotePDF, saveNotePDF } = await import('../lib/pdf');
+      const { buildNotePDF, saveNotePDF, savePdfToDocuments } = await import('../lib/pdf');
       const doc = await buildNotePDF({
         title: title || 'New Note',
         body,
+        subject,
+        noteMode: activeNoteMode,
+        pdfStyle,
         blocks,
         images,
         drawings,
         withExplanations: withExpl,
       });
+      if (saveToDocs) {
+        const res = await savePdfToDocuments(doc, title || 'note');
+        toast(`Saved PDF to ${res.savedPath}`, { type: 'success' });
+        return;
+      }
       const how = await saveNotePDF(doc, title || 'note');
+      if (how === 'cancelled') return;
       toast(
         how === 'shared' ? 'PDF ready — pick where to save or send it' : 'PDF downloaded',
         { type: 'success' }
@@ -1157,8 +1168,14 @@ export default function NoteEditor({
         onSaveAndExplain={handleSaveAndExplain}
         onApplyTemplate={handleApplyTemplate}
         onSaveFlashcards={handleSaveOfflineFlashcards}
+        onMoveToFolder={handleMove}
+        onOpenRelatedNote={async targetId => {
+          const target = await getNote(targetId);
+          if (target) onOpenNote?.(target);
+        }}
         noteMode={activeNoteMode}
         currentNoteId={note.id}
+        currentFolderId={folderId}
       />
     );
   }
@@ -1621,20 +1638,52 @@ export default function NoteEditor({
             <button type="button" className="export-btn" onClick={handleCopyText}>
               <ClipboardCopy size={18} /> Copy note text
             </button>
+
+            <div style={{ margin: '10px 0 8px' }}>
+              <div className="settings-label" style={{ marginBottom: 6 }}>
+                PDF Design ({pdfStyle === 'auto'
+                  ? `Auto: ${PDF_STYLES.find(p => p.id === detectPdfStyle({ title, body, noteMode: activeNoteMode }))?.label || 'Academic'}`
+                  : PDF_STYLES.find(p => p.id === pdfStyle)?.label})
+              </div>
+              <div className="mode-picker-row">
+                {PDF_STYLES.map(st => (
+                  <button
+                    key={st.id}
+                    type="button"
+                    className={`mode-pick-chip${pdfStyle === st.id ? ' active' : ''}`}
+                    style={{ flex: '0 0 auto', minWidth: 0, padding: '6px 10px', fontSize: 12 }}
+                    onClick={() => setPdfStyle(st.id)}
+                  >
+                    {st.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <button
               type="button"
               className="export-btn"
               disabled={exporting}
-              onClick={() => handleExportPDF(false)}
+              onClick={() => handleExportPDF(false, false)}
             >
-              <FileDown size={18} /> {exporting ? 'Building PDF…' : 'Export PDF'}
+              <FileDown size={18} /> {exporting ? 'Building PDF…' : isNative ? 'Export & Share PDF' : 'Export PDF'}
             </button>
+            {isNative && (
+              <button
+                type="button"
+                className="export-btn"
+                disabled={exporting}
+                onClick={() => handleExportPDF(false, true)}
+              >
+                <FileDown size={18} /> Save PDF to Phone Documents
+              </button>
+            )}
             {explBlocks.length > 0 && (
               <button
                 type="button"
                 className="export-btn"
                 disabled={exporting}
-                onClick={() => handleExportPDF(true)}
+                onClick={() => handleExportPDF(true, false)}
               >
                 <FileDown size={18} />{' '}
                 {exporting ? 'Building PDF…' : 'Export PDF with AI explanations'}

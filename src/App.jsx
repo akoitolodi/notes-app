@@ -28,6 +28,7 @@ const LearnCodingScreen = lazy(() => import('./components/LearnCodingScreen'));
 const StudentHubScreen = lazy(() => import('./components/StudentHubScreen'));
 const CoursesDashboardScreen = lazy(() => import('./components/CoursesDashboardScreen'));
 const AnnouncementsScreen = lazy(() => import('./components/AnnouncementsScreen'));
+const ThemeStudioScreen = lazy(() => import('./components/ThemeStudioScreen'));
 
 export default function App() {
   const [ready, setReady] = useState(false);
@@ -36,6 +37,7 @@ export default function App() {
   const [note, setNote] = useState(null);
   const [noteInitialMode, setNoteInitialMode] = useState(null);
   const [examPaperTarget, setExamPaperTarget] = useState(null); // { sourceNote?, sourceFolder?, sourceCourse?, returnScreen }
+  const [themesReturnTo, setThemesReturnTo] = useState('folders');
   const [sharedImport, setSharedImport] = useState(null); // { file?, text?, title? } from Android Share Target
   const [sidebarTick, setSidebarTick] = useState(0);
   const [isWide, setIsWide] = useState(() =>
@@ -214,6 +216,15 @@ export default function App() {
     pushHistoryEntry('settings');
   }, [pushHistoryEntry]);
 
+  const handleOpenThemes = useCallback(
+    (returnTo = 'folders') => {
+      setThemesReturnTo(returnTo);
+      setScreen('themes');
+      pushHistoryEntry('themes');
+    },
+    [pushHistoryEntry]
+  );
+
   const handleOpenReview = useCallback(() => {
     setScreen('review');
     pushHistoryEntry('review');
@@ -299,6 +310,14 @@ export default function App() {
     }
     if (screen === 'editor') {
       await handleBackFromEditor();
+      return true;
+    }
+    if (screen === 'themes') {
+      if (themesReturnTo === 'settings') {
+        setScreen('settings');
+      } else {
+        handleBackToFolders();
+      }
       return true;
     }
     if (
@@ -576,7 +595,32 @@ export default function App() {
       return <TrashScreen onBack={handleBackToFolders} onChanged={bumpSidebar} />;
     }
     if (screen === 'settings') {
-      return <SettingsScreen onBack={handleBackToFolders} onDataImported={bumpSidebar} />;
+      return (
+        <SettingsScreen
+          onBack={handleBackToFolders}
+          onDataImported={bumpSidebar}
+          onOpenThemes={() => handleOpenThemes('settings')}
+        />
+      );
+    }
+    if (screen === 'themes') {
+      return (
+        <Suspense
+          fallback={
+            <div className="screen" style={{ alignItems: 'center', justifyContent: 'center' }}>
+              <div className="scan-indicator">
+                <span className="spinner" /> Loading Themes…
+              </div>
+            </div>
+          }
+        >
+          <ThemeStudioScreen
+            onBack={() =>
+              themesReturnTo === 'settings' ? setScreen('settings') : handleBackToFolders()
+            }
+          />
+        </Suspense>
+      );
     }
     return null;
   };
@@ -612,6 +656,7 @@ export default function App() {
               onOpenCoding={handleOpenCoding}
               onOpenTrash={handleOpenTrash}
               onOpenSettings={handleOpenSettings}
+              onOpenThemes={() => handleOpenThemes('folders')}
             />
           )}
         </aside>

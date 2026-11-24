@@ -22,9 +22,12 @@ import {
   Share2,
   Bell,
   Signal,
+  Palette,
+  ChevronRight,
 } from 'lucide-react';
 import {
   THEME_KEY,
+  THEME_PRESET_KEY,
   ACCENT_KEY,
   SIZE_KEY,
   PAPER_KEY,
@@ -179,7 +182,7 @@ function Segmented({ options, value, onChange }) {
   );
 }
 
-export default function SettingsScreen({ onBack, onDataImported }) {
+export default function SettingsScreen({ onBack, onDataImported, onOpenThemes }) {
   const { confirm, toast } = useDialog();
   const initial = getSettings();
   const [theme, setTheme] = useState(initial.theme);
@@ -235,6 +238,9 @@ export default function SettingsScreen({ onBack, onDataImported }) {
     setter(value);
     try {
       localStorage.setItem(lsKey, value);
+      if (lsKey === THEME_KEY) {
+        localStorage.setItem(THEME_PRESET_KEY, 'default');
+      }
     } catch {
       // ignore
     }
@@ -483,6 +489,27 @@ export default function SettingsScreen({ onBack, onDataImported }) {
 
       {/* Appearance & Reading */}
       <div className="list-group settings-group">
+        {onOpenThemes && (
+          <button
+            type="button"
+            className="theme-studio-entry-btn"
+            onClick={onOpenThemes}
+          >
+            <span className="bento-tile-icon" style={{ background: 'var(--accent-tint)', color: 'var(--accent-ink)' }}>
+              <Palette size={18} />
+            </span>
+            <span style={{ flex: 1, minWidth: 0, textAlign: 'left' }}>
+              <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--text)' }}>
+                Themes &amp; Palettes Studio
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 1 }}>
+                12 full surface themes · 12 dual-tone palettes · Paper styles
+              </div>
+            </span>
+            <ChevronRight size={17} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
+          </button>
+        )}
+
         <div className="settings-label">Appearance</div>
         <Segmented
           options={[
@@ -1310,7 +1337,7 @@ export default function SettingsScreen({ onBack, onDataImported }) {
           • Press <strong>Ctrl+S</strong> to save immediately or <strong>Ctrl+Shift+S</strong> to save & explain.
         </div>
         <div className="settings-tip" style={{ marginTop: 10, opacity: 0.7 }}>
-          Notes by Bai v2.0.1
+          Notes by Bai v2.0.2
         </div>
       </div>
 

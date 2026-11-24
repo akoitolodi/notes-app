@@ -461,16 +461,66 @@ export async function summarizeNote({ note, subject, style, onToken = null, sign
 }
 
 // ---------------- 5. OCR (photo → text) ----------------
-export async function ocrImage({ imageDataUrl, subject, signal = null }) {
+
+/**
+ * Strip stray Markdown formatting (# headings, **bold**, *italic*, backticks,
+ * code fences, and AI preambles) from vision OCR output while preserving genuine
+ * math expressions (e.g. 3 * 4) and clean "-" list dashes.
+ */
+export function cleanOcrText(raw) {
+  let text = String(raw || '').replace(/\r\n/g, '\n').trim();
+  if (!text) return '';
+
+  // Remove common AI intro / outro chatter lines
+  text = text
+    .replace(/^(?:sure|here(?:'s| is)|transcribed text|extracted text|ocr output)[^\n]*:\s*\n+/i, '')
+    .replace(/^```[a-zA-Z0-9_-]*[ \t]*\n?/gm, '')
+    .replace(/\n?```[ \t]*$/gm, '');
+
+  const cleanedLines = text.split('\n').map(line => {
+    let s = line;
+    // Drop pure markdown horizontal rules like --- or ***
+    if (/^\s*([-*_]){3,}\s*$/.test(s)) return '';
+    // Strip ATX heading prefixes (# Title -> Title)
+    s = s.replace(/^\s*#{1,6}\s+/, '');
+    // Convert leading Markdown * or + bullets to clean plain "-" bullets
+    s = s.replace(/^(\s*)[*+]\s+/, '$1- ');
+    // Strip blockquote > prefix
+    s = s.replace(/^\s*>\s?/, '');
+    // Unwrap bold **text** / __text__
+    s = s.replace(/\*\*([^*\n]+)\*\*/g, '$1').replace(/__([^_\n]+)__/g, '$1');
+    // Unwrap Markdown italic *word phrase* without breaking math multiplication (3 * 4)
+    s = s.replace(/(?<![\w\d])\*(?!\s)([^*\n]+?)(?<!\s)\*(?![\w\d])/g, '$1');
+    // Strip leftover stray bold/bullet asterisk markers around colons or line boundaries
+    s = s.replace(/\*{2,}/g, '');
+    // Unwrap inline code backticks (`code` -> code)
+    s = s.replace(/`([^`\n]+)`/g, '$1');
+    return s;
+  });
+
+  return cleanedLines
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+export async function ocrImage(arg, legacySignal = null) {
+  const opts =
+    typeof arg === 'string'
+      ? { imageDataUrl: arg, subject: '', signal: legacySignal }
+      : arg || {};
+  const { imageDataUrl, subject = '', signal = legacySignal } = opts;
+
   const sys =
-    'You are an OCR assistant. Transcribe ALL visible handwritten or printed text from the image exactly as written, preserving line breaks. Clean up obvious OCR artifacts but never invent content. Output ONLY the transcribed text.';
-  return aiVision({
+    'You are an OCR assistant. Transcribe ALL visible handwritten or printed text from the image accurately, preserving natural line breaks. STRICT FORMATTING RULE: Output CLEAN PLAIN TEXT ONLY. Do NOT use Markdown syntax such as #, ##, **, *, __, backticks (`), or ``` code fences. Only use a plain hyphen "-" at the start of a line if the image itself has bullet points. Never invent content or add introductory text.';
+  const raw = await aiVision({
     system: sys,
-    user: `Transcribe all text from this ${subject || ''} note photo. Output only the text.`,
+    user: `Transcribe all text from this ${subject || ''} note photo. Return clean plain text only without any Markdown symbols.`,
     imageDataUrl,
     maxTokens: 2000,
     signal,
   });
+  return cleanOcrText(raw);
 }
 
 // ---------------- 6. Explain a photo ----------------

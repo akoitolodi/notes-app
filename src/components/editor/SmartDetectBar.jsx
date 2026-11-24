@@ -31,8 +31,11 @@ import {
   Copy,
   Check,
   ZapOff,
+  FolderInput,
+  Link2,
 } from 'lucide-react';
 import { detectBlankNoteIntents } from '../../lib/smartNoteDetect';
+import { classifyFolderNaiveBayes, findSimilarNotesOffline } from '../../lib/userPatterns';
 import { executeCode } from '../../lib/codeRunner';
 import { aiText } from '../../lib/aiCore';
 import { importPublicGoogleLink } from '../../lib/courseExtras';
@@ -54,21 +57,29 @@ const KIND_ICONS = {
   translate: Languages,
   gdoc: FileDown,
   color: Palette,
+  move_folder: FolderInput,
+  similar_note: Link2,
 };
 
 export default function SmartDetectBar({
+  title = '',
   body,
   subject = 'General',
+  currentNoteId = null,
+  currentFolderId = null,
   isZeroAi = false,
   enabled = true,
   onToggleEnabled,
   onAppendText,
   onReplaceBody,
   onSaveFlashcards,
+  onMoveToFolder,
+  onOpenRelatedNote,
 }) {
   const { toast } = useDialog();
   const [debouncedBody, setDebouncedBody] = useState(body || '');
   const [activeIdx, setActiveIdx] = useState(0);
+  const [corpus, setCorpus] = useState(null); // { folders, notes } cached for offline pattern matching
 
   // Inline result drawer state (code output OR AI step-by-step / translation / debug)
   const [busyAction, setBusyAction] = useState('');
@@ -81,10 +92,78 @@ export default function SmartDetectBar({
     return () => clearTimeout(t);
   }, [body]);
 
-  const detections = useMemo(
-    () => detectBlankNoteIntents(debouncedBody, { isZeroAi, enabled }),
-    [debouncedBody, isZeroAi, enabled]
-  );
+  // Load non-vault folders & notes once for 100% offline Naive Bayes & similarity pattern matching
+  useEffect(() => {
+    if (isZeroAi || !enabled) {
+      setCorpus(null);
+      return undefined;
+    }
+    let live = true;
+    Promise.all([db.folders.toArray(), db.notes.toArray()])
+      .then(([folders, notes]) => {
+        if (!live) return;
+        setCorpus({ folders, notes });
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [isZeroAi, enabled]);
+
+  const detections = useMemo(() => {
+    const base = detectBlankNoteIntents(debouncedBody, { isZeroAi, enabled });
+    if (isZeroAi || !enabled || !corpus || debouncedBody.trim().length < 28) {
+      return base;
+    }
+    const combinedText = `${title || ''} ${debouncedBody}`;
+    const extra = [];
+
+    if (onMoveToFolder) {
+      const folderMatch = classifyFolderNaiveBayes(combinedText, corpus.folders, corpus.notes, {
+        currentFolderId,
+      });
+      if (folderMatch) {
+        extra.push({
+          id: `move:${folderMatch.folderId}`,
+          kind: 'move_folder',
+          badge: `File → ${folderMatch.folderName}`,
+          title: `Looks like ${folderMatch.folderName} (${folderMatch.confidence}%)`,
+          summary: '1-tap offline pattern match',
+          meta: folderMatch,
+        });
+      }
+    }
+
+    if (onOpenRelatedNote) {
+      const sim = findSimilarNotesOffline(combinedText, {
+        currentNoteId,
+        notes: corpus.notes,
+        folders: corpus.folders,
+      });
+      if (sim) {
+        extra.push({
+          id: `sim:${sim.noteId}`,
+          kind: 'similar_note',
+          badge: 'Related',
+          title: `Similar: ${sim.title}`,
+          summary: `${sim.score}% topic overlap (offline)`,
+          meta: sim,
+        });
+      }
+    }
+
+    return [...base, ...extra].slice(0, 3);
+  }, [
+    debouncedBody,
+    title,
+    isZeroAi,
+    enabled,
+    corpus,
+    currentFolderId,
+    currentNoteId,
+    onMoveToFolder,
+    onOpenRelatedNote,
+  ]);
 
   // Keep activeIdx within bounds when detections change
   const safeIdx = activeIdx < detections.length ? activeIdx : 0;
@@ -572,6 +651,26 @@ export default function SmartDetectBar({
               onClick={() => handleImportGoogleDoc(active.meta)}
             >
               <FileDown size={12} /> {busyAction === 'gdoc' ? 'Importing…' : 'Import'}
+            </button>
+          )}
+
+          {active.kind === 'move_folder' && (
+            <button
+              type="button"
+              className="row-action-chip active-chip"
+              onClick={() => onMoveToFolder?.({ id: active.meta.folderId, name: active.meta.folderName })}
+            >
+              <FolderInput size={12} /> Move
+            </button>
+          )}
+
+          {active.kind === 'similar_note' && (
+            <button
+              type="button"
+              className="row-action-chip active-chip"
+              onClick={() => onOpenRelatedNote?.(active.meta.noteId)}
+            >
+              <Link2 size={12} /> Open
             </button>
           )}
 

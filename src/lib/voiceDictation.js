@@ -23,13 +23,21 @@ const FATAL_ERRORS = new Set([
   'language-not-supported',
 ]);
 
+export function hasNativeAndroidSpeech() {
+  return (
+    typeof window !== 'undefined' &&
+    Boolean(window.BaiNativeSpeech) &&
+    typeof window.BaiNativeSpeech.start === 'function'
+  );
+}
+
 export function getSpeechRecognitionCtor() {
   if (typeof window === 'undefined') return null;
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
 }
 
 export function isSpeechRecognitionSupported() {
-  return Boolean(getSpeechRecognitionCtor());
+  return hasNativeAndroidSpeech() || Boolean(getSpeechRecognitionCtor());
 }
 
 export function friendlySpeechError(code) {
@@ -38,11 +46,13 @@ export function friendlySpeechError(code) {
     case 'service-not-allowed':
       return 'Microphone permission denied. Allow mic access in your device settings or use your keyboard microphone.';
     case 'audio-capture':
-      return 'No microphone detected. Check that no other app is using your mic.';
+      return 'No microphone detected or mic is busy in another app. Check your mic and try again.';
     case 'network':
-      return 'Speech service requires an internet connection on this device. Try your keyboard’s offline mic button.';
+      return 'Speech service requires internet or an offline speech language pack on this device.';
     case 'no-speech':
       return 'No speech detected — keep talking or tap Stop when finished.';
+    case 'unsupported':
+      return 'Google Speech Recognition service is disabled or missing on this phone. Enable "Speech Recognition & Synthesis from Google" or use your keyboard mic.';
     default:
       return 'Voice dictation paused. Tap Resume or use your keyboard microphone.';
   }
@@ -77,6 +87,116 @@ export function createDictationSession({
   onError = null,
   onStateChange = null, // 'idle' | 'listening' | 'paused'
 } = {}) {
+  // Native Android APK SpeechRecognizer bridge (works even when Android WebView lacks Web Speech!)
+  if (hasNativeAndroidSpeech()) {
+    let active = false;
+    let paused = false;
+    let currentLang = lang || '';
+
+    const bindCallback = () => {
+      window.__baiSpeechCallback = (eventType, payload) => {
+        if (eventType === 'interim') {
+          if (active && !paused) onInterim?.(String(payload || '').trim());
+          return;
+        }
+        if (eventType === 'final') {
+          const clean = String(payload || '').trim();
+          onInterim?.('');
+          if (clean && active && !paused) onFinal?.(clean);
+          return;
+        }
+        if (eventType === 'error') {
+          const code = String(payload || 'unknown');
+          onError?.(friendlySpeechError(code), code);
+          if (FATAL_ERRORS.has(code) || code === 'network' || code === 'unsupported' || code.startsWith('speech-error-')) {
+            active = false;
+            paused = false;
+            onInterim?.('');
+            onStateChange?.('idle');
+          }
+          return;
+        }
+        if (eventType === 'state') {
+          if (payload === 'idle') {
+            if (!paused) {
+              active = false;
+              onStateChange?.('idle');
+            }
+          } else if (payload === 'listening' && active && !paused) {
+            onStateChange?.('listening');
+          }
+        }
+      };
+    };
+
+    return {
+      async start() {
+        const bridge = window.BaiNativeSpeech;
+        const avail = typeof bridge.isAvailable === 'function' ? bridge.isAvailable() : true;
+        if (!avail) {
+          onError?.(friendlySpeechError('unsupported'), 'unsupported');
+          return false;
+        }
+        bindCallback();
+        active = true;
+        paused = false;
+        onStateChange?.('listening');
+        bridge.start(currentLang || (typeof navigator !== 'undefined' ? navigator.language : 'en-US') || 'en-US');
+        return true;
+      },
+      pause() {
+        if (!active || paused) return;
+        paused = true;
+        onInterim?.('');
+        onStateChange?.('paused');
+        try {
+          window.BaiNativeSpeech.stop();
+        } catch {
+          // ignore
+        }
+      },
+      resume() {
+        if (!active || !paused) return;
+        bindCallback();
+        paused = false;
+        onStateChange?.('listening');
+        window.BaiNativeSpeech.start(currentLang || (typeof navigator !== 'undefined' ? navigator.language : 'en-US') || 'en-US');
+      },
+      stop() {
+        active = false;
+        paused = false;
+        onInterim?.('');
+        onStateChange?.('idle');
+        if (typeof window !== 'undefined' && window.__baiSpeechCallback) {
+          window.__baiSpeechCallback = null;
+        }
+        try {
+          window.BaiNativeSpeech.stop();
+        } catch {
+          // ignore
+        }
+      },
+      setLang(nextLang) {
+        currentLang = nextLang || '';
+        if (active && !paused) {
+          try {
+            window.BaiNativeSpeech.stop();
+          } catch {
+            // ignore
+          }
+          setTimeout(() => {
+            if (active && !paused && hasNativeAndroidSpeech()) {
+              window.BaiNativeSpeech.start(currentLang || 'en-US');
+            }
+          }, 180);
+        }
+      },
+      isActive() {
+        return active;
+      },
+    };
+  }
+
   const Ctor = getSpeechRecognitionCtor();
   let recognition = null;
   let active = false;

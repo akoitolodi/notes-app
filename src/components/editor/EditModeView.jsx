@@ -83,8 +83,11 @@ export default function EditModeView({
   onSaveAndExplain,
   onApplyTemplate = null,
   onSaveFlashcards = null,
+  onMoveToFolder = null,
+  onOpenRelatedNote = null,
   noteMode = 'study',
   currentNoteId = null,
+  currentFolderId = null,
 }) {
   const { toast } = useDialog();
   const modeMeta = getModeMeta(noteMode);
@@ -906,8 +909,11 @@ export default function EditModeView({
 
       {/* Smart Blank-Note Auto-Detection Strip — docked right above toolbar (hidden on plain text & Zero-AI Vault) */}
       <SmartDetectBar
+        title={title}
         body={body}
         subject={subject}
+        currentNoteId={currentNoteId}
+        currentFolderId={currentFolderId}
         isZeroAi={isZeroAi}
         enabled={smartDetectOn}
         onToggleEnabled={handleToggleSmartDetect}
@@ -919,6 +925,8 @@ export default function EditModeView({
         }}
         onReplaceBody={nextBody => onBodyChange(nextBody)}
         onSaveFlashcards={onSaveFlashcards}
+        onMoveToFolder={onMoveToFolder}
+        onOpenRelatedNote={onOpenRelatedNote}
       />
 
       {/* Mobile-friendly Formatting & Attachment Bar */}

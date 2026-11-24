@@ -1,34 +1,49 @@
 package com.philipjohn.aiclassnotes;
 
+import android.Manifest;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.OpenableColumns;
+import android.speech.RecognitionListener;
+import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.util.Base64;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebView;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import com.getcapacitor.BridgeActivity;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.Locale;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
 
     private static final int MAX_SHARED_BYTES = 12 * 1024 * 1024; // 12 MB safety cap
+    private static final int REQ_RECORD_AUDIO = 4201;
     private TextToSpeech tts;
     private volatile boolean ttsReady = false;
+    private SpeechRecognizer speechRecognizer;
+    private volatile boolean speechListening = false;
+    private String speechLang = "";
+    private int speechConsecutiveErrors = 0;
+    private Runnable pendingSpeechRestart;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         initNativeTts();
+        initNativeSpeech();
         handleShareIntent(getIntent());
     }
 
@@ -40,7 +55,34 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQ_RECORD_AUDIO) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                mainHandler.post(() -> startNativeRecognition(speechLang));
+            } else {
+                speechListening = false;
+                notifySpeechJs("error", "not-allowed");
+                notifySpeechJs("state", "idle");
+            }
+        }
+    }
+
+    @Override
     public void onDestroy() {
+        try {
+            if (pendingSpeechRestart != null) {
+                mainHandler.removeCallbacks(pendingSpeechRestart);
+                pendingSpeechRestart = null;
+            }
+            speechListening = false;
+            if (speechRecognizer != null) {
+                speechRecognizer.destroy();
+                speechRecognizer = null;
+            }
+        } catch (Exception ignored) {
+            // ignore speech shutdown error
+        }
         try {
             if (tts != null) {
                 tts.stop();
@@ -156,6 +198,238 @@ public class MainActivity extends BridgeActivity {
                 } catch (Exception ignored) {
                     // ignore
                 }
+            });
+        }
+    }
+
+    private void initNativeSpeech() {
+        try {
+            if (getBridge() != null && getBridge().getWebView() != null) {
+                getBridge().getWebView().addJavascriptInterface(new AndroidSpeechBridge(), "BaiNativeSpeech");
+            }
+        } catch (Exception ignored) {
+            // ignore WebView bridge attach error
+        }
+    }
+
+    private void notifySpeechJs(final String eventType, final String payload) {
+        final String js =
+            "try { if (window.__baiSpeechCallback) window.__baiSpeechCallback("
+                + JSONObject.quote(eventType != null ? eventType : "")
+                + ", "
+                + JSONObject.quote(payload != null ? payload : "")
+                + "); } catch(e) {}";
+        mainHandler.post(() -> {
+            try {
+                if (getBridge() != null && getBridge().getWebView() != null) {
+                    getBridge().getWebView().evaluateJavascript(js, null);
+                }
+            } catch (Exception ignored) {
+                // ignore
+            }
+        });
+    }
+
+    private void scheduleSpeechRestart(long delayMs) {
+        if (pendingSpeechRestart != null) {
+            mainHandler.removeCallbacks(pendingSpeechRestart);
+            pendingSpeechRestart = null;
+        }
+        if (!speechListening) return;
+        pendingSpeechRestart = () -> {
+            pendingSpeechRestart = null;
+            if (speechListening) {
+                startNativeRecognition(speechLang);
+            }
+        };
+        mainHandler.postDelayed(pendingSpeechRestart, delayMs);
+    }
+
+    private void destroySpeechRecognizer() {
+        try {
+            if (speechRecognizer != null) {
+                speechRecognizer.cancel();
+                speechRecognizer.destroy();
+                speechRecognizer = null;
+            }
+        } catch (Exception ignored) {
+            speechRecognizer = null;
+        }
+    }
+
+    private void startNativeRecognition(final String lang) {
+        destroySpeechRecognizer();
+        try {
+            if (!SpeechRecognizer.isRecognitionAvailable(getApplicationContext())) {
+                speechListening = false;
+                notifySpeechJs("error", "unsupported");
+                notifySpeechJs("state", "idle");
+                return;
+            }
+
+            speechListening = true;
+            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(getApplicationContext());
+            speechRecognizer.setRecognitionListener(new RecognitionListener() {
+                @Override
+                public void onReadyForSpeech(Bundle params) {
+                    speechConsecutiveErrors = 0;
+                    notifySpeechJs("state", "listening");
+                }
+
+                @Override
+                public void onBeginningOfSpeech() {}
+
+                @Override
+                public void onRmsChanged(float rmsdB) {}
+
+                @Override
+                public void onBufferReceived(byte[] buffer) {}
+
+                @Override
+                public void onEndOfSpeech() {}
+
+                @Override
+                public void onError(int error) {
+                    if (!speechListening) return;
+                    if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
+                        notifySpeechJs("interim", "");
+                        scheduleSpeechRestart(260);
+                        return;
+                    }
+                    if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
+                        scheduleSpeechRestart(450);
+                        return;
+                    }
+                    if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+                        speechListening = false;
+                        notifySpeechJs("error", "not-allowed");
+                        notifySpeechJs("state", "idle");
+                        return;
+                    }
+                    if (error == SpeechRecognizer.ERROR_AUDIO) {
+                        speechListening = false;
+                        notifySpeechJs("error", "audio-capture");
+                        notifySpeechJs("state", "idle");
+                        return;
+                    }
+                    if (error == SpeechRecognizer.ERROR_NETWORK || error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT) {
+                        speechListening = false;
+                        notifySpeechJs("error", "network");
+                        notifySpeechJs("state", "idle");
+                        return;
+                    }
+                    // Language fallback if chosen locale isn't installed locally
+                    if (error == 12 || error == 13) {
+                        if (speechLang != null && !speechLang.isEmpty()) {
+                            speechLang = "";
+                            scheduleSpeechRestart(250);
+                            return;
+                        }
+                    }
+                    speechConsecutiveErrors += 1;
+                    if (speechConsecutiveErrors >= 3) {
+                        speechListening = false;
+                        notifySpeechJs("error", "speech-error-" + error);
+                        notifySpeechJs("state", "idle");
+                    } else {
+                        scheduleSpeechRestart(350);
+                    }
+                }
+
+                @Override
+                public void onResults(Bundle results) {
+                    speechConsecutiveErrors = 0;
+                    ArrayList<String> matches = results != null
+                        ? results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        : null;
+                    if (matches != null && !matches.isEmpty()) {
+                        String text = matches.get(0);
+                        if (text != null && !text.trim().isEmpty()) {
+                            notifySpeechJs("final", text.trim());
+                        }
+                    }
+                    notifySpeechJs("interim", "");
+                    if (speechListening) {
+                        scheduleSpeechRestart(240);
+                    }
+                }
+
+                @Override
+                public void onPartialResults(Bundle partialResults) {
+                    ArrayList<String> matches = partialResults != null
+                        ? partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                        : null;
+                    if (matches != null && !matches.isEmpty()) {
+                        String text = matches.get(0);
+                        if (text != null && !text.trim().isEmpty()) {
+                            notifySpeechJs("interim", text.trim());
+                        }
+                    }
+                }
+
+                @Override
+                public void onEvent(int eventType, Bundle params) {}
+            });
+
+            Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+            intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+            intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+            intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+            intent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getPackageName());
+            if (lang != null && !lang.trim().isEmpty()) {
+                intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang.trim());
+                intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, lang.trim());
+            }
+            speechRecognizer.startListening(intent);
+        } catch (Exception e) {
+            speechListening = false;
+            notifySpeechJs("error", "audio-capture");
+            notifySpeechJs("state", "idle");
+        }
+    }
+
+    private final class AndroidSpeechBridge {
+
+        @JavascriptInterface
+        public boolean isAvailable() {
+            return SpeechRecognizer.isRecognitionAvailable(getApplicationContext());
+        }
+
+        @JavascriptInterface
+        public void start(final String lang) {
+            speechLang = lang != null ? lang.trim() : "";
+            speechConsecutiveErrors = 0;
+            mainHandler.post(() -> {
+                if (pendingSpeechRestart != null) {
+                    mainHandler.removeCallbacks(pendingSpeechRestart);
+                    pendingSpeechRestart = null;
+                }
+                boolean granted =
+                    ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO)
+                        == PackageManager.PERMISSION_GRANTED;
+                if (!granted) {
+                    ActivityCompat.requestPermissions(
+                        MainActivity.this,
+                        new String[] { Manifest.permission.RECORD_AUDIO },
+                        REQ_RECORD_AUDIO
+                    );
+                    return;
+                }
+                startNativeRecognition(speechLang);
+            });
+        }
+
+        @JavascriptInterface
+        public void stop() {
+            speechListening = false;
+            mainHandler.post(() -> {
+                if (pendingSpeechRestart != null) {
+                    mainHandler.removeCallbacks(pendingSpeechRestart);
+                    pendingSpeechRestart = null;
+                }
+                destroySpeechRecognizer();
+                notifySpeechJs("interim", "");
+                notifySpeechJs("state", "idle");
             });
         }
     }
