@@ -1677,7 +1677,7 @@ export default function SettingsScreen({
           • Press <strong>Ctrl+S</strong> to save immediately or <strong>Ctrl+Shift+S</strong> to save & explain.
         </div>
         <div className="settings-tip" style={{ marginTop: 10, opacity: 0.7 }}>
-          Notes by Bai v2.2.0
+          Notes by Bai v2.3.0
         </div>
       </div>
 

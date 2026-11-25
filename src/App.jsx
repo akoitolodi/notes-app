@@ -44,6 +44,7 @@ const SettingsScreen = lazy(() => import('./components/SettingsScreen'));
 const ImportSheet = lazy(() => import('./components/ImportSheet'));
 const DevToolkitScreen = lazy(() => import('./components/DevToolkitScreen'));
 const LearnCodingScreen = lazy(() => import('./components/LearnCodingScreen'));
+const LearnSubjectsScreen = lazy(() => import('./components/LearnSubjectsScreen'));
 const StudentHubScreen = lazy(() => import('./components/StudentHubScreen'));
 const CoursesDashboardScreen = lazy(() => import('./components/CoursesDashboardScreen'));
 const AnnouncementsScreen = lazy(() => import('./components/AnnouncementsScreen'));
@@ -365,6 +366,11 @@ export default function App() {
     pushHistoryEntry('coding');
   }, [pushHistoryEntry]);
 
+  const handleOpenSubjects = useCallback(() => {
+    setScreen('subjects');
+    pushHistoryEntry('subjects');
+  }, [pushHistoryEntry]);
+
   const handleOpenPlanner = useCallback(() => {
     setScreen('planner');
     pushHistoryEntry('planner');
@@ -658,6 +664,13 @@ export default function App() {
         </Suspense>
       );
     }
+    if (screen === 'subjects') {
+      return (
+        <Suspense fallback={<ScreenLoading label="Loading Subject Studio…" />}>
+          <LearnSubjectsScreen onBack={handleBackToFolders} onOpenNote={handleOpenNote} />
+        </Suspense>
+      );
+    }
     if (screen === 'planner') {
       return (
         <Suspense fallback={<ScreenLoading label="Loading School Planner…" />}>
@@ -774,6 +787,7 @@ export default function App() {
               onOpenPlanner={handleOpenPlanner}
               onOpenToolkit={handleOpenToolkit}
               onOpenCoding={handleOpenCoding}
+              onOpenSubjects={handleOpenSubjects}
               onOpenTrash={handleOpenTrash}
               onOpenSettings={handleOpenSettings}
               onOpenThemes={() => handleOpenThemes('folders')}

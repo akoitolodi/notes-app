@@ -25,6 +25,7 @@ import {
   solveSubnetCidr,
   detectColorToken,
 } from './mathSolver';
+import { detectLogicNoteIntent } from './algebraLogic';
 
 export const SMART_DETECT_KEY = 'aicn:smartNoteDetect';
 
@@ -494,6 +495,20 @@ export function detectBlankNoteIntents(body, { isZeroAi = false, enabled = true 
       summary: subnetHit.answer,
       insertText: subnetHit.insertText,
       meta: subnetHit,
+    });
+  }
+
+  // 6b. Discrete & Conditional Logic (if/then/else/iff)
+  const logicHit = detectLogicNoteIntent(text);
+  if (logicHit) {
+    detections.push({
+      id: `logic:${logicHit.kind}`,
+      kind: 'logic',
+      badge: 'Logic',
+      title: `${logicHit.label} → ${logicHit.answer}`,
+      summary: logicHit.summary,
+      insertText: logicHit.insertText,
+      meta: logicHit,
     });
   }
 

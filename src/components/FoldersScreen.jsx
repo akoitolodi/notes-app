@@ -167,6 +167,7 @@ export default function FoldersScreen({
   onOpenPlanner,
   onOpenToolkit,
   onOpenCoding,
+  onOpenSubjects,
   onOpenTrash,
   onOpenSettings,
   onOpenThemes,
@@ -1171,6 +1172,19 @@ export default function FoldersScreen({
             </div>
             <div className="bento-tile-title">Learn Coding</div>
             <div className="bento-tile-sub">Guides, runner &amp; algo</div>
+          </button>
+        )}
+
+        {onOpenSubjects && (
+          <button type="button" className="bento-tile bento-indigo" onClick={onOpenSubjects}>
+            <div className="bento-tile-top">
+              <span className="bento-tile-icon">
+                <GraduationCap size={18} />
+              </span>
+              <span className="bento-tile-pill">MS 102</span>
+            </div>
+            <div className="bento-tile-title">Learn Subjects</div>
+            <div className="bento-tile-sub">Quant lab &amp; open docs</div>
           </button>
         )}
 

@@ -38,6 +38,7 @@ import { detectBlankNoteIntents } from '../../lib/smartNoteDetect';
 import { classifyFolderNaiveBayes, findSimilarNotesOffline } from '../../lib/userPatterns';
 import { executeCode } from '../../lib/codeRunner';
 import { aiText } from '../../lib/aiCore';
+import { cleanAiOutputText } from '../../lib/cleanAiText';
 import { importPublicGoogleLink } from '../../lib/courseExtras';
 import { db, getNoteIndexLite } from '../../store/db';
 import { syncDeadlineNotifications } from '../../lib/notifications';
@@ -48,6 +49,7 @@ const MathGrapherTab = lazy(() => import('../toolkit/MathGrapherTab'));
 const KIND_ICONS = {
   code: Code2,
   math: Calculator,
+  logic: Calculator,
   chemistry: FlaskConical,
   physics: Atom,
   stats: BarChart3,
@@ -202,6 +204,7 @@ const SmartDetectBar = memo(function SmartDetectBar({
         title: `${meta.langName} Output`,
         subtitle: `${res.engine || 'Runner'}${res.durationMs ? ` · ${res.durationMs}ms` : ''}${res.notice ? ` · ${res.notice}` : ''}`,
         text: outText,
+        isCodeOutput: true,
         isError: !res.ok,
         html: res.mode === 'preview' ? res.html : '',
         insertText,
@@ -211,6 +214,7 @@ const SmartDetectBar = memo(function SmartDetectBar({
         title: `${meta.langName} Error`,
         subtitle: 'Execution failed',
         text: err?.message || 'Could not run code',
+        isCodeOutput: true,
         isError: true,
         html: '',
         insertText: '',
@@ -236,20 +240,23 @@ const SmartDetectBar = memo(function SmartDetectBar({
     if (busyAction) return;
     setBusyAction(mode);
     try {
+      const plainInstruction =
+        ' Format your reply in clean plain text only — do NOT use markdown asterisks (*, **), hashtags (#), or LaTeX dollar signs ($). Use simple numbered steps (1., 2., 3.) and plain symbols (×, ÷, =, →).';
       const reply = await aiText({
-        system: systemPrompt,
+        system: `${systemPrompt}${plainInstruction}`,
         user: userPrompt,
         maxTokens: 900,
         timeoutMs: 45000,
       });
-      const clean = String(reply || '').trim();
+      const clean = cleanAiOutputText(reply, { preserveCode: mode === 'debug' });
       setOutputCard({
         title: promptTitle,
         subtitle: 'AI Assistant',
         text: clean,
+        isCodeOutput: false,
         isError: false,
         html: '',
-        insertText: insertHeading ? `### ${insertHeading}\n${clean}` : clean,
+        insertText: insertHeading ? `${insertHeading}\n${clean}` : clean,
       });
     } catch (err) {
       toast(`AI failed: ${err?.message || 'Check connection or API settings'}`, { type: 'error' });
@@ -374,8 +381,10 @@ const SmartDetectBar = memo(function SmartDetectBar({
               srcDoc={outputCard.html}
               className="smart-html-preview"
             />
-          ) : (
+          ) : outputCard.isCodeOutput ? (
             <pre className="smart-output-pre">{outputCard.text}</pre>
+          ) : (
+            <div className="smart-output-prose">{outputCard.text}</div>
           )}
         </div>
       )}
@@ -563,12 +572,12 @@ const SmartDetectBar = memo(function SmartDetectBar({
             </>
           )}
 
-          {(active.kind === 'stats' || active.kind === 'subnet' || active.kind === 'color') && (
+          {(active.kind === 'stats' || active.kind === 'subnet' || active.kind === 'color' || active.kind === 'logic') && (
             <button
               type="button"
               className="row-action-chip active-chip"
               onClick={() => {
-                onAppendText?.(active.insertText);
+                onAppendText?.(active.kind === 'logic' ? `${active.meta.label} ${active.insertText}` : active.insertText);
                 toast('Inserted into note!', { type: 'success' });
               }}
             >

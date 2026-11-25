@@ -14,9 +14,13 @@ import {
   BookOpen,
   LineChart,
   Bug,
+  Calculator,
+  Cable,
 } from 'lucide-react';
 import MathGrapherTab from './toolkit/MathGrapherTab';
 import BugLogTab from './toolkit/BugLogTab';
+import AlgebraLogicTab from './toolkit/AlgebraLogicTab';
+import NetworkingLabTab from './toolkit/NetworkingLabTab';
 import {
   calculateSubnet,
   convertNumberBase,
@@ -34,7 +38,8 @@ import { useDialog } from './ui/DialogProvider';
 
 export default function DevToolkitScreen({ onBack, onOpenNote }) {
   const { toast } = useDialog();
-  const [tab, setTab] = useState('subnet'); // subnet | base | json | regex | sheets
+  const [tab, setTab] = useState('alglogic'); // alglogic | netlab | subnet | base | json | regex | sheets | grapher | bugs
+  const [graphInitExpr, setGraphInitExpr] = useState('');
 
   // Subnet state
   const [cidr, setCidr] = useState('192.168.10.42/26');
@@ -116,6 +121,8 @@ export default function DevToolkitScreen({ onBack, onOpenNote }) {
 
       <div className="hub-tabs" role="tablist">
         {[
+          ['alglogic', 'Algebra & Logic', Calculator],
+          ['netlab', 'Net Lab', Cable],
           ['grapher', 'Grapher', LineChart],
           ['bugs', 'Bug Log', Bug],
           ['subnet', 'Subnet', Network],
@@ -550,10 +557,30 @@ export default function DevToolkitScreen({ onBack, onOpenNote }) {
         )}
 
         {/* 6. Offline 2D Math Function Grapher */}
-        {tab === 'grapher' && <MathGrapherTab onOpenNote={onOpenNote} />}
+        {tab === 'grapher' && (
+          <MathGrapherTab
+            key={graphInitExpr || 'default'}
+            initialExpr={graphInitExpr}
+            onOpenNote={onOpenNote}
+          />
+        )}
 
         {/* 7. Bugs I Solved — Stack-Trace Debugger */}
         {tab === 'bugs' && <BugLogTab />}
+
+        {/* 8. Algebraic Solver & Discrete/Conditional Logic */}
+        {tab === 'alglogic' && (
+          <AlgebraLogicTab
+            onOpenGrapher={expr => {
+              setGraphInitExpr(expr);
+              setTab('grapher');
+            }}
+            onSaveNote={saveAsNote}
+          />
+        )}
+
+        {/* 9. Interactive Networking Practical Lab */}
+        {tab === 'netlab' && <NetworkingLabTab />}
       </div>
     </div>
   );
