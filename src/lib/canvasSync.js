@@ -16,6 +16,7 @@ import { getApiBase } from '../config';
 import { db, localDateKey } from '../store/db';
 import { fetchWithRetry, getAdaptiveTimeouts } from './netResilience';
 import { syncDeadlineNotifications, notifyNewCanvasAnnouncements } from './notifications';
+import { parseCanvasDiscussionUrl } from './announcementSchedule';
 
 export const CANVAS_ICS_KEY = 'aicn:canvasIcsUrl';
 export const CANVAS_RSS_KEY = 'aicn:canvasRssUrls';
@@ -608,4 +609,58 @@ export async function autoSyncCanvasIfStale({ minIntervalMs = 15 * 60 * 1000, fo
     });
 
   return inFlightAutoSync;
+}
+
+/**
+ * Post a reply directly to a Canvas Course Announcement discussion topic when a student Access Token is enabled.
+ */
+export async function postCanvasAnnouncementReply({ url = '', message = '', host = '', token = '' } = {}) {
+  const cleanMsg = String(message || '').trim();
+  const cleanToken = String(token || '').trim();
+  if (!cleanMsg) throw new Error('Enter a reply message first.');
+  if (!cleanToken) throw new Error('Canvas Access Token is not configured.');
+
+  const parsed = parseCanvasDiscussionUrl(url);
+  if (!parsed) {
+    throw new Error('Could not detect Canvas course/topic ID from this announcement link.');
+  }
+  const targetHost = (host ? String(host).replace(/^https?:\/\//i, '').replace(/\/+$/, '') : '') || parsed.host;
+  const endpoint = `https://${targetHost}/api/v1/courses/${parsed.courseId}/discussion_topics/${parsed.topicId}/entries`;
+
+  if (Capacitor.isNativePlatform?.() && CapacitorHttp?.post) {
+    const res = await CapacitorHttp.post({
+      url: endpoint,
+      headers: {
+        Authorization: `Bearer ${cleanToken}`,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      data: { message: cleanMsg },
+    });
+    if (res.status < 200 || res.status >= 300) {
+      throw new Error(`Canvas returned HTTP ${res.status}`);
+    }
+    return typeof res.data === 'string' ? JSON.parse(res.data || '{}') : res.data || { ok: true };
+  }
+
+  const apiBase = getApiBase();
+  const res = await fetchWithRetry(
+    `${apiBase}/api/canvas-proxy`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: endpoint,
+        method: 'POST',
+        token: cleanToken,
+        body: { message: cleanMsg },
+      }),
+    },
+    { retries: 1, timeoutMs: getAdaptiveTimeouts().fetchMs }
+  );
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(data?.error || `Canvas reply failed (HTTP ${res.status})`);
+  }
+  return data?.body ? JSON.parse(data.body) : { ok: true };
 }

@@ -49,6 +49,7 @@ export default function CourseScheduleView({
   onOpenCourse,
   onEditCourse,
   onAddCourseSchedule,
+  onImportSchedulePdf = null,
 }) {
   const [viewMode, setViewMode] = useState(() => {
     try {
@@ -200,13 +201,24 @@ export default function CourseScheduleView({
                   : 'Add class days, times, rooms & teachers to your courses'}
               </div>
             </div>
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              onClick={onAddCourseSchedule}
-            >
-              <Plus size={13} /> Add Schedule
-            </button>
+            <div className="flex gap-8" style={{ flexWrap: 'wrap' }}>
+              {onImportSchedulePdf && (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={onImportSchedulePdf}
+                >
+                  Import Schedule PDF
+                </button>
+              )}
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={onAddCourseSchedule}
+              >
+                <Plus size={13} /> Add Schedule
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -233,7 +245,18 @@ export default function CourseScheduleView({
         </div>
 
         {viewMode === 'grid' && (
-          <div className="feynman-lang-switch" role="group" aria-label="Timetable color style">
+          <div className="flex items-center gap-6">
+            {onImportSchedulePdf && entries.length > 0 && (
+              <button
+                type="button"
+                className="row-action-chip"
+                onClick={onImportSchedulePdf}
+                title="Import or update timetable from Class Schedule PDF"
+              >
+                Import PDF
+              </button>
+            )}
+            <div className="feynman-lang-switch" role="group" aria-label="Timetable color style">
             <button
               type="button"
               className={`feynman-lang-btn${paletteMode === 'gold' ? ' active' : ''}`}
@@ -248,6 +271,7 @@ export default function CourseScheduleView({
             >
               Course Colors
             </button>
+            </div>
           </div>
         )}
       </div>

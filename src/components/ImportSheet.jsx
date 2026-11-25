@@ -39,6 +39,7 @@ import { compressImage } from './ImageManager';
 import { useDialog } from './ui/DialogProvider';
 
 const DocumentViewerModal = lazy(() => import('./DocumentViewerModal'));
+const SchedulePdfImportSheet = lazy(() => import('./course/SchedulePdfImportSheet'));
 
 export default function ImportSheet({
   defaultFolderId = null,
@@ -47,6 +48,7 @@ export default function ImportSheet({
   initialTitle = '',
   onImported,
   onImportedToCourse = null,
+  onImportedSchedule = null,
   onClose,
 }) {
   const { toast } = useDialog();
@@ -75,6 +77,7 @@ export default function ImportSheet({
   const [progress, setProgress] = useState(null);
   const [error, setError] = useState(null);
   const [previewDoc, setPreviewDoc] = useState(null);
+  const [scheduleSheetOpen, setScheduleSheetOpen] = useState(false);
 
   const fileInputRef = useRef(null);
   const ocrInputRef = useRef(null);
@@ -669,7 +672,32 @@ export default function ImportSheet({
             <FileUp size={16} /> {busy ? 'Importing…' : destination === 'course' ? 'Save to Course' : 'Import Note'}
           </button>
         </div>
+        {mode === 'file' &&
+          selectedFiles.length === 1 &&
+          /\.pdf$/i.test(selectedFiles[0]?.name || '') &&
+          !busy && (
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              style={{ width: '100%', marginTop: 8 }}
+              onClick={() => setScheduleSheetOpen(true)}
+            >
+              Is this a Class Schedule / COR PDF? Import Courses &amp; Timetable →
+            </button>
+          )}
       </div>
+      {scheduleSheetOpen && selectedFiles[0] && (
+        <Suspense fallback={null}>
+          <SchedulePdfImportSheet
+            initialFile={selectedFiles[0]}
+            onImported={res => {
+              setScheduleSheetOpen(false);
+              onImportedSchedule ? onImportedSchedule(res) : onClose?.();
+            }}
+            onClose={() => setScheduleSheetOpen(false)}
+          />
+        </Suspense>
+      )}
       {previewDoc && (
         <Suspense fallback={null}>
           <DocumentViewerModal

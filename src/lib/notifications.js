@@ -9,6 +9,8 @@
  */
 import { Capacitor } from '@capacitor/core';
 import { db, localDateKey } from '../store/db';
+import { formatTimeRange12h, resolveScheduleEntries } from './scheduleView';
+import { matchAnnouncementToCourse } from './announcementSchedule';
 
 let _localNotifMod = null;
 async function loadLocalNotifications() {
@@ -21,6 +23,7 @@ async function loadLocalNotifications() {
 
 export const NOTIF_ENABLED_KEY = 'aicn:notifsEnabled';
 export const NOTIF_STICKY_KEY = 'aicn:notifsSticky';
+export const NOTIF_CLASS_REMINDERS_KEY = 'aicn:notifsClass15m';
 export const NOTIF_READ_ANNS_KEY = 'aicn:readAnnIds';
 export const NOTIF_SNOOZE_KEY = 'aicn:alertSnoozeUntil';
 
@@ -33,12 +36,14 @@ export function getNotificationSettings() {
   try {
     const en = localStorage.getItem(NOTIF_ENABLED_KEY);
     const st = localStorage.getItem(NOTIF_STICKY_KEY);
+    const cr = localStorage.getItem(NOTIF_CLASS_REMINDERS_KEY);
     return {
       enabled: en === null ? true : en !== 'false',
       stickyOngoing: st === null ? true : st !== 'false',
+      classReminders15m: cr === 'true',
     };
   } catch {
-    return { enabled: true, stickyOngoing: true };
+    return { enabled: true, stickyOngoing: true, classReminders15m: false };
   }
 }
 
@@ -49,6 +54,9 @@ export function saveNotificationSettings(patch) {
     }
     if (patch.stickyOngoing !== undefined) {
       localStorage.setItem(NOTIF_STICKY_KEY, patch.stickyOngoing ? 'true' : 'false');
+    }
+    if (patch.classReminders15m !== undefined) {
+      localStorage.setItem(NOTIF_CLASS_REMINDERS_KEY, patch.classReminders15m ? 'true' : 'false');
     }
   } catch {
     // ignore
@@ -207,6 +215,70 @@ export function buildDeadlineSchedules(items = [], nowMs = Date.now(), { stickyO
   return { scheduled: scheduled.slice(0, 48), sticky };
 }
 
+/**
+ * Pure deterministic 15-minute before-class notification schedule builder.
+ * Includes exact Room/Lab and unread Canvas announcement hints per course.
+ */
+export function buildClassReminderSchedules(
+  courses = [],
+  scheduleRows = [],
+  unreadAnnouncements = [],
+  nowMs = Date.now(),
+  { leadMinutes = 15 } = {}
+) {
+  const entries = resolveScheduleEntries(courses, scheduleRows);
+  if (entries.length === 0) return [];
+
+  const unreadByCourseId = new Map();
+  for (const ann of unreadAnnouncements || []) {
+    const m = matchAnnouncementToCourse(ann, courses, scheduleRows, new Date(nowMs));
+    if (m?.course?.id) {
+      unreadByCourseId.set(m.course.id, (unreadByCourseId.get(m.course.id) || 0) + 1);
+    }
+  }
+
+  const now = new Date(nowMs);
+  const nowDow = now.getDay();
+  const out = [];
+
+  for (const e of entries) {
+    for (let offset = 0; offset < 7; offset++) {
+      const targetDow = (nowDow + offset) % 7;
+      if (e.dayOfWeek !== targetDow) continue;
+
+      const classStart = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() + offset,
+        Math.floor(e.startMin / 60),
+        e.startMin % 60,
+        0
+      ).getTime();
+      const triggerAt = classStart - leadMinutes * 60 * 1000;
+      if (triggerAt <= nowMs + 60000 || triggerAt >= nowMs + 7 * DAY_MS) continue;
+
+      const unreadCount = e.courseId ? unreadByCourseId.get(e.courseId) || 0 : 0;
+      const roomPart = e.room ? ` · ${e.room}` : '';
+      const timeRange = formatTimeRange12h(e.startTime, e.endTime);
+      const unreadHint =
+        unreadCount > 0
+          ? ` · ${unreadCount} unread post${unreadCount === 1 ? '' : 's'}`
+          : '';
+
+      out.push({
+        id: stableNotifId(`class:${e.baseCode}:${e.dayOfWeek}:${e.startTime}`),
+        title: `Class in ${leadMinutes}m: ${e.code}${roomPart}`,
+        body: `${timeRange}${unreadHint}`,
+        at: triggerAt,
+        ongoing: false,
+      });
+      break;
+    }
+  }
+
+  return out.sort((a, b) => a.at - b.at).slice(0, 24);
+}
+
 export async function requestNotificationPermission() {
   try {
     const { plugin: localNotifs } = await loadLocalNotifications();
@@ -261,7 +333,23 @@ export async function syncDeadlineNotifications() {
       stickyOngoing: cfg.stickyOngoing,
     });
 
-    const payload = scheduled.map(s => ({
+    let classReminders = [];
+    if (cfg.classReminders15m) {
+      const [courses, schedRows] = await Promise.all([
+        db.courses.toArray().catch(() => []),
+        db.classSchedule.toArray().catch(() => []),
+      ]);
+      const readSet = getReadAnnouncementSet();
+      const unreadAnns = items.filter(
+        it => it.type === 'announcement' && !readSet.has(it.externalUid || String(it.id))
+      );
+      classReminders = buildClassReminderSchedules(courses, schedRows, unreadAnns, Date.now(), {
+        leadMinutes: 15,
+      });
+    }
+
+    const merged = [...scheduled, ...classReminders].slice(0, 60);
+    const payload = merged.map(s => ({
       id: s.id,
       title: s.title,
       body: s.body,
@@ -284,7 +372,7 @@ export async function syncDeadlineNotifications() {
       await localNotifs.schedule({ notifications: payload });
     }
     localStorage.setItem(SCHEDULED_IDS_KEY, JSON.stringify(payload.map(p => p.id)));
-    return { scheduledCount: scheduled.length, stickyActive: Boolean(sticky) };
+    return { scheduledCount: merged.length, stickyActive: Boolean(sticky) };
   } catch {
     return { scheduledCount: 0, stickyActive: false };
   }

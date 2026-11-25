@@ -257,7 +257,7 @@ app.post('/api/grammar', async (req, res) => {
 // Canvas LMS (.ics Calendar Feed, RSS Announcements, or optional API) local CORS relay for Web/Desktop
 app.post('/api/canvas-proxy', async (req, res) => {
   try {
-    const { url, token } = req.body || {};
+    const { url, token, method, body } = req.body || {};
     if (!url || typeof url !== 'string') {
       return res.status(400).json({ error: 'Missing Canvas URL' });
     }
@@ -274,18 +274,32 @@ app.post('/api/canvas-proxy', async (req, res) => {
     if (/^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|0\.0\.0\.0|\[::1\])/i.test(parsed.hostname)) {
       return res.status(403).json({ error: 'Private network hosts are not allowed in Canvas proxy' });
     }
+    const reqMethod = String(method || 'GET').toUpperCase() === 'POST' ? 'POST' : 'GET';
+    if (reqMethod === 'POST') {
+      if (!token || typeof token !== 'string' || !token.trim()) {
+        return res.status(401).json({ error: 'Canvas Access Token is required for posting replies' });
+      }
+      if (!/^\/api\/v1\/courses\/\d+\/discussion_topics\/\d+\/entries$/.test(parsed.pathname)) {
+        return res.status(403).json({ error: 'Unsupported Canvas POST endpoint' });
+      }
+    }
     const headers = {
       Accept: 'text/calendar, application/rss+xml, application/atom+xml, application/json, text/plain, */*',
-      'User-Agent': 'Notes-by-Bai/1.7',
+      'User-Agent': 'Notes-by-Bai/2.1',
     };
     if (token && typeof token === 'string' && token.trim()) {
       headers.Authorization = `Bearer ${token.trim()}`;
+    }
+    const fetchOpts = { method: reqMethod, headers };
+    if (reqMethod === 'POST') {
+      headers['Content-Type'] = 'application/json';
+      fetchOpts.body = JSON.stringify({ message: String(body?.message || '') });
     }
     const upstreamCtrl = new AbortController();
     const upstreamTimer = setTimeout(() => upstreamCtrl.abort(), 35000);
     let upstream;
     try {
-      upstream = await fetch(parsed.toString(), { method: 'GET', headers, signal: upstreamCtrl.signal });
+      upstream = await fetch(parsed.toString(), { ...fetchOpts, signal: upstreamCtrl.signal });
     } finally {
       clearTimeout(upstreamTimer);
     }

@@ -9,6 +9,7 @@
  * - 1-tap "Save to Notes", "Mark Read / Unread", "Sync Feeds", "+ Paste Post", and RSS Setup
  */
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ChevronLeft,
   Megaphone,
@@ -26,6 +27,13 @@ import {
   ExternalLink,
   Trash2,
   User,
+  Clock,
+  Reply,
+  Send,
+  Sparkles,
+  Copy,
+  Link2,
+  UserCheck,
 } from 'lucide-react';
 import { db, createNote, togglePinPlannerItem, localDateKey } from '../store/db';
 import {
@@ -36,7 +44,16 @@ import {
   parsePastedAnnouncement,
   buildCanvasNoteContent,
   detectDateInText,
+  postCanvasAnnouncementReply,
 } from '../lib/canvasSync';
+import {
+  matchAnnouncementToCourse,
+  extractQuickLinks,
+  parseCanvasDiscussionUrl,
+  getAnnouncementReplyMeta,
+  markAnnouncementReplied,
+} from '../lib/announcementSchedule';
+import { aiText } from '../lib/aiCore';
 import {
   isAnnouncementRead,
   markAnnouncementRead,
@@ -77,15 +94,30 @@ function linkifyBareUrls(text) {
   });
 }
 
+const QUICK_REPLIES = [
+  'Noted po, thank you!',
+  'Good day Sir/Ma’am, noted po. Thank you!',
+  'Thank you for the update!',
+];
+
 export default function AnnouncementsScreen({ onBack, onOpenNote, onChanged }) {
   const { confirm, toast } = useDialog();
 
   const [announcements, setAnnouncements] = useState([]);
+  const [coursesList, setCoursesList] = useState([]);
+  const [scheduleRows, setScheduleRows] = useState([]);
   const [readVersion, setReadVersion] = useState(0);
+  const [replyVersion, setReplyVersion] = useState(0);
   const [tab, setTab] = useState('all'); // all | unread | pinned
   const [courseFilter, setCourseFilter] = useState('__all__');
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedIds, setExpandedIds] = useState({});
+  const [linkingItemId, setLinkingItemId] = useState(null);
+
+  const [replyTarget, setReplyTarget] = useState(null);
+  const [replyText, setReplyText] = useState('');
+  const [replyBusy, setReplyBusy] = useState(false);
+  const [replyAiBusy, setReplyAiBusy] = useState(false);
 
   const [syncing, setSyncing] = useState(false);
   const [rssOpen, setRssOpen] = useState(false);
@@ -100,12 +132,18 @@ export default function AnnouncementsScreen({ onBack, onOpenNote, onChanged }) {
 
   const loadAnnouncements = useCallback(async () => {
     try {
-      const all = await db.plannerItems.where('type').equals('announcement').toArray();
+      const [all, crs, sched] = await Promise.all([
+        db.plannerItems.where('type').equals('announcement').toArray(),
+        db.courses.toArray().catch(() => []),
+        db.classSchedule.toArray().catch(() => []),
+      ]);
       all.sort((a, b) => {
         if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
         return (b.dueAt || b.createdAt || 0) - (a.dueAt || a.createdAt || 0);
       });
       setAnnouncements(all);
+      setCoursesList(crs.filter(c => !c.archived));
+      setScheduleRows(sched);
     } catch {
       setAnnouncements([]);
     }
@@ -124,16 +162,28 @@ export default function AnnouncementsScreen({ onBack, onOpenNote, onChanged }) {
       .catch(() => {});
   }, [loadAnnouncements, onChanged]);
 
-  // Derived read/unread status (re-evaluated whenever readVersion bumps)
+  // Derived read/unread status + silently matched course timetable + quick links + reply metadata
   const enriched = useMemo(() => {
     void readVersion;
+    void replyVersion;
+    const now = new Date();
     return announcements.map(item => {
       const read = isAnnouncementRead(item);
       const detectedDate =
         item.detectedDateKey || detectDateInText(`${item.title || ''}\n${item.description || ''}`) || '';
-      return { ...item, _read: read, _detectedDate: detectedDate };
+      const scheduleMatch = matchAnnouncementToCourse(item, coursesList, scheduleRows, now);
+      const quickLinks = extractQuickLinks(item.description);
+      const replyMeta = getAnnouncementReplyMeta(item);
+      return {
+        ...item,
+        _read: read,
+        _detectedDate: detectedDate,
+        _scheduleMatch: scheduleMatch,
+        _quickLinks: quickLinks,
+        _replyMeta: replyMeta,
+      };
     });
-  }, [announcements, readVersion]);
+  }, [announcements, coursesList, scheduleRows, readVersion, replyVersion]);
 
   const courses = useMemo(() => {
     const set = new Set();
@@ -350,6 +400,110 @@ export default function AnnouncementsScreen({ onBack, onOpenNote, onChanged }) {
     await loadAnnouncements();
     onChanged?.();
     toast('Announcement removed');
+  };
+
+  const handleSaveTeacher = async (course, teacherName) => {
+    if (!course?.id || !teacherName) return;
+    await db.courses.update(course.id, { instructor: teacherName });
+    await loadAnnouncements();
+    onChanged?.();
+    toast(`Saved ${teacherName} as ${course.code || course.name} teacher`, { type: 'success' });
+  };
+
+  const handleLinkCourse = async (item, courseId) => {
+    const course = coursesList.find(c => c.id === Number(courseId));
+    if (!course || !item?.course) return;
+    const prevAliases = Array.isArray(course.canvasAliases) ? course.canvasAliases : [];
+    const nextAliases = prevAliases.includes(item.course)
+      ? prevAliases
+      : [...prevAliases, item.course];
+    await db.courses.update(course.id, {
+      canvasAliases: nextAliases,
+      ...(course.icsCourseTag ? {} : { icsCourseTag: item.course }),
+    });
+    setLinkingItemId(null);
+    await loadAnnouncements();
+    onChanged?.();
+    toast(`Linked "${item.course}" to ${course.code || course.name}`, { type: 'success' });
+  };
+
+  const openReplySheet = item => {
+    setReplyTarget(item);
+    setReplyText('');
+    setReplyBusy(false);
+    setReplyAiBusy(false);
+  };
+
+  const handleDraftReplyWithAi = async () => {
+    if (!replyTarget || replyAiBusy) return;
+    setReplyAiBusy(true);
+    try {
+      const prompt = [
+        'Write a short, polite college student reply to this teacher announcement (1-3 concise sentences, natural Filipino-college polite English or light "po", no subject line or signature placeholder unless natural).',
+        `Course: ${replyTarget.course || 'Class'}`,
+        replyTarget.author ? `Teacher: ${replyTarget.author}` : '',
+        `Title: ${replyTarget.title}`,
+        `Announcement: ${String(replyTarget.description || '').slice(0, 700)}`,
+      ]
+        .filter(Boolean)
+        .join('\n');
+      const draft = await aiText(prompt, { maxTokens: 160, temperature: 0.4 });
+      if (draft?.trim()) setReplyText(draft.trim());
+    } catch (err) {
+      toast(err?.message || 'AI draft failed', { type: 'error' });
+    } finally {
+      setReplyAiBusy(false);
+    }
+  };
+
+  const finishReplySuccess = (item, message, toastMsg) => {
+    markAnnouncementReplied(item, message);
+    markAnnouncementRead(item);
+    setReplyVersion(v => v + 1);
+    setReadVersion(v => v + 1);
+    setReplyTarget(null);
+    setReplyText('');
+    onChanged?.();
+    toast(toastMsg, { type: 'success' });
+  };
+
+  const handleSendApiReply = async () => {
+    if (!replyTarget || !replyText.trim() || replyBusy) return;
+    setReplyBusy(true);
+    try {
+      const cfg = getCanvasSettings();
+      await postCanvasAnnouncementReply({
+        url: replyTarget.url,
+        message: replyText.trim(),
+        host: cfg.host,
+        token: cfg.token,
+      });
+      finishReplySuccess(replyTarget, replyText.trim(), 'Reply posted to Canvas!');
+    } catch (err) {
+      toast(`${err?.message || 'Canvas API reply failed'} — use "Copy & Open in Canvas"`, {
+        type: 'error',
+      });
+    } finally {
+      setReplyBusy(false);
+    }
+  };
+
+  const handleCopyAndOpenCanvas = async () => {
+    if (!replyTarget || !replyText.trim()) return;
+    try {
+      await navigator.clipboard?.writeText?.(replyText.trim());
+    } catch {
+      // clipboard unavailable
+    }
+    const targetUrl = replyTarget.url;
+    finishReplySuccess(
+      replyTarget,
+      replyText.trim(),
+      targetUrl ? 'Reply copied! Paste & send in Canvas' : 'Reply copied & marked Replied ✓'
+    );
+    if (targetUrl) {
+      window.open(targetUrl, '_blank', 'noopener,noreferrer');
+    }
   };
 
   return (
@@ -635,17 +789,89 @@ export default function AnnouncementsScreen({ onBack, onOpenNote, onChanged }) {
                           <Pin size={10} /> Pinned
                         </span>
                       )}
+                      {item._replyMeta && (
+                        <span className="ann-replied-badge">
+                          <Check size={10} /> Replied
+                        </span>
+                      )}
                     </div>
                     <span style={{ fontSize: 11.5, color: 'var(--text-secondary)', flexShrink: 0 }}>
                       {item.timeLabel || formatShortDate(item.dateKey)}
                     </span>
                   </div>
 
+                  {/* Secretly matched course class time & room */}
+                  {item._scheduleMatch ? (
+                    <div className="ann-schedule-pill">
+                      <Clock size={12} style={{ flexShrink: 0 }} />
+                      <span className="ann-schedule-text">{item._scheduleMatch.summaryText}</span>
+                      {item._scheduleMatch.nextMeetingLabel && (
+                        <span className="ann-next-badge">
+                          Next: {item._scheduleMatch.nextMeetingLabel}
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    coursesList.length > 0 &&
+                    item.course && (
+                      <div style={{ marginTop: 6 }}>
+                        {linkingItemId === item.id ? (
+                          <div className="flex items-center gap-6" style={{ flexWrap: 'wrap' }}>
+                            <select
+                              className="settings-input"
+                              style={{ fontSize: 12, padding: '4px 8px', width: 'auto', minWidth: 160 }}
+                              defaultValue=""
+                              onChange={e => {
+                                if (e.target.value) handleLinkCourse(item, e.target.value);
+                              }}
+                            >
+                              <option value="">Choose subject for time…</option>
+                              {coursesList.map(c => (
+                                <option key={c.id} value={c.id}>
+                                  {c.code || c.name}
+                                  {c.section ? ` (Sec ${c.section})` : ''}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              className="row-action-chip"
+                              onClick={() => setLinkingItemId(null)}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            className="row-action-chip"
+                            style={{ fontSize: 11 }}
+                            onClick={() => setLinkingItemId(item.id)}
+                          >
+                            <Link2 size={11} /> Link class schedule
+                          </button>
+                        )}
+                      </div>
+                    )
+                  )}
+
                   <h3 className="ann-card-title">{item.title}</h3>
 
                   {item.author && (
                     <div className="ann-card-author">
                       <User size={12} /> {item.author}
+                      {item._scheduleMatch?.canSaveTeacher && (
+                        <button
+                          type="button"
+                          className="ann-save-teacher-chip"
+                          onClick={() =>
+                            handleSaveTeacher(item._scheduleMatch.course, item.author)
+                          }
+                        >
+                          <UserCheck size={11} /> Save as{' '}
+                          {item._scheduleMatch.course.code || 'course'} teacher
+                        </button>
+                      )}
                     </div>
                   )}
 
@@ -667,6 +893,23 @@ export default function AnnouncementsScreen({ onBack, onOpenNote, onChanged }) {
                     </div>
                   )}
 
+                  {/* Quick-open Meeting / Chat / Drive pills */}
+                  {item._quickLinks?.length > 0 && (
+                    <div className="ann-quick-links">
+                      {item._quickLinks.map(ql => (
+                        <a
+                          key={ql.url}
+                          href={ql.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`ann-quick-link-pill kind-${ql.kind}`}
+                        >
+                          <ExternalLink size={11} /> Open {ql.label}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+
                   {/* Auto-detected deadline pill */}
                   {item._detectedDate && (
                     <div style={{ marginTop: 8 }}>
@@ -681,6 +924,13 @@ export default function AnnouncementsScreen({ onBack, onOpenNote, onChanged }) {
                   )}
 
                   <div className="ann-card-actions">
+                    <button
+                      type="button"
+                      className={`row-action-chip${item._replyMeta ? ' active-chip' : ''}`}
+                      onClick={() => openReplySheet(item)}
+                    >
+                      <Reply size={12} /> {item._replyMeta ? 'Reply again' : 'Reply'}
+                    </button>
                     <button
                       type="button"
                       className={`row-action-chip${item.pinned ? ' active-chip' : ''}`}
@@ -730,6 +980,128 @@ export default function AnnouncementsScreen({ onBack, onOpenNote, onChanged }) {
           </div>
         )}
       </div>
+
+      {/* Hybrid Announcement Reply Composer Sheet */}
+      {replyTarget &&
+        (() => {
+          const discussionInfo = parseCanvasDiscussionUrl(replyTarget.url);
+          const hasDirectApi = Boolean(canvasCfg.token && discussionInfo);
+          const modal = (
+            <div className="export-overlay" onClick={() => !replyBusy && setReplyTarget(null)}>
+              <div
+                className="export-sheet reply-sheet-card"
+                onClick={e => e.stopPropagation()}
+                role="dialog"
+                aria-modal="true"
+                aria-label="Reply to announcement"
+              >
+                <div className="flex justify-between items-center" style={{ marginBottom: 6 }}>
+                  <div className="export-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Reply size={16} style={{ color: 'var(--accent)' }} /> Reply to Announcement
+                  </div>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => !replyBusy && setReplyTarget(null)}
+                    aria-label="Close reply composer"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
+                  {replyTarget.title}
+                </div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginTop: 2, marginBottom: 8 }}>
+                  {replyTarget.course}
+                  {replyTarget._scheduleMatch ? ` · ${replyTarget._scheduleMatch.summaryText}` : ''}
+                </div>
+
+                {!hasDirectApi && (
+                  <div className="reply-rss-note">
+                    Canvas RSS feeds are read-only — write or draft below, then tap{' '}
+                    <strong>Copy &amp; Open in Canvas</strong> to paste &amp; send straight in the thread.
+                  </div>
+                )}
+
+                <div className="flex gap-6" style={{ flexWrap: 'wrap', marginBottom: 8 }}>
+                  {QUICK_REPLIES.map(qr => (
+                    <button
+                      key={qr}
+                      type="button"
+                      className="row-action-chip"
+                      onClick={() => setReplyText(qr)}
+                    >
+                      {qr}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className="row-action-chip active-chip"
+                    disabled={replyAiBusy}
+                    onClick={handleDraftReplyWithAi}
+                  >
+                    <Sparkles size={11} /> {replyAiBusy ? 'Drafting…' : 'Draft with AI'}
+                  </button>
+                </div>
+
+                <textarea
+                  className="ai-input"
+                  rows={4}
+                  placeholder="Write your reply to the teacher…"
+                  value={replyText}
+                  onChange={e => setReplyText(e.target.value)}
+                  disabled={replyBusy}
+                  style={{ marginTop: 0, width: '100%' }}
+                />
+
+                <div className="flex gap-8" style={{ marginTop: 12, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ flex: '0 0 auto' }}
+                    disabled={replyBusy}
+                    onClick={() => setReplyTarget(null)}
+                  >
+                    Cancel
+                  </button>
+                  {hasDirectApi ? (
+                    <>
+                      <button
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        disabled={!replyText.trim() || replyBusy}
+                        onClick={handleCopyAndOpenCanvas}
+                      >
+                        <Copy size={14} /> Copy &amp; Open
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-primary flex-1"
+                        disabled={!replyText.trim() || replyBusy}
+                        onClick={handleSendApiReply}
+                      >
+                        <Send size={15} /> {replyBusy ? 'Posting…' : 'Send to Canvas'}
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn btn-primary flex-1"
+                      disabled={!replyText.trim() || replyBusy}
+                      onClick={handleCopyAndOpenCanvas}
+                    >
+                      <Copy size={15} /> Copy &amp; Open in Canvas
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+          return typeof document !== 'undefined' && document.body
+            ? createPortal(modal, document.body)
+            : modal;
+        })()}
     </div>
   );
 }

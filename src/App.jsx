@@ -73,6 +73,7 @@ export default function App() {
   const [noteInitialMode, setNoteInitialMode] = useState(null);
   const [examPaperTarget, setExamPaperTarget] = useState(null); // { sourceNote?, sourceFolder?, sourceCourse?, returnScreen }
   const [themesReturnTo, setThemesReturnTo] = useState('folders');
+  const [coursesInitialSection, setCoursesInitialSection] = useState('courses');
   const [sharedImport, setSharedImport] = useState(null); // { file?, text?, title? } from Android Share Target
   const [sidebarTick, setSidebarTick] = useState(0);
   const [isWide, setIsWide] = useState(() =>
@@ -338,10 +339,14 @@ export default function App() {
     pushHistoryEntry('planner');
   }, [pushHistoryEntry]);
 
-  const handleOpenCourses = useCallback(() => {
-    setScreen('courses');
-    pushHistoryEntry('courses');
-  }, [pushHistoryEntry]);
+  const handleOpenCourses = useCallback(
+    (opts = {}) => {
+      setCoursesInitialSection(opts?.section === 'schedule' ? 'schedule' : 'courses');
+      setScreen('courses');
+      pushHistoryEntry('courses');
+    },
+    [pushHistoryEntry]
+  );
 
   const handleOpenAnnouncements = useCallback(() => {
     setScreen('announcements');
@@ -641,6 +646,7 @@ export default function App() {
             onOpenPlanner={handleOpenPlanner}
             onChanged={bumpSidebar}
             onRegisterBack={registerOverlayBack}
+            initialSection={coursesInitialSection}
           />
         </Suspense>
       );
@@ -765,6 +771,11 @@ export default function App() {
               setSharedImport(null);
               bumpSidebar();
               handleOpenCourses();
+            }}
+            onImportedSchedule={() => {
+              setSharedImport(null);
+              bumpSidebar();
+              handleOpenCourses({ section: 'schedule' });
             }}
             onClose={() => setSharedImport(null)}
           />

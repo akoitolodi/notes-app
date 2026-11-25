@@ -1241,6 +1241,36 @@ export default function SettingsScreen({ onBack, onDataImported, onOpenThemes })
           </span>
         </label>
 
+        <label className="ios-switch-row mt-8">
+          <div style={{ flex: 1 }}>
+            <span className="ios-switch-label">15-min before-class reminders</span>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+              Pings before each scheduled class with your room/lab &amp; unread posts
+            </div>
+          </div>
+          <span className="ios-switch">
+            <input
+              type="checkbox"
+              checked={Boolean(notifCfg.classReminders15m)}
+              onChange={async e => {
+                const next = e.target.checked;
+                if (next) {
+                  await requestNotificationPermission();
+                }
+                saveNotificationSettings({ classReminders15m: next });
+                setNotifCfg(prev => ({ ...prev, classReminders15m: next }));
+                const res = await syncDeadlineNotifications();
+                toast(
+                  next
+                    ? `Class reminders enabled (${res.scheduledCount} total scheduled)`
+                    : '15-min class reminders disabled'
+                );
+              }}
+            />
+            <span className="ios-switch-track" />
+          </span>
+        </label>
+
         <div className="settings-label mt-16 flex items-center gap-6">
           <Signal size={14} /> Slow Internet Mode ({isSlowNetworkActive() ? 'Active' : 'Normal'})
         </div>
@@ -1412,7 +1442,7 @@ export default function SettingsScreen({ onBack, onDataImported, onOpenThemes })
           • Press <strong>Ctrl+S</strong> to save immediately or <strong>Ctrl+Shift+S</strong> to save & explain.
         </div>
         <div className="settings-tip" style={{ marginTop: 10, opacity: 0.7 }}>
-          Notes by Bai v2.0.9
+          Notes by Bai v2.1.0
         </div>
       </div>
 

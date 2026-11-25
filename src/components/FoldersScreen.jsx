@@ -35,6 +35,8 @@ import {
   Megaphone,
   RefreshCw,
   Palette,
+  Clock,
+  ExternalLink,
 } from 'lucide-react';
 import {
   db,
@@ -61,6 +63,12 @@ import {
   markAllAnnouncementsRead,
   snoozeInAppBanner,
 } from '../lib/notifications';
+import { resolveScheduleEntries, formatTimeRange12h } from '../lib/scheduleView';
+import {
+  matchAnnouncementToCourse,
+  extractQuickLinks,
+  getNextUpcomingClassAcrossWeek,
+} from '../lib/announcementSchedule';
 import { useDialog } from './ui/DialogProvider';
 
 const TemplatePickerSheet = lazy(() => import('./TemplatePickerSheet'));
@@ -162,6 +170,7 @@ export default function FoldersScreen({
   const [annPreview, setAnnPreview] = useState(() =>
     initialCache?.annPreview || { total: 0, unread: 0, pinned: 0, latest: [] }
   );
+  const [upNextClass, setUpNextClass] = useState(() => initialCache?.upNextClass || null);
   const [syncingAnn, setSyncingAnn] = useState(false);
   const [alertSummary, setAlertSummary] = useState(null);
   const [searching, setSearching] = useState(false);
@@ -196,18 +205,45 @@ export default function FoldersScreen({
 
   const refresh = useCallback(async () => {
     try {
-      const [homeSum, pItems, crs] = await Promise.all([
+      const [homeSum, pItems, crs, schedRows] = await Promise.all([
         getHomeSummary(),
         db.plannerItems.toArray().catch(() => []),
         db.courses.toArray().catch(() => []),
+        db.classSchedule.toArray().catch(() => []),
       ]);
       const alerts = await getInAppAlertSummary(pItems);
       const nextDueCount = pItems.filter(it => !it.done && it.type !== 'announcement').length;
       const nextCourseCount = crs.length;
 
+      const resolvedEntries = resolveScheduleEntries(crs, schedRows);
+      const nextRaw = getNextUpcomingClassAcrossWeek(resolvedEntries);
+      const nextUpSummary = nextRaw
+        ? {
+            status: nextRaw.status,
+            dayLabel: nextRaw.dayLabel,
+            minutesLeft: nextRaw.minutesLeft,
+            minutesUntil: nextRaw.minutesUntil,
+            code: nextRaw.entry.code,
+            kind: nextRaw.entry.kind,
+            room: nextRaw.entry.room,
+            timeRange: formatTimeRange12h(nextRaw.entry.startTime, nextRaw.entry.endTime),
+            courseId: nextRaw.entry.courseId,
+            folderId: nextRaw.entry.course?.folderId || null,
+          }
+        : null;
+
       const anns = pItems
         .filter(it => it.type === 'announcement')
-        .map(it => ({ ...it, _read: isAnnouncementRead(it) }))
+        .map(it => {
+          const sm = matchAnnouncementToCourse(it, crs, schedRows);
+          const ql = extractQuickLinks(it.description)[0] || null;
+          return {
+            ...it,
+            _read: isAnnouncementRead(it),
+            _scheduleCompact: sm?.compactText || '',
+            _quickLink: ql,
+          };
+        })
         .sort((a, b) => {
           if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
           if (a._read !== b._read) return a._read ? 1 : -1;
@@ -229,12 +265,14 @@ export default function FoldersScreen({
       setCourseCount(nextCourseCount);
       setAlertSummary(alerts);
       setAnnPreview(nextAnnPreview);
+      setUpNextClass(nextUpSummary);
 
       writeHomeCache({
         summary: { ...homeSum, vaultFolders: [] },
         plannerDueCount: nextDueCount,
         courseCount: nextCourseCount,
         annPreview: nextAnnPreview,
+        upNextClass: nextUpSummary,
       });
     } catch {
       const homeSum = await getHomeSummary().catch(() => EMPTY_SUMMARY);
@@ -247,6 +285,7 @@ export default function FoldersScreen({
       setCourseCount(0);
       setAlertSummary(null);
       setAnnPreview({ total: 0, unread: 0, pinned: 0, latest: [] });
+      setUpNextClass(null);
     }
   }, []);
 
@@ -770,6 +809,60 @@ export default function FoldersScreen({
         </button>
       </div>
 
+      {/* Up Next / Live Class Compact Strip */}
+      {upNextClass && (
+        <div
+          className={`home-upnext-bar${upNextClass.status === 'now' ? ' is-live' : ''}`}
+          role="button"
+          tabIndex={0}
+          onClick={() => onOpenCourses?.({ section: 'schedule' })}
+          onKeyDown={e => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onOpenCourses?.({ section: 'schedule' });
+            }
+          }}
+        >
+          <div className="home-upnext-left">
+            <span className="home-upnext-badge">
+              {upNextClass.status === 'now'
+                ? `LIVE · ${upNextClass.minutesLeft}m left`
+                : upNextClass.status === 'today'
+                  ? `NEXT IN ${upNextClass.minutesUntil}m`
+                  : upNextClass.dayLabel}
+            </span>
+            <div className="home-upnext-main">
+              <strong>{upNextClass.code}</strong> · {upNextClass.timeRange}
+              {upNextClass.room ? ` · ${upNextClass.room}` : ''}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="row-action-chip active-chip"
+            style={{ flexShrink: 0 }}
+            onClick={async e => {
+              e.stopPropagation();
+              const targetFolder =
+                summary.folders.find(f => f.id === upNextClass.folderId) ||
+                summary.folders.find(f => f.name.toLowerCase() === upNextClass.code.toLowerCase()) ||
+                summary.folders.find(f => f.name === 'General') ||
+                summary.folders[0];
+              if (!targetFolder) return;
+              const dateTag = new Date().toLocaleDateString([], { month: 'short', day: 'numeric' });
+              const created = await createNote(
+                targetFolder.id,
+                `${upNextClass.code} — ${dateTag}`,
+                '',
+                upNextClass.code
+              );
+              onOpenNote(created, targetFolder, 'edit');
+            }}
+          >
+            <SquarePen size={11} /> Start Note
+          </button>
+        </div>
+      )}
+
       {/* Dedicated Live Announcements Command Card */}
       {onOpenAnnouncements && (
         <section className={`home-ann-panel${annPreview.unread > 0 ? ' has-unread' : ''}`}>
@@ -855,9 +948,28 @@ export default function FoldersScreen({
                     <span className="home-ann-date">{item.timeLabel || item.dateKey}</span>
                   </div>
                   <div className="home-ann-item-title">{item.title}</div>
-                  {item.author && (
-                    <div className="home-ann-item-sub">by {item.author}</div>
+                  {item._scheduleCompact && (
+                    <div className="home-ann-sched">
+                      <Clock size={11} style={{ flexShrink: 0 }} />
+                      <span>{item._scheduleCompact}</span>
+                    </div>
                   )}
+                  <div className="flex items-center justify-between gap-6" style={{ flexWrap: 'wrap' }}>
+                    {item.author && (
+                      <div className="home-ann-item-sub">by {item.author}</div>
+                    )}
+                    {item._quickLink && (
+                      <a
+                        href={item._quickLink.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="home-ann-link-chip"
+                        onClick={e => e.stopPropagation()}
+                      >
+                        <ExternalLink size={10} /> {item._quickLink.label}
+                      </a>
+                    )}
+                  </div>
                 </button>
               ))}
             </div>
@@ -1286,6 +1398,11 @@ export default function FoldersScreen({
               setImportOpen(false);
               refresh();
               onOpenNote(created, targetFolder);
+            }}
+            onImportedSchedule={() => {
+              setImportOpen(false);
+              refresh();
+              onOpenCourses?.({ section: 'schedule' });
             }}
             onClose={() => setImportOpen(false)}
           />

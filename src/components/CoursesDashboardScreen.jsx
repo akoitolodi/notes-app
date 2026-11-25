@@ -81,6 +81,7 @@ import CourseGradesTab from './course/CourseGradesTab';
 import CourseAttendanceCard from './course/CourseAttendanceCard';
 import CourseScheduleView from './course/CourseScheduleView';
 const DocumentViewerModal = lazy(() => import('./DocumentViewerModal'));
+const SchedulePdfImportSheet = lazy(() => import('./course/SchedulePdfImportSheet'));
 import MarkdownContent from './ui/MarkdownContent';
 import { useDialog } from './ui/DialogProvider';
 
@@ -101,6 +102,7 @@ export default function CoursesDashboardScreen({
   onOpenPlanner,
   onChanged,
   onRegisterBack = null,
+  initialSection = 'courses',
 }) {
   const { confirm, toast } = useDialog();
 
@@ -111,7 +113,10 @@ export default function CoursesDashboardScreen({
   const [folders, setFolders] = useState([]);
 
   const [selectedCourseId, setSelectedCourseId] = useState(null);
-  const [dashSection, setDashSection] = useState('courses'); // courses | schedule
+  const [dashSection, setDashSection] = useState(() =>
+    initialSection === 'schedule' ? 'schedule' : 'courses'
+  ); // courses | schedule
+  const [scheduleImportOpen, setScheduleImportOpen] = useState(false);
   const [gwaMode, setGwaMode] = useState('gwa'); // gwa | gpa
   const [courseTab, setCourseTab] = useState('overview'); // overview | modules | announcements | assignments | grades | ai
   const [showArchived, setShowArchived] = useState(false);
@@ -200,10 +205,14 @@ export default function CoursesDashboardScreen({
         setPreviewMaterial(null);
         return true;
       }
+      if (scheduleImportOpen) {
+        setScheduleImportOpen(false);
+        return true;
+      }
       return false;
     });
     return () => onRegisterBack(null);
-  }, [onRegisterBack, previewMaterial]);
+  }, [onRegisterBack, previewMaterial, scheduleImportOpen]);
 
   const courseStatsMap = useMemo(() => {
     const map = new Map();
@@ -1095,6 +1104,7 @@ export default function CoursesDashboardScreen({
                 setCourseTab('overview');
               }}
               onEditCourse={c => openEditCourse(c, { ensureMeetingSlot: true })}
+              onImportSchedulePdf={() => setScheduleImportOpen(true)}
               onAddCourseSchedule={() => {
                 if (activeCourses.length > 0) {
                   const firstMissing = activeCourses.find(
@@ -1147,6 +1157,13 @@ export default function CoursesDashboardScreen({
 
             {/* Utility Chip Strip */}
             <div className="course-utility-chips">
+              <button
+                type="button"
+                className="row-action-chip active-chip"
+                onClick={() => setScheduleImportOpen(true)}
+              >
+                <FileUp size={12} /> Import Schedule PDF
+              </button>
               <button type="button" className="row-action-chip" onClick={handleAutoDiscover}>
                 <Wand2 size={12} /> Auto-Discover Canvas
               </button>
@@ -1232,7 +1249,10 @@ export default function CoursesDashboardScreen({
                       }}
                     >
                       <div className="course-card-banner" style={{ background: c.color || '#0a84ff' }}>
-                        <span className="course-code-pill">{c.code || 'COURSE'}</span>
+                        <div className="flex items-center gap-4">
+                          <span className="course-code-pill">{c.code || 'COURSE'}</span>
+                          {c.section && <span className="course-code-pill">Sec {c.section}</span>}
+                        </div>
                         <div className="flex items-center gap-4">
                           {st.gradeInfo?.standing !== null && (
                             <span className="course-code-pill">{st.gradeInfo.standing}%</span>
@@ -1337,6 +1357,19 @@ export default function CoursesDashboardScreen({
           </>
         )}
         {renderCourseFormModal()}
+        {scheduleImportOpen && (
+          <Suspense fallback={null}>
+            <SchedulePdfImportSheet
+              onImported={async () => {
+                setScheduleImportOpen(false);
+                await refreshAll();
+                onChanged?.();
+                setDashSection('schedule');
+              }}
+              onClose={() => setScheduleImportOpen(false)}
+            />
+          </Suspense>
+        )}
       </div>
     );
   }
