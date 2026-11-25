@@ -9,7 +9,12 @@
  */
 import { Capacitor } from '@capacitor/core';
 import { db, localDateKey } from '../store/db';
-import { formatTimeRange12h, resolveScheduleEntries } from './scheduleView';
+import {
+  formatTimeRange12h,
+  resolveScheduleEntries,
+  filterScheduleEntries,
+  getScheduleFilterMode,
+} from './scheduleView';
 import { matchAnnouncementToCourse } from './announcementSchedule';
 
 let _localNotifMod = null;
@@ -255,16 +260,17 @@ export function buildDeadlineSchedules(items = [], nowMs = Date.now(), { stickyO
 
 /**
  * Pure deterministic customizable before-class notification schedule builder
- * (default 10m lead, optional persistent ongoing mode, room/lab + teacher + unread posts).
+ * (default 10m lead, optional persistent ongoing mode, weekly recurring closed-app alarms,
+ * room/lab + teacher + unread posts).
  */
 export function buildClassReminderSchedules(
   courses = [],
   scheduleRows = [],
   unreadAnnouncements = [],
   nowMs = Date.now(),
-  { leadMinutes = 10, persistent = false } = {}
+  { leadMinutes = 10, persistent = false, filterMode = getScheduleFilterMode() } = {}
 ) {
-  const entries = resolveScheduleEntries(courses, scheduleRows);
+  const entries = filterScheduleEntries(resolveScheduleEntries(courses, scheduleRows), filterMode);
   if (entries.length === 0) return [];
   const lead = clampLeadMin(leadMinutes);
   const persist = Boolean(persistent);
@@ -282,6 +288,19 @@ export function buildClassReminderSchedules(
   const out = [];
 
   for (const e of entries) {
+    // Compute native Capacitor recurring weekly trigger (weekday 1=Sun .. 7=Sat)
+    let triggerDay = e.dayOfWeek;
+    let triggerMin = e.startMin - lead;
+    if (triggerMin < 0) {
+      triggerMin += 1440;
+      triggerDay = (triggerDay + 6) % 7;
+    }
+    const recurringOn = {
+      weekday: triggerDay + 1,
+      hour: Math.floor(triggerMin / 60),
+      minute: triggerMin % 60,
+    };
+
     for (let offset = 0; offset < 7; offset++) {
       const targetDow = (nowDow + offset) % 7;
       if (e.dayOfWeek !== targetDow) continue;
@@ -326,6 +345,7 @@ export function buildClassReminderSchedules(
               : `🔔 In Class Now: ${e.code}${roomPart}`,
           body,
           at: null,
+          recurringOn: null,
           classEndAt: classEnd,
           ongoing: true,
           autoCancel: false,
@@ -335,13 +355,13 @@ export function buildClassReminderSchedules(
         break;
       }
 
-      if (triggerAt <= nowMs + 60000 || triggerAt >= nowMs + 7 * DAY_MS) continue;
-
+      const futureTriggerAt = triggerAt <= nowMs + 60000 ? triggerAt + 7 * DAY_MS : triggerAt;
       out.push({
         id: stableNotifId(`class:${e.baseCode}:${e.dayOfWeek}:${e.startTime}`),
         title: `${persist ? '🔔 ' : ''}Class in ${lead}m: ${e.code}${roomPart}`,
         body,
-        at: triggerAt,
+        at: futureTriggerAt,
+        recurringOn,
         classEndAt: classEnd,
         ongoing: persist,
         autoCancel: !persist,
@@ -468,7 +488,11 @@ export async function syncDeadlineNotifications() {
       id: s.id,
       title: s.title,
       body: s.body,
-      ...(s.at ? { schedule: { at: new Date(s.at), allowWhileIdle: true } } : {}),
+      ...(s.recurringOn
+        ? { schedule: { on: s.recurringOn, repeats: true, allowWhileIdle: true } }
+        : s.at
+          ? { schedule: { at: new Date(s.at), allowWhileIdle: true } }
+          : {}),
       smallIcon: 'ic_stat_icon_config_sample',
       ongoing: Boolean(s.ongoing),
       autoCancel: s.autoCancel !== undefined ? Boolean(s.autoCancel) : !s.ongoing,

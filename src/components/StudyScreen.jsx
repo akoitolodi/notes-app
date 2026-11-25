@@ -6,7 +6,7 @@
  * - Think: Challenge My Notes (Critical & Logical Audit), Feynman Technique Coach,
  *          Mnemonics, Answer Grader, and interactive Weakness Detection
  */
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react';
 import {
   ChevronLeft,
   Sparkles,
@@ -36,6 +36,13 @@ import { FlashcardDeck, QuizSection } from './study/StudyWidgets';
 import FeynmanCoachTab from './study/FeynmanCoachTab';
 import MarkdownContent from './ui/MarkdownContent';
 import { useDialog } from './ui/DialogProvider';
+
+const LazySwipeCram = lazy(() =>
+  import('./study/CramGamesTab').then(m => ({ default: m.SwipeCramGame }))
+);
+const LazyTermMatch = lazy(() =>
+  import('./study/CramGamesTab').then(m => ({ default: m.TermMatchSpeedGame }))
+);
 
 function normalizeAnswer(str) {
   return String(str || '')
@@ -486,7 +493,8 @@ function PracticeGrader({ note }) {
 
 export default function StudyScreen({ note, onBack, onOpenExamPaper = null }) {
   const { toast } = useDialog();
-  const [tab, setTab] = useState('cards'); // cards | quiz | blanks | think
+  const [tab, setTab] = useState('cards'); // cards | quiz | blanks | teach | think
+  const [cardGameMode, setCardGameMode] = useState('deck'); // deck | swipe | match
   const flashcards = note?.flashcards || [];
   const quiz = note?.quiz || [];
 
@@ -638,13 +646,49 @@ export default function StudyScreen({ note, onBack, onOpenExamPaper = null }) {
 
       <div className="editor">
         {tab === 'cards' && (
-          <FlashcardDeck
-            cards={flashcards}
-            progress={cardProgress}
-            onMarkCard={(idx, status) =>
-              persistStudy({ cardProgress: { ...cardProgress, [idx]: status } })
-            }
-          />
+          <div>
+            {flashcards.length >= 2 && (
+              <div className="view-switcher view-switcher-inline" style={{ margin: '0 0 12px' }}>
+                {[
+                  ['deck', 'Flip Deck'],
+                  ['swipe', 'Swipe Cram'],
+                  ['match', '60s Match'],
+                ].map(([gid, glabel]) => (
+                  <button
+                    key={gid}
+                    type="button"
+                    className={`view-switch-btn${cardGameMode === gid ? ' active' : ''}`}
+                    onClick={() => setCardGameMode(gid)}
+                  >
+                    {glabel}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {cardGameMode === 'swipe' && flashcards.length >= 2 ? (
+              <Suspense fallback={<div className="scan-indicator"><span className="spinner" /> Loading cram deck…</div>}>
+                <LazySwipeCram
+                  cards={flashcards}
+                  onMarkCard={(idx, status) =>
+                    persistStudy({ cardProgress: { ...cardProgress, [idx]: status } })
+                  }
+                />
+              </Suspense>
+            ) : cardGameMode === 'match' && flashcards.length >= 2 ? (
+              <Suspense fallback={<div className="scan-indicator"><span className="spinner" /> Loading match game…</div>}>
+                <LazyTermMatch cards={flashcards} />
+              </Suspense>
+            ) : (
+              <FlashcardDeck
+                cards={flashcards}
+                progress={cardProgress}
+                onMarkCard={(idx, status) =>
+                  persistStudy({ cardProgress: { ...cardProgress, [idx]: status } })
+                }
+              />
+            )}
+          </div>
         )}
 
         {tab === 'quiz' && (

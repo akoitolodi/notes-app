@@ -346,23 +346,47 @@ export function solveAlgebraEquation(raw) {
 
 /** 4. Pure Arithmetic / Scientific Expression (zero eval!) */
 export function solveArithmeticLine(raw) {
-  const s = String(raw || '').trim().replace(/=\s*$/, '').trim();
-  if (!s || s.length < 3 || s.length > 90) return null;
-  // Require at least one math operator or math function (avoid plain numbers or dates like 2026-11-24)
+  let s = String(raw || '').trim().replace(/=\s*$/, '').trim();
+  if (!s || s.length < 3 || s.length > 100) return null;
+
+  // Strip optional list prefix ("1) 45 - 12") or prose label ("Total: 150 + 250")
+  const listStripped = s.replace(/^\d+[.)]\s+/, '').trim();
+  if (listStripped !== s && /[+\-−–—*/^×÷]|plus|minus|times|divided/i.test(listStripped)) {
+    s = listStripped;
+  } else {
+    const labelMatch = /^[A-Za-z][A-Za-z0-9\s_-]{0,24}\s*[:=]\s*(.+)$/.exec(s);
+    if (labelMatch) {
+      const rhs = labelMatch[1].trim();
+      if (rhs && /[+\-−–—*/^×÷]|plus|minus|times|divided/i.test(rhs)) {
+        s = rhs;
+      }
+    }
+  }
+
+  // Skip real dates (YYYY-MM-DD or MM/DD/YYYY) — NEVER block simple division like "10/2" or "8/4"!
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
-  if (/^\d{1,2}\/\d{1,2}(?:\/\d{2,4})?$/.test(s)) return null;
-  if (!/[+\-*/^×÷]|(?:sin|cos|tan|sqrt|abs|log|ln|exp|floor|ceil|round)\s*\(/i.test(s)) {
+  if (/^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(s)) return null;
+
+  // Normalize word operators & casual 'x' multiplication between numbers BEFORE algebra var check
+  let normalized = s
+    .replace(/\b(\d+(?:\.\d+)?)\s+(?:plus|added\s+to)\s+(\d+(?:\.\d+)?)\b/gi, '$1 + $2')
+    .replace(/\b(\d+(?:\.\d+)?)\s+minus\s+(\d+(?:\.\d+)?)\b/gi, '$1 - $2')
+    .replace(/\b(\d+(?:\.\d+)?)\s+(?:times|multiplied\s+by)\s+(\d+(?:\.\d+)?)\b/gi, '$1 * $2')
+    .replace(/\b(\d+(?:\.\d+)?)\s+(?:divided\s+by|over)\s+(\d+(?:\.\d+)?)\b/gi, '$1 / $2')
+    .replace(/(\d(?:\.\d+)?|\))\s*[xX]\s*(?=\d|\()/g, '$1 * ');
+
+  if (!/[+\-−–—*/^×÷·]|(?:sin|cos|tan|sqrt|abs|log|ln|exp|floor|ceil|round)\s*\(/i.test(normalized)) {
     return null;
   }
-  // Reject variable x (handled as graphable function or equation)
-  if (/(?<![a-zA-Z])x(?![a-zA-Z])/i.test(s.replace(/\bexp\b/gi, ''))) return null;
+  // Reject algebraic variable x (handled as graphable function or equation)
+  if (/(?<![a-zA-Z])x(?![a-zA-Z])/i.test(normalized.replace(/\bexp\b/gi, ''))) return null;
 
   try {
-    const fn = compileMathExpression(s);
+    const fn = compileMathExpression(normalized);
     const val = fn(0);
     if (!Number.isFinite(val)) return null;
     const ans = formatSmartNumber(val);
-    if (ans === s) return null;
+    if (ans === s || ans === normalized) return null;
     return {
       label: s,
       answer: ans,

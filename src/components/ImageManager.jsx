@@ -10,9 +10,10 @@
 import { useState, useEffect } from 'react';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { Capacitor } from '@capacitor/core';
-import { X, Sparkles, ScanText, ZoomIn, ZoomOut, Camera as CameraIcon, Image as ImageIcon } from 'lucide-react';
+import { X, Sparkles, ScanText, ZoomIn, ZoomOut, Camera as CameraIcon, Image as ImageIcon, Wand2, FileCheck2 } from 'lucide-react';
 import { resolveImageBlob, resolveImageDataUrl } from '../store/db';
 import { explainImage, ocrImage } from '../lib/aiFeatures';
+import { enhanceWhiteboardImage } from '../lib/imageEnhance';
 import MarkdownContent from './ui/MarkdownContent';
 import { useDialog } from './ui/DialogProvider';
 
@@ -150,9 +151,9 @@ export default function ImageStrip({
   zeroAi = false,
 }) {
   const { toast } = useDialog();
-  const [viewing, setViewing] = useState(null); // { img, src }
+  const [viewing, setViewing] = useState(null); // { img, src, enhancedSrc? }
   const [zoomed, setZoomed] = useState(false);
-  const [aiBusy, setAiBusy] = useState(null); // null | 'explain' | 'ocr'
+  const [aiBusy, setAiBusy] = useState(null); // null | 'explain' | 'ocr' | 'enhance'
   const [explanation, setExplanation] = useState('');
 
   useEffect(() => {
@@ -197,11 +198,32 @@ export default function ImageStrip({
     }
   };
 
+  const handleEnhancePhoto = async enhanceMode => {
+    if (!viewing || aiBusy) return;
+    setAiBusy('enhance');
+    try {
+      const baseDataUrl = await resolveImageDataUrl(viewing.img);
+      const sourceUrl = baseDataUrl || viewing.src;
+      const out = await enhanceWhiteboardImage(sourceUrl, enhanceMode);
+      setViewing(v => (v ? { ...v, enhancedSrc: out } : v));
+      toast(
+        enhanceMode === 'document'
+          ? 'Applied high-contrast Document Scan filter!'
+          : 'Applied Whiteboard ink-boost filter!',
+        { type: 'success' }
+      );
+    } catch {
+      toast('Could not enhance image', { type: 'error' });
+    } finally {
+      setAiBusy(null);
+    }
+  };
+
   const handleOcrPhoto = async () => {
     if (!viewing || aiBusy) return;
     setAiBusy('ocr');
     try {
-      const dataUrl = await resolveImageDataUrl(viewing.img);
+      const dataUrl = viewing.enhancedSrc || (await resolveImageDataUrl(viewing.img));
       if (!dataUrl) throw new Error('Could not load image data');
       const text = await ocrImage({ imageDataUrl: dataUrl, subject });
       if (text && text.trim()) {
@@ -300,7 +322,7 @@ export default function ImageStrip({
             }}
           >
             <img
-              src={viewing.src}
+              src={viewing.enhancedSrc || viewing.src}
               alt="Full size attachment"
               className={zoomed ? 'zoomed' : ''}
               onClick={e => {
@@ -316,44 +338,74 @@ export default function ImageStrip({
             </div>
           )}
 
-          {!zeroAi && (
-            <div className="image-viewer-bar">
+          <div className="image-viewer-bar" style={{ flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={Boolean(aiBusy)}
+              onClick={() => handleEnhancePhoto('whiteboard')}
+            >
+              <Wand2 size={14} /> Enhance Board
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              disabled={Boolean(aiBusy)}
+              onClick={() => handleEnhancePhoto('document')}
+            >
+              <FileCheck2 size={14} /> Doc Clean
+            </button>
+            {viewing.enhancedSrc && !readOnly && onAdd && (
               <button
                 type="button"
                 className="btn btn-primary btn-sm"
-                disabled={Boolean(aiBusy)}
-                onClick={handleExplainPhoto}
+                onClick={() => {
+                  onAdd(viewing.enhancedSrc);
+                  toast('Saved enhanced scan to note!', { type: 'success' });
+                }}
               >
-                {aiBusy === 'explain' ? (
-                  <>
-                    <span className="spinner" style={{ width: 14, height: 14 }} /> Explaining…
-                  </>
-                ) : (
-                  <>
-                    <Sparkles size={15} /> Explain photo
-                  </>
-                )}
+                Save Copy
               </button>
-              {onAppendText && (
+            )}
+            {!zeroAi && (
+              <>
                 <button
                   type="button"
-                  className="btn btn-secondary btn-sm"
+                  className="btn btn-primary btn-sm"
                   disabled={Boolean(aiBusy)}
-                  onClick={handleOcrPhoto}
+                  onClick={handleExplainPhoto}
                 >
-                  {aiBusy === 'ocr' ? (
+                  {aiBusy === 'explain' ? (
                     <>
-                      <span className="spinner" style={{ width: 14, height: 14 }} /> Reading…
+                      <span className="spinner" style={{ width: 14, height: 14 }} /> Explaining…
                     </>
                   ) : (
                     <>
-                      <ScanText size={15} /> Extract text (OCR)
+                      <Sparkles size={15} /> Explain photo
                     </>
                   )}
                 </button>
-              )}
-            </div>
-          )}
+                {onAppendText && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary btn-sm"
+                    disabled={Boolean(aiBusy)}
+                    onClick={handleOcrPhoto}
+                  >
+                    {aiBusy === 'ocr' ? (
+                      <>
+                        <span className="spinner" style={{ width: 14, height: 14 }} /> Reading…
+                      </>
+                    ) : (
+                      <>
+                        <ScanText size={15} /> Extract text (OCR)
+                      </>
+                    )}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>

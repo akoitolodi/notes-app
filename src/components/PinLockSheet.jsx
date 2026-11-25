@@ -2,7 +2,7 @@
  * PinLockSheet — clean, tactile 4–6 digit PIN modal (portaled to document.body)
  * for setting up or unlocking Private Vault folders (like a Personal Diary).
  */
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Lock, Unlock, X, Delete, HelpCircle } from 'lucide-react';
 import {
@@ -10,7 +10,10 @@ import {
   verifyVaultPin,
   getVaultHint,
   isValidPin,
+  getDecoyConfig,
+  unlockDecoyVaultSession,
 } from '../lib/vault';
+import { ensureDecoyVaultSeeded } from '../store/db';
 
 export default function PinLockSheet({
   mode = 'unlock', // 'unlock' | 'verify' | 'setup' | 'change'
@@ -35,7 +38,21 @@ export default function PinLockSheet({
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
+  const decoyCfg = getDecoyConfig();
+  const decoyArmedRef = useRef(false);
+  const longPressTimerRef = useRef(null);
+  const longPressTriggeredRef = useRef(false);
+
   const savedHint = getVaultHint();
+
+  const clearDigitHold = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  };
+
+  useEffect(() => () => clearDigitHold(), []);
 
   const submitPin = async value => {
     const clean = String(value || '').trim();
@@ -46,6 +63,14 @@ export default function PinLockSheet({
     setBusy(true);
     setError('');
     try {
+      // Stealth decoy mode: when long-press trigger digit was held, ANY 4–6 digits open the harmless Dummy Vault
+      if (decoyArmedRef.current && (mode === 'unlock' || mode === 'setup') && decoyCfg.enabled) {
+        decoyArmedRef.current = false;
+        await ensureDecoyVaultSeeded();
+        unlockDecoyVaultSession();
+        onSuccess?.({ decoy: true });
+        return;
+      }
       if (step === 'unlock' || step === 'verify-action') {
         const ok = await verifyVaultPin(clean);
         if (!ok) {
@@ -107,6 +132,33 @@ export default function PinLockSheet({
     if (busy || pin.length >= 6) return;
     setError('');
     setPin(p => p + d);
+  };
+
+  const handleDigitPointerDown = d => {
+    clearDigitHold();
+    longPressTriggeredRef.current = false;
+    if (!decoyCfg.enabled || (mode !== 'unlock' && mode !== 'setup')) return;
+    longPressTimerRef.current = setTimeout(() => {
+      longPressTimerRef.current = null;
+      longPressTriggeredRef.current = true;
+      if (d === decoyCfg.triggerDigit) {
+        decoyArmedRef.current = true;
+        try {
+          navigator.vibrate?.(12);
+        } catch {
+          // ignore
+        }
+      }
+      appendDigit(d);
+    }, 450);
+  };
+
+  const handleDigitClick = d => {
+    if (longPressTriggeredRef.current) {
+      longPressTriggeredRef.current = false;
+      return;
+    }
+    appendDigit(d);
   };
 
   const heading =
@@ -204,7 +256,12 @@ export default function PinLockSheet({
               type="button"
               className="pin-key"
               disabled={busy}
-              onClick={() => appendDigit(d)}
+              onPointerDown={() => handleDigitPointerDown(d)}
+              onPointerUp={clearDigitHold}
+              onPointerLeave={clearDigitHold}
+              onPointerCancel={clearDigitHold}
+              onContextMenu={e => e.preventDefault()}
+              onClick={() => handleDigitClick(d)}
             >
               {d}
             </button>
@@ -213,7 +270,10 @@ export default function PinLockSheet({
             type="button"
             className="pin-key pin-key-util"
             disabled={busy || !pin.length}
-            onClick={() => setPin('')}
+            onClick={() => {
+              decoyArmedRef.current = false;
+              setPin('');
+            }}
           >
             Clear
           </button>
@@ -221,7 +281,12 @@ export default function PinLockSheet({
             type="button"
             className="pin-key"
             disabled={busy}
-            onClick={() => appendDigit('0')}
+            onPointerDown={() => handleDigitPointerDown('0')}
+            onPointerUp={clearDigitHold}
+            onPointerLeave={clearDigitHold}
+            onPointerCancel={clearDigitHold}
+            onContextMenu={e => e.preventDefault()}
+            onClick={() => handleDigitClick('0')}
           >
             0
           </button>

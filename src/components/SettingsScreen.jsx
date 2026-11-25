@@ -88,7 +88,7 @@ import {
 } from '../lib/aiConfig';
 import { createAbortController, testTermuxConnection } from '../lib/aiCore';
 import { getRawApiBaseOverride, setApiBase } from '../config';
-import { exportBackup, importBackup } from '../store/db';
+import { exportBackup, importBackup, ensureDecoyVaultSeeded } from '../store/db';
 import {
   getSavedLanSyncUrl,
   importNoteBaiBundle,
@@ -106,7 +106,7 @@ import {
   isSlowNetworkActive,
 } from '../lib/netResilience';
 import { testDeepTutorBridge } from '../lib/learnerMemory';
-import { hasVaultPin, lockVault } from '../lib/vault';
+import { hasVaultPin, lockVault, getDecoyConfig, enableDecoyVault } from '../lib/vault';
 import PinLockSheet from './PinLockSheet';
 import { useDialog } from './ui/DialogProvider';
 
@@ -269,6 +269,8 @@ export default function SettingsScreen({
   const [grammarCfg, setGrammarCfg] = useState(() => getGrammarConfig());
   const [pinModal, setPinModal] = useState(null); // null | 'setup' | 'change' | 'verify-ai-unlock'
   const [vaultPinExists, setVaultPinExists] = useState(() => hasVaultPin());
+  const [decoyCfg, setDecoyCfg] = useState(() => getDecoyConfig());
+  const [decoyPickDigit, setDecoyPickDigit] = useState(() => getDecoyConfig().triggerDigit || '7');
   const [availableModels, setAvailableModels] = useState(() => getModelsForProvider(getProviderId()));
   const [fetchingModels, setFetchingModels] = useState(false);
 
@@ -1206,6 +1208,45 @@ export default function SettingsScreen({
             </button>
           )}
         </div>
+
+        {/* One-time Stealth Decoy Vault setup — vanishes completely once enabled; disable only inside Real Vault */}
+        {!decoyCfg.enabled && (
+          <div className="class-reminder-subbox" style={{ marginTop: 12 }}>
+            <div className="settings-label" style={{ margin: '0 0 4px' }}>
+              Stealth Decoy Vault (One-Time Setup)
+            </div>
+            <div className="settings-help" style={{ margin: '0 0 8px' }}>
+              Pick a secret keypad digit to long-press (~0.5s). After holding it, <strong>any</strong> 4–6 digits open a harmless dummy vault. Once enabled, this option disappears from Settings and can only be turned off inside your real Hidden Vault.
+            </div>
+            <div className="flex items-center gap-6" style={{ flexWrap: 'wrap', marginBottom: 8 }}>
+              {['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].map(d => (
+                <button
+                  key={d}
+                  type="button"
+                  className={`row-action-chip${decoyPickDigit === d ? ' active-chip' : ''}`}
+                  onClick={() => setDecoyPickDigit(d)}
+                >
+                  {d}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary btn-sm w-full"
+              onClick={async () => {
+                enableDecoyVault(decoyPickDigit);
+                await ensureDecoyVaultSeeded().catch(() => {});
+                setDecoyCfg(getDecoyConfig());
+                toast(
+                  `Stealth Decoy Vault armed on digit "${decoyPickDigit}"! Only manageable inside your real Hidden Vault now.`,
+                  { type: 'success', duration: 4500 }
+                );
+              }}
+            >
+              Activate Stealth Decoy Vault
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Pluggable Writing & Grammar Engine (Optional Keys) */}
@@ -1372,7 +1413,7 @@ export default function SettingsScreen({
               Before-class reminders ({notifCfg.classReminderLeadMin || 10}m)
             </span>
             <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
-              Alerts before each scheduled class with your room/lab, teacher &amp; unread posts
+              Weekly background alarms fire even when the app is closed (room/lab, teacher &amp; unread posts)
             </div>
           </div>
           <span className="ios-switch">
@@ -1636,7 +1677,7 @@ export default function SettingsScreen({
           • Press <strong>Ctrl+S</strong> to save immediately or <strong>Ctrl+Shift+S</strong> to save & explain.
         </div>
         <div className="settings-tip" style={{ marginTop: 10, opacity: 0.7 }}>
-          Notes by Bai v2.1.1
+          Notes by Bai v2.2.0
         </div>
       </div>
 

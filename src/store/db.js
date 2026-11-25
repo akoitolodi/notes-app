@@ -11,7 +11,7 @@
  */
 import Dexie from 'dexie';
 import { isCardDue, isCardMastered, normalizeCardState } from '../lib/spacedRepetition.js';
-import { isVaultUnlocked } from '../lib/vault.js';
+import { isVaultUnlocked, getVaultSessionMode } from '../lib/vault.js';
 export { diffLines, diffAndRemapBlocks } from '../../shared/lineDiff.js';
 
 export const db = new Dexie('ai-class-notes');
@@ -374,6 +374,59 @@ export function sortNotes(notes, sort = 'edited') {
 }
 
 export const SYSTEM_VAULT_FOLDER_NAME = 'Passwords & Keys';
+export const DECOY_VAULT_FOLDER_NAME = 'Private Notes';
+
+/** Create or return the stealth Dummy Vault folder seeded with harmless useless notes. */
+export async function ensureDecoyVaultSeeded() {
+  const all = await db.folders.toArray();
+  let decoyFolder = all.find(f => Boolean(f.isDecoyVault));
+  if (!decoyFolder) {
+    const id = await db.folders.add({
+      name: DECOY_VAULT_FOLDER_NAME,
+      mode: 'vault',
+      locked: true,
+      isDecoyVault: true,
+      createdAt: Date.now(),
+    });
+    decoyFolder = await db.folders.get(id);
+  }
+  const existing = await db.notes.where('folderId').equals(decoyFolder.id).toArray();
+  if (existing.filter(n => !n.trashed).length === 0) {
+    const now = Date.now();
+    await db.notes.bulkAdd([
+      {
+        folderId: decoyFolder.id,
+        title: 'Grocery & Errands',
+        subject: decoyFolder.name,
+        body: '- [ ] Laundry detergent\n- [ ] Printer paper (A4)\n- [ ] Milk & bread\n- [ ] Ballpen refill',
+        pinned: false,
+        trashed: false,
+        flashcards: [],
+        quiz: [],
+        images: [],
+        drawings: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        folderId: decoyFolder.id,
+        title: 'Quick Reminders',
+        subject: decoyFolder.name,
+        body: '- Return library book on Friday\n- Photocopy handout before 1 PM\n- Clean desk this weekend',
+        pinned: false,
+        trashed: false,
+        flashcards: [],
+        quiz: [],
+        images: [],
+        drawings: null,
+        createdAt: now - 3600000,
+        updatedAt: now - 3600000,
+      },
+    ]);
+    invalidateNoteIndexCache();
+  }
+  return decoyFolder;
+}
 
 /** Create default folders on first run + always ensure the fixed Zero-AI "Passwords & Keys" vault folder exists. */
 export async function ensureSeeded() {
@@ -418,26 +471,35 @@ export async function ensureSeeded() {
   return false;
 }
 
-/** All folders with note counts (trashed notes excluded; locked folders hidden when vault is locked). */
+function isFolderVisibleInMode(folder, vaultMode) {
+  if (!folder?.locked) return true;
+  if (vaultMode === 'real') return !folder.isDecoyVault;
+  if (vaultMode === 'decoy') return Boolean(folder.isDecoyVault);
+  return false;
+}
+
+/** All folders with note counts (trashed notes excluded; locked folders isolated by vault mode). */
 export async function getFoldersWithCounts({ includeLocked = false } = {}) {
   const folders = await db.folders.toArray();
-  const unlocked = includeLocked || isVaultUnlocked();
+  const mode = includeLocked ? 'real' : getVaultSessionMode();
   const counts = {};
   await db.notes.each(note => {
     if (note.trashed) return;
     counts[note.folderId] = (counts[note.folderId] || 0) + 1;
   });
   return folders
-    .filter(f => unlocked || !f.locked)
+    .filter(f => isFolderVisibleInMode(f, mode))
     .map(f => ({ ...f, noteCount: counts[f.id] || 0 }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Return Set of folder IDs currently hidden because they are locked and vault is locked. */
+/** Return Set of folder IDs currently hidden because they are locked / outside active vault mode. */
 export async function getHiddenLockedFolderIds({ forceAll = false } = {}) {
-  if (!forceAll && isVaultUnlocked()) return new Set();
+  const mode = forceAll ? 'locked' : getVaultSessionMode();
   const folders = await db.folders.toArray();
-  return new Set(folders.filter(f => Boolean(f.locked)).map(f => f.id));
+  return new Set(
+    folders.filter(f => f.locked && !isFolderVisibleInMode(f, mode)).map(f => f.id)
+  );
 }
 
 let _noteIndexCache = null;
@@ -481,17 +543,25 @@ export async function getNoteIndexLite() {
 /** Return Set of folder IDs that are Zero-AI Vault folders (never sent to AI even when unlocked). */
 export async function getZeroAiFolderIds() {
   const folders = await db.folders.toArray();
-  return new Set(folders.filter(f => f.mode === 'vault' || f.isSystemVault).map(f => f.id));
+  return new Set(
+    folders.filter(f => f.mode === 'vault' || f.isSystemVault || f.isDecoyVault).map(f => f.id)
+  );
 }
 
 export async function getHomeSummary() {
   const folders = await db.folders.toArray();
-  const unlocked = isVaultUnlocked();
+  const vaultMode = getVaultSessionMode();
+  const unlocked = vaultMode !== 'locked';
+  // Strictly hide ALL real locked folders during 'locked' AND 'decoy' sessions!
   const hiddenIds = new Set(
-    unlocked ? [] : folders.filter(f => Boolean(f.locked)).map(f => f.id)
+    folders.filter(f => Boolean(f.locked) && !isFolderVisibleInMode(f, vaultMode)).map(f => f.id)
   );
+  // In decoy mode, also keep decoy notes out of All Notes / Tags / Review; show only inside Vault section
+  for (const f of folders) {
+    if (f.locked) hiddenIds.add(f.id);
+  }
   const noFlashcardFolderIds = new Set(
-    folders.filter(f => f.mode === 'journal' || f.mode === 'vault' || f.isSystemVault).map(f => f.id)
+    folders.filter(f => f.mode === 'journal' || f.mode === 'vault' || f.isSystemVault || f.isDecoyVault).map(f => f.id)
   );
 
   const counts = {};
@@ -546,11 +616,14 @@ export async function getHomeSummary() {
     .map(f => ({ ...f, noteCount: counts[f.id] || 0 }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  // Public (unlocked) folders vs Hidden Vault folders (only visible when vault is unlocked!)
+  // Public (unlocked) folders vs Vault folders strictly isolated by active session mode ('real' vs 'decoy')
   const publicFolders = allWithCounts.filter(f => !f.locked);
-  const vaultFolders = allWithCounts
-    .filter(f => Boolean(f.locked))
+  const realVaultFolders = allWithCounts
+    .filter(f => Boolean(f.locked) && !f.isDecoyVault)
     .sort((a, b) => (b.isSystemVault ? 1 : 0) - (a.isSystemVault ? 1 : 0) || a.name.localeCompare(b.name));
+  const decoyVaultFolders = allWithCounts.filter(f => Boolean(f.locked) && Boolean(f.isDecoyVault));
+  const vaultFolders =
+    vaultMode === 'real' ? realVaultFolders : vaultMode === 'decoy' ? decoyVaultFolders : [];
 
   const tags = [...tagCounts.entries()]
     .map(([name, count]) => ({ name, count }))
@@ -558,8 +631,10 @@ export async function getHomeSummary() {
 
   return {
     folders: publicFolders,
-    vaultFolders: unlocked ? vaultFolders : [],
-    hiddenVaultCount: vaultFolders.length,
+    vaultFolders,
+    decoyVaultFolders: vaultMode === 'real' ? decoyVaultFolders : [],
+    hiddenVaultCount: realVaultFolders.length,
+    vaultMode,
     totalNotes,
     pinnedCount,
     trashCount,

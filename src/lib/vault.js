@@ -7,15 +7,17 @@
  */
 
 export const VAULT_PIN_KEY = 'aicn:vaultPin';
+export const VAULT_DECOY_KEY = 'aicn:vaultDecoy';
 
-// In-memory unlock flag (automatically cleared on page reload or app background)
-let sessionUnlocked = false;
+// In-memory unlock state ('locked' | 'real' | 'decoy'), cleared automatically on reload/background
+let sessionMode = 'locked';
 const listeners = new Set();
 
 function notifyVaultListeners() {
+  const unlocked = sessionMode !== 'locked';
   listeners.forEach(fn => {
     try {
-      fn(sessionUnlocked);
+      fn(unlocked, sessionMode);
     } catch {
       // ignore subscriber errors
     }
@@ -27,19 +29,37 @@ export function subscribeVault(fn) {
   return () => listeners.delete(fn);
 }
 
+export function getVaultSessionMode() {
+  return sessionMode;
+}
+
 export function isVaultUnlocked() {
-  return sessionUnlocked;
+  return sessionMode !== 'locked';
+}
+
+export function isRealVaultUnlocked() {
+  return sessionMode === 'real';
+}
+
+export function isDecoyVaultUnlocked() {
+  return sessionMode === 'decoy';
 }
 
 export function lockVault() {
-  if (!sessionUnlocked) return;
-  sessionUnlocked = false;
+  if (sessionMode === 'locked') return;
+  sessionMode = 'locked';
   notifyVaultListeners();
 }
 
 export function unlockVaultSession() {
-  if (sessionUnlocked) return;
-  sessionUnlocked = true;
+  if (sessionMode === 'real') return;
+  sessionMode = 'real';
+  notifyVaultListeners();
+}
+
+export function unlockDecoyVaultSession() {
+  if (sessionMode === 'decoy') return;
+  sessionMode = 'decoy';
   notifyVaultListeners();
 }
 
@@ -195,4 +215,51 @@ export function clearVaultPin() {
     localStorage.removeItem(VAULT_PIN_KEY);
   }
   lockVault();
+}
+
+// ---------- Stealth Decoy / Dummy Vault Helpers ----------
+
+export function getDecoyConfig() {
+  if (typeof localStorage === 'undefined') return { enabled: false, triggerDigit: '7' };
+  try {
+    const raw = JSON.parse(localStorage.getItem(VAULT_DECOY_KEY) || 'null');
+    if (raw && raw.enabled && /^\d$/.test(String(raw.triggerDigit || ''))) {
+      return { enabled: true, triggerDigit: String(raw.triggerDigit) };
+    }
+  } catch {
+    // ignore corrupt JSON
+  }
+  return { enabled: false, triggerDigit: '7' };
+}
+
+/** One-time setup from Settings: arms stealth long-press digit trigger and hides itself from Settings. */
+export function enableDecoyVault(triggerDigit = '7') {
+  const digit = String(triggerDigit || '').trim();
+  if (!/^\d$/.test(digit)) {
+    throw new Error('Pick a single digit (0-9) for the secret long-press trigger.');
+  }
+  const payload = { enabled: true, triggerDigit: digit, enabledAt: Date.now() };
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem(VAULT_DECOY_KEY, JSON.stringify(payload));
+  }
+  return payload;
+}
+
+/** Update decoy trigger digit — strictly allowed only while the Real Hidden Vault is unlocked. */
+export function updateDecoyTriggerDigit(triggerDigit) {
+  if (!isRealVaultUnlocked()) {
+    throw new Error('Unlock the real Hidden Vault first.');
+  }
+  return enableDecoyVault(triggerDigit);
+}
+
+/** Turn off Stealth Decoy Vault — strictly allowed only while the Real Hidden Vault is unlocked. */
+export function disableDecoyVault() {
+  if (!isRealVaultUnlocked()) {
+    throw new Error('Stealth Decoy Vault can only be turned off inside your real Hidden Vault.');
+  }
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem(VAULT_DECOY_KEY);
+  }
+  return { enabled: false, triggerDigit: '7' };
 }

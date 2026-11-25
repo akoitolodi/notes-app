@@ -430,8 +430,16 @@ export function detectBlankNoteIntents(body, { isZeroAi = false, enabled = true 
   }
 
   // 3. Instant Offline Math / Algebra / Units / Scratchpad
+  // Allow math detection even if code appeared earlier in the note, as long as user's latest line isn't inside that code segment
   const mathHit = detectBestMathSolution(text);
-  if (mathHit && !codeHit) {
+  const nonEmptyLines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const lastLineText = nonEmptyLines[nonEmptyLines.length - 1] || '';
+  const codeEndsAtBottom =
+    codeHit &&
+    !codeHit.isFenced &&
+    typeof codeHit.endLine === 'number' &&
+    codeHit.code.split(/\r?\n/).pop()?.trim() === lastLineText;
+  if (mathHit && (!codeHit || !codeEndsAtBottom)) {
     detections.push({
       id: `math:${mathHit.kind}`,
       kind: 'math',

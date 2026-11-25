@@ -30,7 +30,13 @@ const CONSTS = {
 };
 
 function tokenize(raw) {
-  const s = String(raw || '').replace(/\s+/g, '').replace(/π/g, 'pi').replace(/×/g, '*').replace(/÷/g, '/');
+  const s = String(raw || '')
+    .replace(/(\d),(?=\d{3}(?!\d))/g, '$1')
+    .replace(/\s+/g, '')
+    .replace(/π/g, 'pi')
+    .replace(/[−–—]/g, '-')
+    .replace(/[×·]/g, '*')
+    .replace(/÷/g, '/');
   const tokens = [];
   let i = 0;
 

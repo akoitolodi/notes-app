@@ -311,6 +311,55 @@ export async function cleanupOrphanScheduleRows(target) {
   return toDelete.length;
 }
 
+export const SCHEDULE_FILTER_KEY = 'aicn:scheduleFilterMode'; // 'no-paired-lec' (default) | 'all'
+
+export function getScheduleFilterMode() {
+  try {
+    return localStorage.getItem(SCHEDULE_FILTER_KEY) === 'all' ? 'all' : 'no-paired-lec';
+  } catch {
+    return 'no-paired-lec';
+  }
+}
+
+export function setScheduleFilterMode(mode) {
+  const next = mode === 'all' ? 'all' : 'no-paired-lec';
+  try {
+    localStorage.setItem(SCHEDULE_FILTER_KEY, next);
+  } catch {
+    // ignore storage quota errors
+  }
+  return next;
+}
+
+function entryCourseIdentity(entry) {
+  if (entry?.courseId != null) return `c:${entry.courseId}`;
+  return `s:${String(entry?.baseCode || entry?.code || '').replace(/\s+lab$/i, '').toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+}
+
+/**
+ * Filter resolved schedule entries by mode:
+ * - 'no-paired-lec' (default): for subjects that have BOTH LAB and LEC slots, hide the LEC slots and keep LAB;
+ *   subjects with only LEC stay 100% visible!
+ * - 'all': keep every slot.
+ */
+export function filterScheduleEntries(entries = [], mode = 'no-paired-lec') {
+  if (!Array.isArray(entries) || entries.length === 0 || mode === 'all') {
+    return entries;
+  }
+  const hasLabByCourse = new Map();
+  for (const e of entries) {
+    if (e?.kind === 'LAB') {
+      hasLabByCourse.set(entryCourseIdentity(e), true);
+    }
+  }
+  return entries.filter(e => !(e?.kind === 'LEC' && hasLabByCourse.has(entryCourseIdentity(e))));
+}
+
+/** Count how many paired LEC slots are hidden by 'no-paired-lec' mode. */
+export function countHiddenPairedLecs(entries = []) {
+  return Math.max(0, entries.length - filterScheduleEntries(entries, 'no-paired-lec').length);
+}
+
 /** Compute 30-min grid bounds (earliest/latest hours) and visible weekday columns. */
 export function computeTimetableGrid(entries = [], { minHour = 9, maxHour = 19 } = {}) {
   let earliestMin = entries.length > 0 ? Math.min(...entries.map(e => e.startMin)) : minHour * 60;
@@ -334,6 +383,7 @@ export function computeTimetableGrid(entries = [], { minHour = 9, maxHour = 19 }
       minutes: m,
       isFullHour,
       label: isFullHour ? `${h12} ${period}` : `${h12}:30`,
+      shortLabel: isFullHour ? `${h12}${h24 >= 12 ? 'p' : 'a'}` : ':30',
     });
   }
 

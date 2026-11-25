@@ -39,6 +39,7 @@ import {
   Clock,
   MapPin,
   User,
+  Timer,
 } from 'lucide-react';
 import {
   db,
@@ -84,6 +85,7 @@ import CourseAttendanceCard from './course/CourseAttendanceCard';
 import CourseScheduleView from './course/CourseScheduleView';
 const DocumentViewerModal = lazy(() => import('./DocumentViewerModal'));
 const SchedulePdfImportSheet = lazy(() => import('./course/SchedulePdfImportSheet'));
+const FocusPomodoroSheet = lazy(() => import('./FocusPomodoroSheet'));
 import MarkdownContent from './ui/MarkdownContent';
 import { useDialog } from './ui/DialogProvider';
 
@@ -132,6 +134,7 @@ export default function CoursesDashboardScreen({
     initialSection === 'schedule' ? 'schedule' : 'courses'
   ); // courses | schedule
   const [scheduleImportOpen, setScheduleImportOpen] = useState(false);
+  const [focusOpen, setFocusOpen] = useState(false);
   const [gwaMode, setGwaMode] = useState('gwa'); // gwa | gpa
   const [courseTab, setCourseTab] = useState('overview'); // overview | modules | announcements | assignments | grades | ai
   const [showArchived, setShowArchived] = useState(false);
@@ -1231,6 +1234,13 @@ export default function CoursesDashboardScreen({
               >
                 <Clock size={12} /> View Timetable &amp; Rooms
               </button>
+              <button
+                type="button"
+                className="row-action-chip"
+                onClick={() => setFocusOpen(true)}
+              >
+                <Timer size={12} /> Focus Timer
+              </button>
             </div>
 
             {visibleCourses.length === 0 ? (
@@ -1425,6 +1435,11 @@ export default function CoursesDashboardScreen({
               }}
               onClose={() => setScheduleImportOpen(false)}
             />
+          </Suspense>
+        )}
+        {focusOpen && (
+          <Suspense fallback={null}>
+            <FocusPomodoroSheet onClose={() => setFocusOpen(false)} />
           </Suspense>
         )}
       </div>

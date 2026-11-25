@@ -7,12 +7,13 @@
  */
 import { useMemo } from 'react';
 import { createPortal } from 'react-dom';
-import { Share2, Download, Copy, X, ShieldCheck } from 'lucide-react';
+import { Share2, Download, Copy, X, ShieldCheck, QrCode } from 'lucide-react';
 import {
   buildNoteBaiBundle,
   encodeBaiShareCode,
   downloadBaiFile,
 } from '../lib/baiDrop';
+import { generateQrSvg } from '../lib/qrSvg';
 import { useDialog } from './ui/DialogProvider';
 
 export default function BaiDropSheet({ open, onClose, note, folderName = 'Shared' }) {
@@ -32,6 +33,15 @@ export default function BaiDropSheet({ open, onClose, note, folderName = 'Shared
       return '';
     }
   }, [bundle]);
+
+  const qrSvg = useMemo(() => {
+    if (!shareCode || shareCode.length > 1100) return '';
+    try {
+      return generateQrSvg(shareCode, { pixelSize: 196 });
+    } catch {
+      return '';
+    }
+  }, [shareCode]);
 
   if (!open || !bundle) return null;
 
@@ -66,6 +76,24 @@ export default function BaiDropSheet({ open, onClose, note, folderName = 'Shared
           Share <strong>{bundle.note.title}</strong> ({bundle.note.flashcards.length} cards, {bundle.note.quiz.length}{' '}
           quiz items) with a classmate <strong>100% offline</strong> — no cloud account needed!
         </p>
+
+        {qrSvg ? (
+          <div className="baidrop-qr-box">
+            <div
+              className="baidrop-qr-svg"
+              aria-label="Offline BaiDrop QR Code"
+              dangerouslySetInnerHTML={{ __html: qrSvg }}
+            />
+            <div className="settings-help" style={{ marginTop: 6, textAlign: 'center' }}>
+              <QrCode size={12} style={{ verticalAlign: '-2px', marginRight: 4 }} />
+              Scan offline to copy <code>BAIDROP1:</code> code directly!
+            </div>
+          </div>
+        ) : shareCode ? (
+          <div className="settings-help" style={{ marginBottom: 8 }}>
+            Note bundle is {shareCode.length} chars (beyond 1,100-char QR cap) — use Download <code>.bai.json</code> or Copy Code below.
+          </div>
+        ) : null}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
           <button type="button" className="btn btn-primary w-full" onClick={handleDownload}>

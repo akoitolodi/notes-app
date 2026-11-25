@@ -38,6 +38,8 @@ import {
   Clock,
   ExternalLink,
   Compass,
+  Mic,
+  Timer,
 } from 'lucide-react';
 import {
   db,
@@ -54,7 +56,11 @@ import { NOTE_MODE_LIST, getModeMeta } from '../lib/noteModes';
 import { isDevToolkitEnabled, isLearnCodingEnabled, getDirectConfig } from '../lib/aiConfig';
 import {
   isVaultUnlocked,
+  getVaultSessionMode,
   hasVaultPin,
+  getDecoyConfig,
+  updateDecoyTriggerDigit,
+  disableDecoyVault,
   lockVault,
   subscribeVault,
 } from '../lib/vault';
@@ -66,7 +72,12 @@ import {
   snoozeInAppBanner,
 } from '../lib/notifications';
 import { SETUP_BANNER_DISMISSED_KEY } from '../lib/onboarding';
-import { resolveScheduleEntries, formatTimeRange12h } from '../lib/scheduleView';
+import {
+  resolveScheduleEntries,
+  filterScheduleEntries,
+  getScheduleFilterMode,
+  formatTimeRange12h,
+} from '../lib/scheduleView';
 import {
   matchAnnouncementToCourse,
   extractQuickLinks,
@@ -77,6 +88,8 @@ import { useDialog } from './ui/DialogProvider';
 const TemplatePickerSheet = lazy(() => import('./TemplatePickerSheet'));
 const ImportSheet = lazy(() => import('./ImportSheet'));
 const PinLockSheet = lazy(() => import('./PinLockSheet'));
+const FocusPomodoroSheet = lazy(() => import('./FocusPomodoroSheet'));
+const LectureRecorderSheet = lazy(() => import('./LectureRecorderSheet'));
 
 const HOME_CACHE_KEY = 'aicn:homeCache:v1';
 const EMPTY_SUMMARY = {
@@ -167,7 +180,12 @@ export default function FoldersScreen({
   );
   const [reviewStats, setReviewStats] = useState(() => getReviewStats());
   const [vaultUnlocked, setVaultUnlocked] = useState(() => isVaultUnlocked());
+  const [vaultMode, setVaultMode] = useState(() => getVaultSessionMode());
   const [pinRequest, setPinRequest] = useState(null); // { mode: 'unlock'|'setup', onDone }
+  const [decoyMenuOpen, setDecoyMenuOpen] = useState(false);
+  const [focusOpen, setFocusOpen] = useState(false);
+  const [recorderOpen, setRecorderOpen] = useState(false);
+  const [todayClassCount, setTodayClassCount] = useState(() => Number(initialCache?.todayClassCount || 0));
   const [showToolkit, setShowToolkit] = useState(() => isDevToolkitEnabled());
   const [showCoding, setShowCoding] = useState(() => isLearnCodingEnabled());
   const [plannerDueCount, setPlannerDueCount] = useState(() => Number(initialCache?.plannerDueCount || 0));
@@ -230,7 +248,12 @@ export default function FoldersScreen({
       const nextDueCount = pItems.filter(it => !it.done && it.type !== 'announcement').length;
       const nextCourseCount = crs.length;
 
-      const resolvedEntries = resolveScheduleEntries(crs, schedRows);
+      const resolvedEntries = filterScheduleEntries(
+        resolveScheduleEntries(crs, schedRows),
+        getScheduleFilterMode()
+      );
+      const todayDow = new Date().getDay();
+      const nextTodayCount = resolvedEntries.filter(e => e.dayOfWeek === todayDow).length;
       const nextRaw = getNextUpcomingClassAcrossWeek(resolvedEntries);
       const nextUpSummary = nextRaw
         ? {
@@ -277,8 +300,10 @@ export default function FoldersScreen({
       setShowCoding(isLearnCodingEnabled());
       setNotifLeadMin(getNotificationSettings().classReminderLeadMin || 10);
       setVaultUnlocked(isVaultUnlocked());
+      setVaultMode(getVaultSessionMode());
       setPlannerDueCount(nextDueCount);
       setCourseCount(nextCourseCount);
+      setTodayClassCount(nextTodayCount);
       setAlertSummary(alerts);
       setAnnPreview(nextAnnPreview);
       setUpNextClass(nextUpSummary);
@@ -287,6 +312,7 @@ export default function FoldersScreen({
         summary: { ...homeSum, vaultFolders: [] },
         plannerDueCount: nextDueCount,
         courseCount: nextCourseCount,
+        todayClassCount: nextTodayCount,
         annPreview: nextAnnPreview,
         upNextClass: nextUpSummary,
       });
@@ -311,8 +337,10 @@ export default function FoldersScreen({
   }, [refresh, refreshKey]);
 
   useEffect(() => {
-    return subscribeVault(unlocked => {
+    return subscribeVault((unlocked, mode) => {
       setVaultUnlocked(unlocked);
+      setVaultMode(mode || getVaultSessionMode());
+      if (!unlocked) setDecoyMenuOpen(false);
       getHomeSummary().then(setSummary).catch(() => {});
     });
   }, []);
@@ -1046,8 +1074,8 @@ export default function FoldersScreen({
         </section>
       )}
 
-      {/* Quick Creation & Import Row */}
-      <div className="quick-action-row">
+      {/* Quick Creation, Import, Record & Focus Row */}
+      <div className="quick-action-row" style={{ flexWrap: 'wrap' }}>
         <button
           type="button"
           className="quick-action-btn"
@@ -1068,11 +1096,48 @@ export default function FoldersScreen({
           </span>
           <span>Templates</span>
         </button>
+        <button
+          type="button"
+          className="quick-action-btn"
+          onClick={() => setRecorderOpen(true)}
+        >
+          <span className="quick-action-icon tone-emerald">
+            <Mic size={15} />
+          </span>
+          <span>Record Lecture</span>
+        </button>
+        <button
+          type="button"
+          className="quick-action-btn"
+          onClick={() => setFocusOpen(true)}
+        >
+          <span className="quick-action-icon tone-violet">
+            <Timer size={15} />
+          </span>
+          <span>Focus Timer</span>
+        </button>
       </div>
 
-      {/* 2x2 Bento Workspace Hub Grid */}
+      {/* Bento Workspace Hub Grid (with dedicated 1-Tap Schedule tile!) */}
       <div className="home-bento-grid" role="region" aria-label="Student Workspace Hubs">
-        <button type="button" className="bento-tile bento-indigo" onClick={onOpenCourses}>
+        <button
+          type="button"
+          className="bento-tile bento-indigo"
+          onClick={() => onOpenCourses?.({ section: 'schedule' })}
+        >
+          <div className="bento-tile-top">
+            <span className="bento-tile-icon">
+              <Clock size={18} />
+            </span>
+            {todayClassCount > 0 && (
+              <span className="bento-tile-pill">{todayClassCount} today</span>
+            )}
+          </div>
+          <div className="bento-tile-title">Schedule</div>
+          <div className="bento-tile-sub">Day &amp; week timetable</div>
+        </button>
+
+        <button type="button" className="bento-tile bento-indigo" onClick={() => onOpenCourses?.()}>
           <div className="bento-tile-top">
             <span className="bento-tile-icon">
               <BookOpen size={18} />
@@ -1138,17 +1203,29 @@ export default function FoldersScreen({
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
               <Shield size={13} /> Hidden Vault
             </span>
-            <button
-              type="button"
-              className="row-action-chip"
-              onClick={() => {
-                lockVault();
-                toast('Hidden Vault locked & concealed');
-              }}
-              title="Lock and hide vault folders now"
-            >
-              <EyeOff size={12} /> Hide &amp; Lock
-            </button>
+            <div className="flex items-center gap-6">
+              {vaultMode === 'real' && (
+                <button
+                  type="button"
+                  className="row-action-chip"
+                  onClick={() => setDecoyMenuOpen(true)}
+                  title="Manage Stealth Decoy Vault"
+                >
+                  Decoy
+                </button>
+              )}
+              <button
+                type="button"
+                className="row-action-chip"
+                onClick={() => {
+                  lockVault();
+                  toast('Hidden Vault locked & concealed');
+                }}
+                title="Lock and hide vault folders now"
+              >
+                <EyeOff size={12} /> Hide &amp; Lock
+              </button>
+            </div>
           </div>
           <div className="list-group">
             {vaultFolders.map(folder => (
@@ -1491,6 +1568,91 @@ export default function FoldersScreen({
             onClose={() => setPinRequest(null)}
           />
         </Suspense>
+      )}
+
+      {focusOpen && (
+        <Suspense fallback={null}>
+          <FocusPomodoroSheet onClose={() => setFocusOpen(false)} />
+        </Suspense>
+      )}
+
+      {recorderOpen && (
+        <Suspense fallback={null}>
+          <LectureRecorderSheet
+            onSaved={(created, targetFolder) => {
+              setRecorderOpen(false);
+              refresh();
+              onOpenNote(created, targetFolder || { id: '__all__', name: 'All Notes' });
+            }}
+            onClose={() => setRecorderOpen(false)}
+          />
+        </Suspense>
+      )}
+
+      {/* Real-Vault-Only Stealth Decoy Controls Modal */}
+      {decoyMenuOpen && vaultMode === 'real' && (
+        <div className="export-overlay" onClick={() => setDecoyMenuOpen(false)}>
+          <div className="export-sheet" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Stealth Decoy Vault Controls">
+            <div className="flex justify-between items-center" style={{ marginBottom: 8 }}>
+              <div className="export-title" style={{ margin: 0 }}>Stealth Decoy Vault Controls</div>
+              <button type="button" className="icon-btn" onClick={() => setDecoyMenuOpen(false)} aria-label="Close">
+                <X size={16} />
+              </button>
+            </div>
+            <p className="settings-help" style={{ marginTop: 0 }}>
+              {getDecoyConfig().enabled
+                ? `Stealth Decoy is ACTIVE. Hold digit "${getDecoyConfig().triggerDigit}" on the PIN pad then enter any 4–6 digits to open your Dummy Vault.`
+                : 'Stealth Decoy is currently OFF. You can enable it here or via Settings.'}
+            </p>
+            <div className="settings-label mt-10">Long-Press Trigger Digit</div>
+            <div className="flex gap-6 mt-6" style={{ flexWrap: 'wrap' }}>
+              {['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].map(d => (
+                <button
+                  key={d}
+                  type="button"
+                  className={`row-action-chip${getDecoyConfig().enabled && getDecoyConfig().triggerDigit === d ? ' active-chip' : ''}`}
+                  onClick={() => {
+                    updateDecoyTriggerDigit(d);
+                    refresh();
+                    toast(`Stealth trigger digit set to "${d}"`, { type: 'success' });
+                  }}
+                >
+                  {d}
+                </button>
+              ))}
+            </div>
+            {(summary.decoyVaultFolders || []).length > 0 && (
+              <button
+                type="button"
+                className="export-btn mt-12"
+                onClick={() => {
+                  const df = summary.decoyVaultFolders[0];
+                  setDecoyMenuOpen(false);
+                  onOpenFolder(df);
+                }}
+              >
+                <Folder size={17} /> Edit Dummy Vault Notes
+              </button>
+            )}
+            {getDecoyConfig().enabled && (
+              <button
+                type="button"
+                className="export-btn danger"
+                onClick={() => {
+                  disableDecoyVault();
+                  setDecoyMenuOpen(false);
+                  refresh();
+                  toast('Stealth Decoy Vault turned OFF (option restored in Settings)');
+                }}
+              >
+                Turn Off Stealth Decoy Vault
+              </button>
+            )}
+            <button type="button" className="export-btn cancel" onClick={() => setDecoyMenuOpen(false)}>
+              Done
+            </button>
+          </div>
+        </div>
       )}
 
       {/* Quick New Note Pill FAB */}

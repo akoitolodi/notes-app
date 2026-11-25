@@ -25,11 +25,16 @@ import {
   formatTimeRange12h,
   groupDaysLabel,
   resolveScheduleEntries,
+  getScheduleFilterMode,
+  setScheduleFilterMode,
+  filterScheduleEntries,
+  countHiddenPairedLecs,
   computeTimetableGrid,
   detectScheduleConflicts,
   buildStudyLoadSummary,
   getNowAndNextClass,
 } from '../../lib/scheduleView';
+import { syncDeadlineNotifications } from '../../lib/notifications';
 
 const PALETTE_KEY = 'aicn:schedulePalette';
 const VIEW_MODE_KEY = 'aicn:scheduleViewMode';
@@ -56,10 +61,17 @@ export default function CourseScheduleView({
 }) {
   const [viewMode, setViewMode] = useState(() => {
     try {
-      return localStorage.getItem(VIEW_MODE_KEY) === 'load' ? 'load' : 'grid';
+      const saved = localStorage.getItem(VIEW_MODE_KEY);
+      if (saved === 'grid' || saved === 'load' || saved === 'day') return saved;
+      return 'day';
     } catch {
-      return 'grid';
+      return 'day';
     }
+  });
+  const [filterMode, setFilterMode] = useState(() => getScheduleFilterMode());
+  const [selectedDay, setSelectedDay] = useState(() => {
+    const d = new Date().getDay();
+    return d >= 1 && d <= 5 ? d : 1;
   });
   const [paletteMode, setPaletteMode] = useState(() => {
     try {
@@ -95,10 +107,24 @@ export default function CourseScheduleView({
     }
   };
 
+  const setScheduleFilter = next => {
+    const clean = setScheduleFilterMode(next);
+    setFilterMode(clean);
+    syncDeadlineNotifications().catch(() => {});
+  };
+
   const activeCourses = useMemo(() => courses.filter(c => !c?.archived), [courses]);
-  const entries = useMemo(
+  const allEntries = useMemo(
     () => resolveScheduleEntries(courses, scheduleRows),
     [courses, scheduleRows]
+  );
+  const hiddenPairedLecCount = useMemo(
+    () => countHiddenPairedLecs(allEntries),
+    [allEntries]
+  );
+  const entries = useMemo(
+    () => filterScheduleEntries(allEntries, filterMode),
+    [allEntries, filterMode]
   );
 
   const grid = useMemo(() => computeTimetableGrid(entries), [entries]);
@@ -227,57 +253,86 @@ export default function CourseScheduleView({
         )}
       </div>
 
-      {/* 2. View Switch (Grid | Study Load) + Palette Switch (Studio Gold | Course Colors) */}
+      {/* 2. View Switch (Day | Week Grid | Study Load) + No-Paired-Lec Filter */}
       <div className="schedule-controls-row">
-        <div className="view-switcher view-switcher-inline" style={{ margin: 0, flex: '1 1 180px' }}>
+        <div className="view-switcher view-switcher-inline" style={{ margin: 0, flex: '1 1 220px' }}>
+          <button
+            type="button"
+            className={`view-switch-btn${viewMode === 'day' ? ' active' : ''}`}
+            onClick={() => setView('day')}
+          >
+            <Clock size={13} style={{ marginRight: 4, verticalAlign: '-2px' }} />
+            Day
+          </button>
           <button
             type="button"
             className={`view-switch-btn${viewMode === 'grid' ? ' active' : ''}`}
             onClick={() => setView('grid')}
           >
-            <Calendar size={13} style={{ marginRight: 5, verticalAlign: '-2px' }} />
-            Timetable Grid
+            <Calendar size={13} style={{ marginRight: 4, verticalAlign: '-2px' }} />
+            Week
           </button>
           <button
             type="button"
             className={`view-switch-btn${viewMode === 'load' ? ' active' : ''}`}
             onClick={() => setView('load')}
           >
-            <ListChecks size={13} style={{ marginRight: 5, verticalAlign: '-2px' }} />
-            Study Load ({studyLoad.items.length})
+            <ListChecks size={13} style={{ marginRight: 4, verticalAlign: '-2px' }} />
+            Load ({studyLoad.items.length})
           </button>
         </div>
 
-        {viewMode === 'grid' && (
-          <div className="flex items-center gap-6">
-            {onImportSchedulePdf && entries.length > 0 && (
+        <div className="flex items-center gap-6" style={{ flexWrap: 'wrap' }}>
+          {hiddenPairedLecCount > 0 && (
+            <div className="feynman-lang-switch" role="group" aria-label="Lecture display mode">
               <button
                 type="button"
-                className="row-action-chip"
-                onClick={onImportSchedulePdf}
-                title="Import or update timetable from Class Schedule PDF"
+                className={`feynman-lang-btn${filterMode === 'no-paired-lec' ? ' active' : ''}`}
+                onClick={() => setScheduleFilter('no-paired-lec')}
+                title="Hide LEC slots only on courses that have a paired LAB"
               >
-                Import PDF
+                No Paired Lec
               </button>
-            )}
-            <div className="feynman-lang-switch" role="group" aria-label="Timetable color style">
-            <button
-              type="button"
-              className={`feynman-lang-btn${paletteMode === 'gold' ? ' active' : ''}`}
-              onClick={() => setPalette('gold')}
-            >
-              Studio Gold
-            </button>
-            <button
-              type="button"
-              className={`feynman-lang-btn${paletteMode === 'course' ? ' active' : ''}`}
-              onClick={() => setPalette('course')}
-            >
-              Course Colors
-            </button>
+              <button
+                type="button"
+                className={`feynman-lang-btn${filterMode === 'all' ? ' active' : ''}`}
+                onClick={() => setScheduleFilter('all')}
+              >
+                All (+{hiddenPairedLecCount})
+              </button>
             </div>
-          </div>
-        )}
+          )}
+
+          {onImportSchedulePdf && entries.length > 0 && (
+            <button
+              type="button"
+              className="row-action-chip"
+              onClick={onImportSchedulePdf}
+              title="Import or update timetable from Class Schedule PDF"
+            >
+              Import PDF
+            </button>
+          )}
+
+          {viewMode === 'grid' && (
+            <div className="feynman-lang-switch" role="group" aria-label="Timetable color style">
+              <button
+                type="button"
+                className={`feynman-lang-btn${paletteMode === 'gold' ? ' active' : ''}`}
+                onClick={() => setPalette('gold')}
+              >
+                Gold
+              </button>
+              <button
+                type="button"
+                className={`feynman-lang-btn${paletteMode === 'course' ? ' active' : ''}`}
+                onClick={() => setPalette('course')}
+              >
+                Colors
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* 3. Conflict Alert (if any genuine overlapping classes exist) */}
@@ -333,23 +388,106 @@ export default function CourseScheduleView({
             <Plus size={14} /> Set Course Days &amp; Rooms
           </button>
         </div>
+      ) : viewMode === 'day' ? (
+        /* ============ ONE-HANDED ZERO-HORIZONTAL-SCROLL DAY VIEW ============ */
+        <div className="schedule-day-view">
+          <div className="schedule-day-pills" role="tablist" aria-label="Choose weekday">
+            {grid.visibleDays.map(d => {
+              const count = (entriesByDay.get(d.idx) || []).length;
+              const isSel = selectedDay === d.idx;
+              const isToday = d.idx === nowState.todayDow;
+              return (
+                <button
+                  key={d.idx}
+                  type="button"
+                  role="tab"
+                  aria-selected={isSel}
+                  className={`schedule-day-pill${isSel ? ' active' : ''}${isToday ? ' is-today' : ''}`}
+                  onClick={() => setSelectedDay(d.idx)}
+                >
+                  <span>{d.short}</span>
+                  <span className="schedule-day-count">{count}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="schedule-day-cards">
+            {(entriesByDay.get(selectedDay) || []).length === 0 ? (
+              <div className="list-group settings-group" style={{ margin: 0, textAlign: 'center', padding: '22px 16px' }}>
+                <div style={{ fontSize: 14.5, fontWeight: 700 }}>
+                  No classes on {SCHEDULE_DAYS.find(d => d.idx === selectedDay)?.short || 'this day'}
+                </div>
+                <div className="settings-help" style={{ marginTop: 4 }}>
+                  {hiddenPairedLecCount > 0 && filterMode === 'no-paired-lec'
+                    ? `${hiddenPairedLecCount} paired LEC slot${hiddenPairedLecCount === 1 ? '' : 's'} hidden — tap All (+${hiddenPairedLecCount}) above to view.`
+                    : 'Enjoy the free day or tap + to add a class.'}
+                </div>
+              </div>
+            ) : (
+              (entriesByDay.get(selectedDay) || []).map(cls => {
+                const isLive = nowState.currentClass?.id === cls.id;
+                const isNext = !isLive && nowState.nextClass?.id === cls.id;
+                return (
+                  <button
+                    key={`${cls.id || cls.code}-${cls.dayOfWeek}-${cls.startMin}`}
+                    type="button"
+                    className={`schedule-day-card${isLive ? ' is-live' : ''}${isNext ? ' is-next' : ''}`}
+                    style={{ borderLeftColor: cls.color || 'var(--accent)' }}
+                    onClick={() => setInspectBlock(cls)}
+                  >
+                    <div className="flex items-center justify-between gap-8" style={{ width: '100%' }}>
+                      <div className="flex items-center gap-6" style={{ minWidth: 0 }}>
+                        <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)' }}>
+                          {cls.code}
+                        </span>
+                        <span className="schedule-kind-tag">{cls.kind}</span>
+                      </div>
+                      {isLive ? (
+                        <span className="ann-next-badge" style={{ background: '#ef4444', color: '#fff' }}>
+                          NOW · {nowState.minutesRemainingCurrent}m left
+                        </span>
+                      ) : isNext ? (
+                        <span className="ann-next-badge">
+                          In {nowState.minutesUntilNext}m
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="schedule-day-card-meta">
+                      <span>
+                        <Clock size={12} /> {formatTimeRange12h(cls.startTime, cls.endTime)}
+                      </span>
+                      {cls.room && (
+                        <span>
+                          <MapPin size={12} /> {cls.room}
+                        </span>
+                      )}
+                      {cls.instructor && (
+                        <span>
+                          <User size={12} /> {cls.instructor}
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
       ) : viewMode === 'grid' ? (
         <>
-          {/* ============ AESTHETIC 30-MIN VISUAL TIMETABLE GRID ============ */}
-          <div className={`timetable-board palette-${paletteMode}`}>
-            <div className="timetable-scroll">
-              <div
-                className="timetable-canvas"
-                style={{ minWidth: Math.max(586, 56 + grid.visibleDays.length * 112) }}
-              >
+          {/* ============ FIT-TO-SCREEN 30-MIN VISUAL TIMETABLE GRID (ZERO SIDE-SCROLL) ============ */}
+          <div className={`timetable-board is-fit-screen palette-${paletteMode}`}>
+            <div className="timetable-scroll is-fit">
+              <div className="timetable-canvas">
                 {/* Header Row: Time | Mon | Tue | Wed | Thu | Fri */}
                 <div
                   className="timetable-header-row"
                   style={{
-                    gridTemplateColumns: `56px repeat(${grid.visibleDays.length}, minmax(106px, 1fr))`,
+                    gridTemplateColumns: `34px repeat(${grid.visibleDays.length}, minmax(0, 1fr))`,
                   }}
                 >
-                  <div className="timetable-head-cell is-time-col">Time</div>
+                  <div className="timetable-head-cell is-time-col">Hr</div>
                   {grid.visibleDays.map(d => (
                     <div
                       key={d.idx}
@@ -360,15 +498,15 @@ export default function CourseScheduleView({
                   ))}
                 </div>
 
-                {/* Body Grid: Sticky Time Axis + Proportional Day Columns */}
+                {/* Body Grid: Compact Time Axis + Equal Fit Day Columns */}
                 <div
                   className="timetable-body"
                   style={{
-                    gridTemplateColumns: `56px repeat(${grid.visibleDays.length}, minmax(106px, 1fr))`,
+                    gridTemplateColumns: `34px repeat(${grid.visibleDays.length}, minmax(0, 1fr))`,
                     height: totalGridHeight,
                   }}
                 >
-                  {/* Sticky Left Time Labels (every 30 mins) */}
+                  {/* Left Time Labels (every 30 mins) */}
                   <div className="timetable-time-col" style={{ height: totalGridHeight }}>
                     {grid.slots.map(slot => (
                       <div
@@ -376,7 +514,7 @@ export default function CourseScheduleView({
                         className={`timetable-time-cell${slot.isFullHour ? ' is-hour' : ' is-half'}`}
                         style={{ height: SLOT_HEIGHT }}
                       >
-                        <span>{slot.label}</span>
+                        <span>{slot.shortLabel || slot.label}</span>
                       </div>
                     ))}
                   </div>
