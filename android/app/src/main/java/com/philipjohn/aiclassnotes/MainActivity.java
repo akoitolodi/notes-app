@@ -40,8 +40,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Locale;
+import java.util.TreeSet;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
@@ -64,6 +67,7 @@ public class MainActivity extends BridgeActivity {
     private static final String PREF_BG_COLOR = "bg_color";
     private static final String PREF_IS_DARK = "is_dark";
     private static final String PREF_HIDE_STATUS_BAR = "hide_status_bar";
+    private static final String PREF_REFRESH_MODE = "refresh_rate_mode"; // "max" | "90" | "60"
 
     private volatile int lastSafeTopDp = 0;
     private volatile int lastSafeBottomDp = 0;
@@ -92,6 +96,7 @@ public class MainActivity extends BridgeActivity {
             getWindow().getDecorView().post(this::enableHighRefreshRate);
         }
         initNativeTheme();
+        initNativeDisplay();
         initNativeFiles();
         initNativeTts();
         initNativeSpeech();
@@ -397,6 +402,89 @@ public class MainActivity extends BridgeActivity {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) {
             applySavedStatusBarVisibility();
+            enableHighRefreshRate();
+        }
+    }
+
+    private void initNativeDisplay() {
+        try {
+            if (getBridge() != null && getBridge().getWebView() != null) {
+                getBridge().getWebView().addJavascriptInterface(new AndroidDisplayBridge(), "BaiNativeDisplay");
+            }
+        } catch (Exception ignored) {
+            // ignore
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private Display getCurrentDisplay() {
+        Display display = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R ? getDisplay() : null;
+        if (display == null && getWindowManager() != null) {
+            display = getWindowManager().getDefaultDisplay();
+        }
+        return display;
+    }
+
+    private String getSavedRefreshMode() {
+        try {
+            String raw = getSharedPreferences(THEME_PREFS, MODE_PRIVATE).getString(PREF_REFRESH_MODE, "max");
+            if ("90".equals(raw) || "60".equals(raw)) return raw;
+        } catch (Exception ignored) {
+            // fallback
+        }
+        return "max";
+    }
+
+    private final class AndroidDisplayBridge {
+
+        @JavascriptInterface
+        public String getDisplayInfoJson() {
+            try {
+                Display display = getCurrentDisplay();
+                if (display == null) {
+                    return "{\"activeHz\":60,\"maxHz\":60,\"supportedHz\":[60],\"mode\":\"" + getSavedRefreshMode() + "\"}";
+                }
+                Display.Mode current = display.getMode();
+                Display.Mode[] modes = display.getSupportedModes();
+                int activeHz = current != null ? Math.round(current.getRefreshRate()) : 60;
+                int maxHz = activeHz;
+                TreeSet<Integer> rates = new TreeSet<>();
+                rates.add(activeHz);
+                if (modes != null && current != null) {
+                    for (Display.Mode m : modes) {
+                        if (m.getPhysicalWidth() == current.getPhysicalWidth()
+                                && m.getPhysicalHeight() == current.getPhysicalHeight()) {
+                            int hz = Math.round(m.getRefreshRate());
+                            rates.add(hz);
+                            if (hz > maxHz) maxHz = hz;
+                        }
+                    }
+                }
+                JSONObject out = new JSONObject();
+                out.put("activeHz", activeHz);
+                out.put("maxHz", maxHz);
+                out.put("mode", getSavedRefreshMode());
+                JSONArray arr = new JSONArray();
+                for (Integer r : rates) arr.put(r);
+                out.put("supportedHz", arr);
+                return out.toString();
+            } catch (Exception ignored) {
+                return "{\"activeHz\":60,\"maxHz\":60,\"supportedHz\":[60],\"mode\":\"max\"}";
+            }
+        }
+
+        @JavascriptInterface
+        public void setRefreshRateMode(final String mode) {
+            final String clean = ("90".equals(mode) || "60".equals(mode)) ? mode : "max";
+            try {
+                getSharedPreferences(THEME_PREFS, MODE_PRIVATE)
+                    .edit()
+                    .putString(PREF_REFRESH_MODE, clean)
+                    .apply();
+            } catch (Exception ignored) {
+                // ignore
+            }
+            mainHandler.post(() -> enableHighRefreshRate());
         }
     }
 
@@ -405,22 +493,34 @@ public class MainActivity extends BridgeActivity {
         try {
             Window window = getWindow();
             if (window == null) return;
-            Display display = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R ? getDisplay() : null;
-            if (display == null && getWindowManager() != null) {
-                display = getWindowManager().getDefaultDisplay();
-            }
+            Display display = getCurrentDisplay();
             if (display == null) return;
 
             Display.Mode current = display.getMode();
             Display.Mode[] modes = display.getSupportedModes();
             if (current == null || modes == null || modes.length == 0) return;
 
+            String modePref = getSavedRefreshMode();
             Display.Mode best = current;
             for (Display.Mode m : modes) {
-                if (m.getPhysicalWidth() == current.getPhysicalWidth()
-                        && m.getPhysicalHeight() == current.getPhysicalHeight()
-                        && m.getRefreshRate() > best.getRefreshRate()) {
-                    best = m;
+                if (m.getPhysicalWidth() != current.getPhysicalWidth()
+                        || m.getPhysicalHeight() != current.getPhysicalHeight()) {
+                    continue;
+                }
+                float hz = m.getRefreshRate();
+                float bestHz = best.getRefreshRate();
+                if ("60".equals(modePref)) {
+                    if (hz <= 62f && (bestHz > 62f || Math.abs(hz - 60f) < Math.abs(bestHz - 60f))) {
+                        best = m;
+                    }
+                } else if ("90".equals(modePref)) {
+                    if (hz <= 92f && (bestHz > 92f || hz > bestHz)) {
+                        best = m;
+                    }
+                } else {
+                    if (hz > bestHz) {
+                        best = m;
+                    }
                 }
             }
 
@@ -431,6 +531,14 @@ public class MainActivity extends BridgeActivity {
                 lp.preferredDisplayModeId = best.getModeId();
                 lp.preferredRefreshRate = best.getRefreshRate();
                 window.setAttributes(lp);
+            }
+
+            // Enable Android 14+ touch refresh-rate boost when not locked to 60 Hz battery mode
+            try {
+                Method boost = Window.class.getMethod("setFrameRateBoostOnTouchEnabled", boolean.class);
+                boost.invoke(window, !"60".equals(modePref));
+            } catch (Exception ignored) {
+                // Method unavailable below Android 14 / API 34
             }
         } catch (Exception ignored) {
             // Safely ignore on OEMs or older Android builds without multi-mode switching

@@ -74,7 +74,9 @@ import {
   groupDaysLabel,
   meetingsToScheduleRows,
   scheduleRowsToMeetings,
+  cleanupOrphanScheduleRows,
 } from '../lib/scheduleView';
+import { assignAnnouncementsToCourses, parseCanvasCourseLabel } from '../lib/announcementSchedule';
 import { syncDeadlineNotifications, markAnnouncementRead } from '../lib/notifications';
 import { compressImage } from './ImageManager';
 import CourseGradesTab from './course/CourseGradesTab';
@@ -88,10 +90,23 @@ import { useDialog } from './ui/DialogProvider';
 function courseMatchesTag(itemCourseStr, course) {
   const target = String(itemCourseStr || '').trim().toLowerCase();
   if (!target || !course) return false;
+  const parsed = parseCanvasCourseLabel(itemCourseStr);
+  if (parsed.section && course.section) {
+    if (parsed.section.toUpperCase() !== String(course.section).trim().toUpperCase()) {
+      return false;
+    }
+  }
+  const titleLower = parsed.title.toLowerCase();
   const keys = [course.icsCourseTag, course.name, course.code, course.nickname]
     .map(s => String(s || '').trim().toLowerCase())
     .filter(Boolean);
-  return keys.some(k => target === k || target.includes(k) || k.includes(target));
+  return keys.some(k => {
+    if (target === k || titleLower === k) return true;
+    if (k.length < 4) return false;
+    const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const wb = new RegExp(`(?:^|[^a-z0-9])${escaped}(?:$|[^a-z0-9])`, 'i');
+    return wb.test(target) || wb.test(titleLower);
+  });
 }
 
 export default function CoursesDashboardScreen({
@@ -216,8 +231,11 @@ export default function CoursesDashboardScreen({
 
   const courseStatsMap = useMemo(() => {
     const map = new Map();
+    const allAnns = plannerItems.filter(it => it.type === 'announcement');
+    // Strictly assign each announcement to AT MOST ONE course to prevent cross-course bleeding
+    const annsByCourse = assignAnnouncementsToCourses(allAnns, courses);
     for (const c of courses) {
-      const cAnns = plannerItems.filter(it => it.type === 'announcement' && courseMatchesTag(it.course, c));
+      const cAnns = annsByCourse.get(c.id) || [];
       const cAllTasks = plannerItems.filter(it => it.type !== 'announcement' && courseMatchesTag(it.course, c));
       const cTasks = cAllTasks.filter(it => !it.done);
       const cMats = materials.filter(m => m.courseId === c.id);
@@ -475,12 +493,23 @@ export default function CoursesDashboardScreen({
       savedCourseObj = { id, ...newRecord };
     }
 
-    // Sync Class Schedule meetings into `db.classSchedule`
-    const existingByCourseId = schedule
-      .filter(s => s.courseId === savedCourseObj.id)
+    // Sync Class Schedule meetings into `db.classSchedule` using fresh DB snapshot
+    const freshSched = await db.classSchedule.toArray().catch(() => schedule);
+    const normStr = v => String(v || '').replace(/\s+lab$/i, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const oldCodeKey = normStr(editingCourse?.code);
+    const newCodeKey = normStr(savedCourseObj.code);
+    const freshMatchingIds = freshSched
+      .filter(s => {
+        if (s.courseId === savedCourseObj.id) return true;
+        if (!s.courseId) {
+          const sk = normStr(s.subject);
+          if (sk && (sk === newCodeKey || (oldCodeKey && sk === oldCodeKey))) return true;
+        }
+        return false;
+      })
       .map(s => s.id)
       .filter(Boolean);
-    const idsToDelete = [...new Set([...oldLinkedIds, ...existingByCourseId])];
+    const idsToDelete = [...new Set([...oldLinkedIds, ...freshMatchingIds])];
     if (idsToDelete.length > 0) {
       await Promise.all(idsToDelete.map(id => db.classSchedule.delete(id).catch(() => {})));
     }
@@ -488,6 +517,7 @@ export default function CoursesDashboardScreen({
     if (newScheduleRows.length > 0) {
       await Promise.all(newScheduleRows.map(row => db.classSchedule.add(row)));
     }
+    syncDeadlineNotifications().catch(() => {});
 
     resetCourseForm();
     await refreshAll();
@@ -522,9 +552,10 @@ export default function CoursesDashboardScreen({
       destructive: true,
     });
     if (!ok) return;
+    const freshSched = await db.classSchedule.toArray().catch(() => schedule);
     await Promise.all(
-      schedule
-        .filter(s => s.courseId === course.id)
+      freshSched
+        .filter(s => s.courseId === course.id || (!s.courseId && courseMatchesTag(String(s.subject || '').replace(/\s+lab$/i, ''), course)))
         .map(s => db.classSchedule.delete(s.id).catch(() => {}))
     );
     const courseMats = await db.courseMaterials.where('courseId').equals(course.id).toArray().catch(() => []);
@@ -536,7 +567,31 @@ export default function CoursesDashboardScreen({
     await db.courses.delete(course.id);
     setSelectedCourseId(null);
     await refreshAll();
+    onChanged?.();
+    syncDeadlineNotifications().catch(() => {});
     toast('Course removed');
+  };
+
+  const handleDeleteScheduleSlot = async entry => {
+    if (!entry?.id) return;
+    await db.classSchedule.delete(entry.id).catch(() => {});
+    await refreshAll();
+    onChanged?.();
+    syncDeadlineNotifications().catch(() => {});
+    toast(`Removed ${entry.code || 'class'} slot`);
+  };
+
+  const handleCleanupSchedule = async () => {
+    const removed = await cleanupOrphanScheduleRows(db);
+    await refreshAll();
+    onChanged?.();
+    syncDeadlineNotifications().catch(() => {});
+    toast(
+      removed > 0
+        ? `Cleaned ${removed} ghost / duplicate timetable slot${removed === 1 ? '' : 's'}!`
+        : 'Timetable is already clean!',
+      { type: removed > 0 ? 'success' : 'info' }
+    );
   };
 
   // Rich Paste handler for Canvas Module Page
@@ -1097,7 +1152,7 @@ export default function CoursesDashboardScreen({
         {dashSection === 'schedule' ? (
           <div style={{ padding: '10px var(--gutter) 20px' }}>
             <CourseScheduleView
-              courses={activeCourses}
+              courses={courses}
               scheduleRows={schedule}
               onOpenCourse={c => {
                 setSelectedCourseId(c.id);
@@ -1105,6 +1160,8 @@ export default function CoursesDashboardScreen({
               }}
               onEditCourse={c => openEditCourse(c, { ensureMeetingSlot: true })}
               onImportSchedulePdf={() => setScheduleImportOpen(true)}
+              onDeleteScheduleSlot={handleDeleteScheduleSlot}
+              onCleanupSchedule={handleCleanupSchedule}
               onAddCourseSchedule={() => {
                 if (activeCourses.length > 0) {
                   const firstMissing = activeCourses.find(

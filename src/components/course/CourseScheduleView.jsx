@@ -17,6 +17,7 @@ import {
   Sparkles,
   Plus,
   X,
+  Trash2,
 } from 'lucide-react';
 import {
   SCHEDULE_DAYS,
@@ -50,6 +51,8 @@ export default function CourseScheduleView({
   onEditCourse,
   onAddCourseSchedule,
   onImportSchedulePdf = null,
+  onDeleteScheduleSlot = null,
+  onCleanupSchedule = null,
 }) {
   const [viewMode, setViewMode] = useState(() => {
     try {
@@ -92,6 +95,7 @@ export default function CourseScheduleView({
     }
   };
 
+  const activeCourses = useMemo(() => courses.filter(c => !c?.archived), [courses]);
   const entries = useMemo(
     () => resolveScheduleEntries(courses, scheduleRows),
     [courses, scheduleRows]
@@ -103,8 +107,8 @@ export default function CourseScheduleView({
     [entries]
   );
   const studyLoad = useMemo(
-    () => buildStudyLoadSummary(courses, entries),
-    [courses, entries]
+    () => buildStudyLoadSummary(activeCourses, entries),
+    [activeCourses, entries]
   );
   const nowState = useMemo(
     () => getNowAndNextClass(entries, nowDate),
@@ -276,20 +280,43 @@ export default function CourseScheduleView({
         )}
       </div>
 
-      {/* 3. Conflict Alert (if any overlapping classes exist) */}
+      {/* 3. Conflict Alert (if any genuine overlapping classes exist) */}
       {conflicts.length > 0 && (
         <div className="sticky-alert-banner" style={{ margin: '0 0 10px' }}>
-          <div className="flex items-center gap-6" style={{ fontSize: 12.5, fontWeight: 700, color: '#ff375f' }}>
-            <AlertTriangle size={14} /> Schedule Overlap Detected ({conflicts.length})
+          <div className="flex items-center justify-between gap-8" style={{ flexWrap: 'wrap' }}>
+            <div className="flex items-center gap-6" style={{ fontSize: 12.5, fontWeight: 700, color: '#ff375f' }}>
+              <AlertTriangle size={14} /> Schedule Overlap Detected ({conflicts.length})
+            </div>
+            {onCleanupSchedule && (
+              <button type="button" className="row-action-chip" onClick={onCleanupSchedule}>
+                Clean Ghosts
+              </button>
+            )}
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 3 }}>
-            {conflicts
-              .slice(0, 2)
-              .map(
-                c =>
-                  `${c.dayLabel}: ${c.first.code} (${formatTime12h(c.first.startTime)}) overlaps ${c.second.code}`
-              )
-              .join(' · ')}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginTop: 6, maxHeight: 150, overflowY: 'auto' }}>
+            {conflicts.map((c, idx) => (
+              <div
+                key={`${c.dayOfWeek}-${c.first.id || c.first.code}-${c.second.id || c.second.code}-${idx}`}
+                className="flex items-center justify-between gap-8"
+                style={{ fontSize: 12, color: 'var(--text-secondary)' }}
+              >
+                <span style={{ minWidth: 0 }}>
+                  <strong>{c.dayLabel}</strong>: {c.first.code} ({formatTimeRange12h(c.first.startTime, c.first.endTime)}) ↔ {c.second.code} ({formatTimeRange12h(c.second.startTime, c.second.endTime)})
+                </span>
+                <button
+                  type="button"
+                  className="row-action-chip"
+                  style={{ flexShrink: 0 }}
+                  onClick={() => {
+                    const targetCourse = c.second.course || c.first.course;
+                    if (targetCourse && onEditCourse) onEditCourse(targetCourse);
+                    else setInspectBlock(c.second);
+                  }}
+                >
+                  Fix
+                </button>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -674,6 +701,20 @@ export default function CourseScheduleView({
                     <Pencil size={14} /> Edit Schedule
                   </button>
                 </>
+              )}
+              {onDeleteScheduleSlot && inspectBlock.id && (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  style={{ color: '#ff375f', flex: inspectBlock.course ? '0 0 auto' : 1 }}
+                  onClick={async () => {
+                    const target = inspectBlock;
+                    setInspectBlock(null);
+                    await onDeleteScheduleSlot(target);
+                  }}
+                >
+                  <Trash2 size={14} /> Delete Slot
+                </button>
               )}
             </div>
           </div>

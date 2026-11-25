@@ -24,6 +24,8 @@ import {
   Signal,
   Palette,
   ChevronRight,
+  Compass,
+  Gauge,
 } from 'lucide-react';
 import {
   THEME_KEY,
@@ -40,6 +42,7 @@ import {
   HINT_KEY,
   REDUCE_MOTION_KEY,
   HIDE_STATUS_BAR_KEY,
+  REFRESH_RATE_KEY,
   ACCENTS,
   getSettings,
   applySettings,
@@ -189,7 +192,13 @@ function Segmented({ options, value, onChange }) {
   );
 }
 
-export default function SettingsScreen({ onBack, onDataImported, onOpenThemes }) {
+export default function SettingsScreen({
+  onBack,
+  onDataImported,
+  onOpenThemes,
+  onOpenSetupWizard = null,
+  onOpenFeatureGuide = null,
+}) {
   const { confirm, toast } = useDialog();
   const initial = getSettings();
   const [theme, setTheme] = useState(initial.theme);
@@ -208,6 +217,38 @@ export default function SettingsScreen({ onBack, onDataImported, onOpenThemes })
   });
   const [reduceMotion, setReduceMotion] = useState(() => Boolean(initial.reduceMotion));
   const [hideStatusBar, setHideStatusBar] = useState(() => Boolean(initial.hideStatusBar));
+  const [refreshRate, setRefreshRate] = useState(() => initial.refreshRate || 'max');
+  const [displayInfo, setDisplayInfo] = useState(() => {
+    try {
+      const raw = window.BaiNativeDisplay?.getDisplayInfoJson?.();
+      if (raw) return JSON.parse(raw);
+    } catch {
+      // non-native
+    }
+    return null;
+  });
+  const [measuredHz, setMeasuredHz] = useState(null);
+
+  useEffect(() => {
+    if (displayInfo) return undefined;
+    if (typeof requestAnimationFrame !== 'function') return undefined;
+    let frames = 0;
+    let start = 0;
+    let rafId = 0;
+    const step = ts => {
+      if (!start) start = ts;
+      frames += 1;
+      const elapsed = ts - start;
+      if (elapsed >= 450 && frames >= 12) {
+        const est = Math.round(((frames - 1) * 1000) / elapsed);
+        setMeasuredHz(est >= 105 ? 120 : est >= 80 ? 90 : 60);
+        return;
+      }
+      if (elapsed < 1200) rafId = requestAnimationFrame(step);
+    };
+    rafId = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(rafId);
+  }, [displayInfo]);
 
   const [mode, setMode] = useState(() => getAiMode());
   const [provider, setProvider] = useState(() => getProviderId());
@@ -498,6 +539,45 @@ export default function SettingsScreen({ onBack, onDataImported, onOpenThemes })
 
       <div className="large-title">Settings</div>
 
+      {/* Setup Wizard & Visual Feature Guide */}
+      {(onOpenSetupWizard || onOpenFeatureGuide) && (
+        <div className="list-group settings-group">
+          <div className="flex items-center gap-8" style={{ marginBottom: 6 }}>
+            <span className="bento-tile-icon" style={{ background: 'var(--accent-tint)', color: 'var(--accent-ink)' }}>
+              <Compass size={17} />
+            </span>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 14.5, fontWeight: 700, color: 'var(--text)' }}>
+                Quick Setup &amp; Visual Feature Guide
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 1 }}>
+                Easy API key setup, schedule PDF import, starter notes &amp; visual tour
+              </div>
+            </div>
+          </div>
+          <div className="flex gap-8 mt-8">
+            {onOpenSetupWizard && (
+              <button
+                type="button"
+                className="btn btn-primary btn-sm flex-1"
+                onClick={onOpenSetupWizard}
+              >
+                Setup Wizard
+              </button>
+            )}
+            {onOpenFeatureGuide && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm flex-1"
+                onClick={onOpenFeatureGuide}
+              >
+                Feature Guide
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Appearance & Reading */}
       <div className="list-group settings-group">
         {onOpenThemes && (
@@ -648,6 +728,51 @@ export default function SettingsScreen({ onBack, onDataImported, onOpenThemes })
             <span className="ios-switch-track" />
           </span>
         </label>
+
+        <div className="settings-label mt-16 flex items-center justify-between gap-8">
+          <span className="flex items-center gap-6">
+            <Gauge size={14} /> Display Refresh Rate
+          </span>
+          <span className="mode-badge mode-study" style={{ fontSize: 10.5 }}>
+            {displayInfo
+              ? `${displayInfo.activeHz}Hz (max ${displayInfo.maxHz}Hz)`
+              : measuredHz
+                ? `~${measuredHz}Hz screen`
+                : 'Auto'}
+          </span>
+        </div>
+        <Segmented
+          options={[
+            ['max', 'Auto Max'],
+            ['90', '90 Hz'],
+            ['60', '60 Hz'],
+          ]}
+          value={refreshRate}
+          onChange={v => {
+            setPref(REFRESH_RATE_KEY, v, setRefreshRate);
+            setTimeout(() => {
+              try {
+                const raw = window.BaiNativeDisplay?.getDisplayInfoJson?.();
+                if (raw) setDisplayInfo(JSON.parse(raw));
+              } catch {
+                // ignore
+              }
+            }, 120);
+            toast(
+              v === 'max'
+                ? 'High refresh rate: Auto Max (up to 120/144Hz)'
+                : v === '90'
+                  ? 'High refresh rate target: 90 Hz'
+                  : 'Battery mode: 60 Hz'
+            );
+          }}
+        />
+        <div className="settings-tip">
+          Uses native Display.Mode &amp; touch frame-rate boost on supported Android phones.
+          {displayInfo && displayInfo.maxHz <= 60
+            ? ' Note: Your system currently reports 60Hz max — enable High Refresh Rate for Notes by Bai in Android Display settings if supported.'
+            : ''}
+        </div>
       </div>
 
       {/* AI Backend */}
@@ -1243,33 +1368,102 @@ export default function SettingsScreen({ onBack, onDataImported, onOpenThemes })
 
         <label className="ios-switch-row mt-8">
           <div style={{ flex: 1 }}>
-            <span className="ios-switch-label">15-min before-class reminders</span>
+            <span className="ios-switch-label">
+              Before-class reminders ({notifCfg.classReminderLeadMin || 10}m)
+            </span>
             <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
-              Pings before each scheduled class with your room/lab &amp; unread posts
+              Alerts before each scheduled class with your room/lab, teacher &amp; unread posts
             </div>
           </div>
           <span className="ios-switch">
             <input
               type="checkbox"
-              checked={Boolean(notifCfg.classReminders15m)}
+              checked={Boolean(notifCfg.classRemindersEnabled || notifCfg.classReminders15m)}
               onChange={async e => {
                 const next = e.target.checked;
                 if (next) {
                   await requestNotificationPermission();
                 }
-                saveNotificationSettings({ classReminders15m: next });
-                setNotifCfg(prev => ({ ...prev, classReminders15m: next }));
+                saveNotificationSettings({ classReminders15m: next, classRemindersEnabled: next });
+                setNotifCfg(prev => ({ ...prev, classReminders15m: next, classRemindersEnabled: next }));
                 const res = await syncDeadlineNotifications();
                 toast(
                   next
-                    ? `Class reminders enabled (${res.scheduledCount} total scheduled)`
-                    : '15-min class reminders disabled'
+                    ? `Class reminders enabled (${notifCfg.classReminderLeadMin || 10}m before · ${res.scheduledCount} total)`
+                    : 'Before-class reminders disabled'
                 );
               }}
             />
             <span className="ios-switch-track" />
           </span>
         </label>
+
+        {(notifCfg.classRemindersEnabled || notifCfg.classReminders15m) && (
+          <div className="class-reminder-subbox">
+            <div className="settings-help" style={{ margin: '0 0 6px', fontWeight: 600 }}>
+              Remind me before class (minutes):
+            </div>
+            <div className="flex items-center gap-6" style={{ flexWrap: 'wrap' }}>
+              {[5, 10, 15, 20, 30].map(mins => (
+                <button
+                  key={mins}
+                  type="button"
+                  className={`row-action-chip${Number(notifCfg.classReminderLeadMin) === mins ? ' active-chip' : ''}`}
+                  onClick={async () => {
+                    saveNotificationSettings({ classReminderLeadMin: mins });
+                    setNotifCfg(prev => ({ ...prev, classReminderLeadMin: mins }));
+                    await syncDeadlineNotifications();
+                    toast(`Class reminder set to ${mins} min before class`);
+                  }}
+                >
+                  {mins}m
+                </button>
+              ))}
+              <input
+                type="number"
+                min="1"
+                max="60"
+                className="input-field"
+                style={{ width: 64, padding: '4px 7px', fontSize: 12, textAlign: 'center' }}
+                aria-label="Custom reminder lead minutes"
+                value={notifCfg.classReminderLeadMin || 10}
+                onChange={async e => {
+                  const raw = Number(e.target.value);
+                  if (!Number.isFinite(raw) || raw < 1) return;
+                  const val = Math.max(1, Math.min(60, Math.round(raw)));
+                  saveNotificationSettings({ classReminderLeadMin: val });
+                  setNotifCfg(prev => ({ ...prev, classReminderLeadMin: val }));
+                  await syncDeadlineNotifications();
+                }}
+              />
+            </div>
+
+            <label className="ios-switch-row mt-10">
+              <div style={{ flex: 1 }}>
+                <span className="ios-switch-label" style={{ fontSize: 13 }}>
+                  Persistent pinned class alert
+                </span>
+                <div style={{ fontSize: 11.5, color: 'var(--text-secondary)', marginTop: 1 }}>
+                  Stays pinned in notification shade until dismissed or class starts
+                </div>
+              </div>
+              <span className="ios-switch">
+                <input
+                  type="checkbox"
+                  checked={notifCfg.classReminderPersistent !== false}
+                  onChange={async e => {
+                    const next = e.target.checked;
+                    saveNotificationSettings({ classReminderPersistent: next });
+                    setNotifCfg(prev => ({ ...prev, classReminderPersistent: next }));
+                    await syncDeadlineNotifications();
+                    toast(next ? 'Persistent class alert enabled' : 'Standard dismissible class alert');
+                  }}
+                />
+                <span className="ios-switch-track" />
+              </span>
+            </label>
+          </div>
+        )}
 
         <div className="settings-label mt-16 flex items-center gap-6">
           <Signal size={14} /> Slow Internet Mode ({isSlowNetworkActive() ? 'Active' : 'Normal'})
@@ -1442,7 +1636,7 @@ export default function SettingsScreen({ onBack, onDataImported, onOpenThemes })
           • Press <strong>Ctrl+S</strong> to save immediately or <strong>Ctrl+Shift+S</strong> to save & explain.
         </div>
         <div className="settings-tip" style={{ marginTop: 10, opacity: 0.7 }}>
-          Notes by Bai v2.1.0
+          Notes by Bai v2.1.1
         </div>
       </div>
 

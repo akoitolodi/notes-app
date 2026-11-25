@@ -67,23 +67,47 @@ function courseTokens(course) {
   return { words, alphaJoined, firstAlpha, digits };
 }
 
-/** Score how strongly an announcement belongs to a Course record. */
+function hasWordBoundaryMatch(haystackLower, needleLower) {
+  if (!haystackLower || !needleLower) return false;
+  const escaped = needleLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?:^|[^a-z0-9])${escaped}(?:$|[^a-z0-9])`, 'i').test(haystackLower);
+}
+
+/**
+ * Score how strongly an announcement belongs to a Course record.
+ * Strict rules prevent cross-course bleeding:
+ * - Section mismatch (e.g. A vs C) disqualifies immediately.
+ * - Substring matches require >=4 alnum chars or clean word boundaries.
+ * - Instructor alone NEVER creates a match (tie-breaker bonus only).
+ */
 function scoreCourseMatch(announcement, course) {
   const annCourseRaw = String(announcement?.course || '').trim();
-  if (!annCourseRaw && !announcement?.author) return 0;
+  if (!annCourseRaw) return 0;
 
   const annLower = annCourseRaw.toLowerCase();
   const annNorm = normAlnum(annCourseRaw);
   const parsed = parseCanvasCourseLabel(annCourseRaw);
+  const titleLower = parsed.title.toLowerCase();
   const titleNorm = normAlnum(parsed.title);
 
-  // Tier 1: Explicit saved aliases / exact code / name / ICS tag
-  const aliases = Array.isArray(course?.canvasAliases) ? course.canvasAliases : [];
-  for (const al of aliases) {
-    if (normAlnum(al) && (normAlnum(al) === annNorm || normAlnum(al) === titleNorm)) {
-      return 120;
+  // Hard section guard: if both announcement & course specify different sections, reject!
+  if (parsed.section && course?.section) {
+    const courseSec = String(course.section).trim().toUpperCase();
+    if (courseSec && parsed.section.toUpperCase() !== courseSec) {
+      return 0;
     }
   }
+
+  // Tier 1: Explicit saved aliases (highest authority; user-curated 1-to-1 binding)
+  const aliases = Array.isArray(course?.canvasAliases) ? course.canvasAliases : [];
+  for (const al of aliases) {
+    const alNorm = normAlnum(al);
+    if (alNorm && (alNorm === annNorm || (titleNorm && alNorm === titleNorm))) {
+      return 140;
+    }
+  }
+
+  let score = 0;
 
   const directFields = [course?.icsCourseTag, course?.code, course?.nickname, course?.name]
     .map(s => String(s || '').trim())
@@ -92,74 +116,83 @@ function scoreCourseMatch(announcement, course) {
     const dfLower = df.toLowerCase();
     const dfNorm = normAlnum(df);
     if (!dfNorm) continue;
-    if (dfLower === annLower || dfNorm === annNorm || dfNorm === titleNorm) {
-      return 100;
+    if (dfLower === annLower || dfNorm === annNorm || (titleNorm && dfNorm === titleNorm)) {
+      score = Math.max(score, 100);
+      break;
     }
-    if (dfNorm.length >= 4 && (annNorm.includes(dfNorm) || dfNorm.includes(titleNorm))) {
-      return 80;
+    if (
+      dfNorm.length >= 4 &&
+      (hasWordBoundaryMatch(annLower, dfLower) ||
+        hasWordBoundaryMatch(titleLower, dfLower) ||
+        (dfNorm.length >= 6 && (annNorm.includes(dfNorm) || (titleNorm.length >= 6 && dfNorm.includes(titleNorm)))))
+    ) {
+      score = Math.max(score, 82);
     }
   }
 
-  // Tier 2: Acronym + Word-Prefix + Section + Course Number inference
-  const { words: cWords, alphaJoined, firstAlpha, digits: cDigits } = courseTokens(course);
-  const titleWords = significantWords(parsed.title);
-  const titleInitials = titleWords.filter(w => /^[a-z]/.test(w)).map(w => w[0]).join('');
-  const titleInitialsNoTrailingNum = titleWords
-    .filter(w => !/^\d+$/.test(w))
-    .map(w => w[0])
-    .join('');
+  if (score === 0) {
+    // Tier 2: Acronym + Word-Prefix + Section + Course Number inference
+    const { words: cWords, alphaJoined, firstAlpha, digits: cDigits } = courseTokens(course);
+    const titleWords = significantWords(parsed.title);
+    const titleInitials = titleWords.filter(w => /^[a-z]/.test(w)).map(w => w[0]).join('');
+    const titleInitialsNoTrailingNum = titleWords
+      .filter(w => !/^\d+$/.test(w))
+      .map(w => w[0])
+      .join('');
 
-  let score = 0;
-  if (
-    alphaJoined.length >= 2 &&
-    (titleInitials === alphaJoined ||
-      titleInitialsNoTrailingNum === alphaJoined ||
-      (firstAlpha.length >= 2 && titleInitialsNoTrailingNum === firstAlpha))
-  ) {
-    score += 50;
-  } else if (cWords.length >= 2) {
-    // e.g. "PATH FIT 4" matching "Physical Activities Toward Health and Fitness 4" (fit/health) or "GEC ART" matching "Art Appreciation"
-    let tokenHits = 0;
-    for (const cw of cWords) {
-      if (/^\d+$/.test(cw)) continue;
-      if (titleWords.some(tw => tw === cw || (cw.length >= 3 && tw.startsWith(cw)))) {
-        tokenHits += 1;
-      } else if (cw.length >= 4 && titleWords.some(tw => tw.startsWith(cw.slice(0, 4)))) {
-        tokenHits += 0.6;
-      }
-    }
-    if (tokenHits >= 1) {
-      score += 36 * tokenHits;
-    } else if (
-      firstAlpha.length >= 3 &&
-      titleWords.some(tw => tw.startsWith(firstAlpha))
+    if (
+      alphaJoined.length >= 2 &&
+      (titleInitials === alphaJoined ||
+        titleInitialsNoTrailingNum === alphaJoined ||
+        (firstAlpha.length >= 2 && titleInitialsNoTrailingNum === firstAlpha))
     ) {
+      score += 52;
+    } else if (cWords.length >= 2) {
+      let tokenHits = 0;
+      for (const cw of cWords) {
+        if (/^\d+$/.test(cw)) continue;
+        if (cw.length < 3) continue;
+        if (titleWords.some(tw => tw === cw || tw.startsWith(cw))) {
+          tokenHits += 1;
+        } else if (cw.length >= 4 && titleWords.some(tw => tw.startsWith(cw.slice(0, 4)))) {
+          tokenHits += 0.6;
+        }
+      }
+      if (tokenHits >= 1) {
+        score += 36 * tokenHits;
+      } else if (
+        firstAlpha.length >= 3 &&
+        titleWords.some(tw => tw.startsWith(firstAlpha))
+      ) {
+        score += 38;
+      }
+    } else if (firstAlpha.length >= 3 && titleWords.some(tw => tw.startsWith(firstAlpha))) {
       score += 38;
     }
-  } else if (firstAlpha.length >= 3 && titleWords.some(tw => tw.startsWith(firstAlpha))) {
-    score += 38;
-  }
 
-  if (score > 0) {
-    const titleDigits = parsed.title.match(/\d+/g) || [];
-    if (cDigits.length > 0 && titleDigits.some(d => cDigits.includes(d))) {
-      score += 14;
-    }
-    if (parsed.section && course?.section) {
-      if (parsed.section.toUpperCase() === String(course.section).trim().toUpperCase()) {
-        score += 20;
-      } else {
-        score -= 10;
+    if (score > 0) {
+      const titleDigits = parsed.title.match(/\d+/g) || [];
+      if (cDigits.length > 0 && titleDigits.some(d => cDigits.includes(d))) {
+        score += 14;
       }
     }
   }
 
-  // Tier 3: Instructor match
-  const authorLower = String(announcement?.author || '').trim().toLowerCase();
-  const instLower = String(course?.instructor || '').trim().toLowerCase();
-  if (authorLower && instLower && authorLower !== 'pasted note') {
-    if (authorLower === instLower || authorLower.includes(instLower) || instLower.includes(authorLower)) {
-      score += 45;
+  // Bonus when announcement section explicitly matches course section
+  if (score > 0 && parsed.section && course?.section) {
+    if (parsed.section.toUpperCase() === String(course.section).trim().toUpperCase()) {
+      score += 20;
+    }
+  }
+
+  // Tier 3: Instructor match works STRICTLY as a tie-breaker when subject already matched
+  if (score > 0) {
+    const authorLower = String(announcement?.author || '').trim().toLowerCase();
+    const instLower = String(course?.instructor || '').trim().toLowerCase();
+    if (authorLower && instLower && authorLower !== 'pasted note') {
+      if (authorLower === instLower || authorLower.includes(instLower) || instLower.includes(authorLower)) {
+        score += 16;
+      }
     }
   }
 
@@ -167,6 +200,55 @@ function scoreCourseMatch(announcement, course) {
 }
 
 const DAY_INDEX_SEQ = [0, 1, 2, 3, 4, 5, 6];
+
+/**
+ * Resolve the single winning Course (or null) for an announcement with ambiguity guard.
+ * Guarantees 1-to-1 course ownership and prevents cross-course bleeding.
+ */
+export function resolveAnnouncementCourse(announcement, courses = []) {
+  if (!announcement || !Array.isArray(courses) || courses.length === 0) return null;
+
+  let bestCourse = null;
+  let bestScore = 0;
+  let secondBestScore = 0;
+
+  for (const c of courses) {
+    if (!c || c.archived) continue;
+    const sc = scoreCourseMatch(announcement, c);
+    if (sc > bestScore) {
+      secondBestScore = bestScore;
+      bestScore = sc;
+      bestCourse = c;
+    } else if (sc > secondBestScore) {
+      secondBestScore = sc;
+    }
+  }
+
+  if (!bestCourse || bestScore < 35) return null;
+  // Reject close ties on inferred matches so posts don't bleed into a sibling course
+  if (bestScore < 100 && secondBestScore > 0 && bestScore - secondBestScore < 12) {
+    return null;
+  }
+  return { course: bestCourse, score: bestScore };
+}
+
+/**
+ * Assign each announcement to AT MOST ONE course (Map<courseId, announcement[]>)
+ * so a course's Posts tab never receives another subject's announcements.
+ */
+export function assignAnnouncementsToCourses(announcements = [], courses = []) {
+  const byCourseId = new Map();
+  for (const c of courses || []) {
+    if (c?.id != null) byCourseId.set(c.id, []);
+  }
+  for (const ann of announcements || []) {
+    const hit = resolveAnnouncementCourse(ann, courses);
+    if (hit?.course?.id != null && byCourseId.has(hit.course.id)) {
+      byCourseId.get(hit.course.id).push(ann);
+    }
+  }
+  return byCourseId;
+}
 
 /**
  * Secretly match an announcement to its scheduled Course + Timetable slots.
@@ -177,20 +259,9 @@ export function matchAnnouncementToCourse(
   scheduleRows = [],
   nowDate = new Date()
 ) {
-  if (!announcement || !Array.isArray(courses) || courses.length === 0) return null;
-
-  let bestCourse = null;
-  let bestScore = 0;
-  for (const c of courses) {
-    if (c?.archived) continue;
-    const sc = scoreCourseMatch(announcement, c);
-    if (sc > bestScore) {
-      bestScore = sc;
-      bestCourse = c;
-    }
-  }
-
-  if (!bestCourse || bestScore < 35) return null;
+  const resolved = resolveAnnouncementCourse(announcement, courses);
+  if (!resolved) return null;
+  const { course: bestCourse, score: bestScore } = resolved;
 
   const entries = resolveScheduleEntries([bestCourse], scheduleRows).filter(
     e => e.courseId === bestCourse.id || normAlnum(e.baseCode) === normAlnum(bestCourse.code)

@@ -48,6 +48,7 @@ const StudentHubScreen = lazy(() => import('./components/StudentHubScreen'));
 const CoursesDashboardScreen = lazy(() => import('./components/CoursesDashboardScreen'));
 const AnnouncementsScreen = lazy(() => import('./components/AnnouncementsScreen'));
 const ThemeStudioScreen = lazy(() => import('./components/ThemeStudioScreen'));
+const OnboardingGuideModal = lazy(() => import('./components/OnboardingGuideModal'));
 
 function ScreenLoading({ label = 'Loading…' }) {
   return (
@@ -75,6 +76,7 @@ export default function App() {
   const [themesReturnTo, setThemesReturnTo] = useState('folders');
   const [coursesInitialSection, setCoursesInitialSection] = useState('courses');
   const [sharedImport, setSharedImport] = useState(null); // { file?, text?, title? } from Android Share Target
+  const [onboardingModal, setOnboardingModal] = useState(null); // null | 'wizard' | 'guide'
   const [sidebarTick, setSidebarTick] = useState(0);
   const [isWide, setIsWide] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth >= 900 : false
@@ -160,6 +162,35 @@ export default function App() {
       clearTimeout(tCanvas);
     };
   }, [bumpSidebar]);
+
+  // First-run Onboarding check deferred cleanly past first paint (0 KB eager cost for returning users)
+  useEffect(() => {
+    if (!ready) return undefined;
+    let alive = true;
+    const t = setTimeout(async () => {
+      try {
+        const { ONBOARDING_DONE_KEY, shouldAutoShowOnboarding } = await import('./lib/onboarding');
+        const onboardingDone = localStorage.getItem(ONBOARDING_DONE_KEY) === 'true';
+        if (onboardingDone) return;
+        const { getDirectConfig } = await import('./lib/aiConfig');
+        const hasApiKey = Boolean(getDirectConfig().apiKey?.trim());
+        if (hasApiKey) return;
+        const [noteCount, courseCount] = await Promise.all([
+          db.notes.count().catch(() => 0),
+          db.courses.count().catch(() => 0),
+        ]);
+        if (alive && shouldAutoShowOnboarding({ onboardingDone, noteCount, courseCount, hasApiKey })) {
+          setOnboardingModal('wizard');
+        }
+      } catch {
+        // never fail startup on onboarding check
+      }
+    }, 450);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [ready]);
 
   // Idle-prefetch list & editor chunks well after first interactive paint
   useEffect(() => {
@@ -398,6 +429,10 @@ export default function App() {
     if (overlayBackRef.current && overlayBackRef.current() === true) {
       return true;
     }
+    if (onboardingModal) {
+      setOnboardingModal(null);
+      return true;
+    }
     if (sharedImport) {
       setSharedImport(null);
       return true;
@@ -440,6 +475,7 @@ export default function App() {
     return false;
   }, [
     screen,
+    onboardingModal,
     sharedImport,
     themesReturnTo,
     handleBackFromExamPaper,
@@ -687,6 +723,8 @@ export default function App() {
             onBack={handleBackToFolders}
             onDataImported={bumpSidebar}
             onOpenThemes={() => handleOpenThemes('settings')}
+            onOpenSetupWizard={() => setOnboardingModal('wizard')}
+            onOpenFeatureGuide={() => setOnboardingModal('guide')}
           />
         </Suspense>
       );
@@ -739,6 +777,8 @@ export default function App() {
               onOpenTrash={handleOpenTrash}
               onOpenSettings={handleOpenSettings}
               onOpenThemes={() => handleOpenThemes('folders')}
+              onOpenSetupWizard={() => setOnboardingModal('wizard')}
+              onOpenFeatureGuide={() => setOnboardingModal('guide')}
             />
           )}
         </aside>
@@ -756,6 +796,28 @@ export default function App() {
           )}
         </main>
       </div>
+      {onboardingModal && (
+        <Suspense fallback={null}>
+          <OnboardingGuideModal
+            initialView={onboardingModal}
+            onCompleted={({ welcomeNote, welcomeFolder } = {}) => {
+              setOnboardingModal(null);
+              bumpSidebar();
+              if (welcomeNote) {
+                handleOpenNote(welcomeNote, welcomeFolder || { id: '__all__', name: 'All Notes' });
+              }
+            }}
+            onNavigate={target => {
+              if (target === 'schedule') handleOpenCourses({ section: 'schedule' });
+              else if (target === 'announcements') handleOpenAnnouncements();
+              else if (target === 'scores') handleOpenPlanner();
+              else handleBackToFolders();
+            }}
+            onOpenNote={handleOpenNote}
+            onClose={() => setOnboardingModal(null)}
+          />
+        </Suspense>
+      )}
       {sharedImport && (
         <Suspense fallback={null}>
           <ImportSheet

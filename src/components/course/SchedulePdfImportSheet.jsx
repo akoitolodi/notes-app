@@ -13,6 +13,7 @@ import {
   Calendar,
   AlertCircle,
   ClipboardPaste,
+  User,
 } from 'lucide-react';
 import {
   extractScheduleFromPdfBuffer,
@@ -20,6 +21,8 @@ import {
   parseScheduleWithAI,
   commitImportedSchedule,
 } from '../../lib/schedulePdfParser';
+import { db } from '../../store/db';
+import { matchAnnouncementToCourse } from '../../lib/announcementSchedule';
 import { formatTimeRange12h, groupDaysLabel } from '../../lib/scheduleView';
 import {
   getNotificationSettings,
@@ -42,8 +45,10 @@ export default function SchedulePdfImportSheet({ initialFile = null, onImported,
   const [error, setError] = useState('');
 
   const [createFolders, setCreateFolders] = useState(true);
+  const [replaceExisting, setReplaceExisting] = useState(true);
+  const [notifSettings] = useState(() => getNotificationSettings());
   const [enableReminders, setEnableReminders] = useState(
-    () => Boolean(getNotificationSettings().classReminders15m)
+    () => Boolean(getNotificationSettings().classRemindersEnabled || getNotificationSettings().classReminders15m)
   );
 
   const fileInputRef = useRef(null);
@@ -56,16 +61,57 @@ export default function SchedulePdfImportSheet({ initialFile = null, onImported,
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const applyParsedResult = parsed => {
+  const applyParsedResult = async parsed => {
     setSemester(parsed.semester || '');
     setDeclaredUnits(parsed.declaredTotalUnits ?? null);
-    setRows(
-      (parsed.courses || []).map((c, idx) => ({
+    const parsedCourses = parsed.courses || [];
+    setReplaceExisting(parsedCourses.length >= 3);
+
+    // Enrich missing instructor fields silently from existing courses or synced Canvas announcements
+    let existingCourses = [];
+    let announcements = [];
+    try {
+      [existingCourses, announcements] = await Promise.all([
+        db.courses.toArray().catch(() => []),
+        db.plannerItems.where('type').equals('announcement').toArray().catch(() => []),
+      ]);
+    } catch {
+      // ignore if IndexedDB not open
+    }
+
+    const enrichedRows = parsedCourses.map((c, idx) => {
+      let instructor = String(c.instructor || '').trim();
+      let teacherFromCanvas = false;
+      if (!instructor) {
+        const key = String(c.code || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const existingMatch = existingCourses.find(
+          ex => String(ex.code || '').toLowerCase().replace(/[^a-z0-9]/g, '') === key
+        );
+        if (existingMatch?.instructor) {
+          instructor = existingMatch.instructor;
+        } else if (announcements.length > 0) {
+          const pseudoCourse = { ...c, id: `tmp-${idx}`, archived: false };
+          for (const ann of announcements) {
+            const author = String(ann?.author || '').trim();
+            if (!author || author === 'Pasted Note') continue;
+            if (matchAnnouncementToCourse(ann, [pseudoCourse], [])) {
+              instructor = author;
+              teacherFromCanvas = true;
+              break;
+            }
+          }
+        }
+      }
+      return {
         ...c,
+        instructor,
+        _teacherAutoFilled: teacherFromCanvas,
         _rowId: `sched-row-${idx}-${Date.now()}`,
         selected: true,
-      }))
-    );
+      };
+    });
+
+    setRows(enrichedRows);
   };
 
   const processPdfFile = async file => {
@@ -77,7 +123,7 @@ export default function SchedulePdfImportSheet({ initialFile = null, onImported,
       const buf = await file.arrayBuffer();
       const res = await extractScheduleFromPdfBuffer(buf);
       setRawText(res.rawText || '');
-      applyParsedResult(res);
+      await applyParsedResult(res);
       if ((res.courses || []).length === 0) {
         setError(
           'No structured table rows detected offline (scanned image PDF?). Try Paste Text or tap "Parse with AI".'
@@ -97,7 +143,7 @@ export default function SchedulePdfImportSheet({ initialFile = null, onImported,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialFile]);
 
-  const handleParsePaste = () => {
+  const handleParsePaste = async () => {
     const txt = pasteText.trim();
     if (!txt) {
       setError('Paste your class schedule rows first.');
@@ -106,7 +152,7 @@ export default function SchedulePdfImportSheet({ initialFile = null, onImported,
     setError('');
     setRawText(txt);
     const res = parseScheduleLines(txt.split(/\r?\n/));
-    applyParsedResult(res);
+    await applyParsedResult(res);
     if ((res.courses || []).length === 0) {
       setError('Could not detect course times offline — try tapping "Parse with AI".');
     }
@@ -122,7 +168,7 @@ export default function SchedulePdfImportSheet({ initialFile = null, onImported,
     setError('');
     try {
       const res = await parseScheduleWithAI(txt);
-      applyParsedResult(res);
+      await applyParsedResult(res);
       if ((res.courses || []).length === 0) {
         setError('AI could not find class schedules in that text.');
       }
@@ -149,11 +195,12 @@ export default function SchedulePdfImportSheet({ initialFile = null, onImported,
     try {
       if (enableReminders) {
         await requestNotificationPermission().catch(() => {});
-        saveNotificationSettings({ classReminders15m: true });
+        saveNotificationSettings({ classReminders15m: true, classRemindersEnabled: true });
       }
       const res = await commitImportedSchedule({
         courses: selectedRows,
         createFolders,
+        replaceExisting,
       });
       toast(
         `Imported ${res.created + res.updated} course${res.created + res.updated === 1 ? '' : 's'} & ${res.slots} class slots!`,
@@ -216,7 +263,7 @@ export default function SchedulePdfImportSheet({ initialFile = null, onImported,
                 {fileName || 'Choose Class Schedule / COR PDF'}
               </div>
               <div className="import-dropzone-sub">
-                Extracts subject codes, sections, units, days, times &amp; rooms 100% offline
+                Extracts subject codes, sections, units, days, times, rooms &amp; teachers 100% offline
               </div>
             </button>
             <input
@@ -340,20 +387,52 @@ export default function SchedulePdfImportSheet({ initialFile = null, onImported,
                       onChange={e => updateRow(r._rowId, { units: e.target.value })}
                     />
                   </div>
-                  <div className="sched-import-slots">
-                    {(r.meetings || []).map((m, mi) => (
-                      <span key={mi} className="sched-slot-chip">
-                        <strong>{m.kind}</strong> · {groupDaysLabel(m.days)}{' '}
-                        {formatTimeRange12h(m.startTime, m.endTime)}
-                        {m.room ? ` · ${m.room}` : ''}
+                  <div className="sched-import-teacher-row">
+                    <User size={12} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
+                    <input
+                      className="input-field sched-teacher-input"
+                      value={r.instructor || ''}
+                      placeholder="Teacher / Instructor (optional)"
+                      aria-label={`Teacher for ${r.code}`}
+                      onChange={e =>
+                        updateRow(r._rowId, {
+                          instructor: e.target.value,
+                          _teacherAutoFilled: false,
+                        })
+                      }
+                    />
+                    {r._teacherAutoFilled && r.instructor && (
+                      <span className="sched-slot-chip" style={{ flexShrink: 0 }}>
+                        from Canvas
                       </span>
-                    ))}
+                    )}
+                  </div>
+                  <div className="sched-import-slots">
+                    {(r.meetings || []).length > 0 ? (
+                      (r.meetings || []).map((m, mi) => (
+                        <span key={mi} className="sched-slot-chip">
+                          <strong>{m.kind}</strong> · {groupDaysLabel(m.days)}{' '}
+                          {formatTimeRange12h(m.startTime, m.endTime)}
+                          {m.room ? ` · ${m.room}` : ''}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="sched-slot-chip">TBA / no fixed time yet</span>
+                    )}
                   </div>
                 </div>
               ))}
             </div>
 
             <div className="sched-import-options">
+              <label className="sched-opt-check">
+                <input
+                  type="checkbox"
+                  checked={replaceExisting}
+                  onChange={e => setReplaceExisting(e.target.checked)}
+                />
+                <span>Replace existing timetable slots (clears old overlaps)</span>
+              </label>
               <label className="sched-opt-check">
                 <input
                   type="checkbox"
@@ -368,7 +447,10 @@ export default function SchedulePdfImportSheet({ initialFile = null, onImported,
                   checked={enableReminders}
                   onChange={e => setEnableReminders(e.target.checked)}
                 />
-                <span>Remind me 15 min before each class</span>
+                <span>
+                  Remind me {notifSettings.classReminderLeadMin || 10} min before each class
+                  {notifSettings.classReminderPersistent !== false ? ' (persistent)' : ''}
+                </span>
               </label>
             </div>
           </div>

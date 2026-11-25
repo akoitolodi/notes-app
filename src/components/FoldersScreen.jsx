@@ -37,6 +37,7 @@ import {
   Palette,
   Clock,
   ExternalLink,
+  Compass,
 } from 'lucide-react';
 import {
   db,
@@ -50,7 +51,7 @@ import {
 } from '../store/db';
 import { getReviewStats } from '../lib/spacedRepetition';
 import { NOTE_MODE_LIST, getModeMeta } from '../lib/noteModes';
-import { isDevToolkitEnabled, isLearnCodingEnabled } from '../lib/aiConfig';
+import { isDevToolkitEnabled, isLearnCodingEnabled, getDirectConfig } from '../lib/aiConfig';
 import {
   isVaultUnlocked,
   hasVaultPin,
@@ -59,10 +60,12 @@ import {
 } from '../lib/vault';
 import {
   getInAppAlertSummary,
+  getNotificationSettings,
   isAnnouncementRead,
   markAllAnnouncementsRead,
   snoozeInAppBanner,
 } from '../lib/notifications';
+import { SETUP_BANNER_DISMISSED_KEY } from '../lib/onboarding';
 import { resolveScheduleEntries, formatTimeRange12h } from '../lib/scheduleView';
 import {
   matchAnnouncementToCourse,
@@ -154,6 +157,8 @@ export default function FoldersScreen({
   onOpenTrash,
   onOpenSettings,
   onOpenThemes,
+  onOpenSetupWizard = null,
+  onOpenFeatureGuide = null,
 }) {
   const { confirm, prompt, toast } = useDialog();
   const [initialCache] = useState(() => readHomeCache());
@@ -181,6 +186,16 @@ export default function FoldersScreen({
   const [menuFolder, setMenuFolder] = useState(null);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [setupBannerDismissed, setSetupBannerDismissed] = useState(() => {
+    try {
+      return localStorage.getItem(SETUP_BANNER_DISMISSED_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [notifLeadMin, setNotifLeadMin] = useState(
+    () => getNotificationSettings().classReminderLeadMin || 10
+  );
 
   const pressTimer = useRef(null);
   const longPressedRef = useRef(false);
@@ -260,6 +275,7 @@ export default function FoldersScreen({
       setReviewStats(getReviewStats());
       setShowToolkit(isDevToolkitEnabled());
       setShowCoding(isLearnCodingEnabled());
+      setNotifLeadMin(getNotificationSettings().classReminderLeadMin || 10);
       setVaultUnlocked(isVaultUnlocked());
       setPlannerDueCount(nextDueCount);
       setCourseCount(nextCourseCount);
@@ -280,6 +296,7 @@ export default function FoldersScreen({
       setReviewStats(getReviewStats());
       setShowToolkit(isDevToolkitEnabled());
       setShowCoding(isLearnCodingEnabled());
+      setNotifLeadMin(getNotificationSettings().classReminderLeadMin || 10);
       setVaultUnlocked(isVaultUnlocked());
       setPlannerDueCount(0);
       setCourseCount(0);
@@ -809,10 +826,60 @@ export default function FoldersScreen({
         </button>
       </div>
 
+      {/* Compact Setup & Tour Nudge for New Unconfigured Users */}
+      {!setupBannerDismissed &&
+        courseCount === 0 &&
+        !getDirectConfig().apiKey?.trim() &&
+        (onOpenSetupWizard || onOpenFeatureGuide) && (
+          <div className="home-setup-nudge">
+            <div className="flex items-center gap-8" style={{ flex: 1, minWidth: 0 }}>
+              <span className="home-stat-icon tone-indigo" style={{ flexShrink: 0 }}>
+                <Compass size={15} />
+              </span>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
+                  New here? Quick Setup &amp; Tour
+                </div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
+                  Import schedule PDF, connect free AI, or explore tools
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-6" style={{ flexShrink: 0 }}>
+              <button
+                type="button"
+                className="row-action-chip active-chip"
+                onClick={() => (onOpenSetupWizard ? onOpenSetupWizard() : onOpenFeatureGuide?.())}
+              >
+                Start
+              </button>
+              <button
+                type="button"
+                className="row-icon-btn"
+                aria-label="Dismiss setup banner"
+                onClick={() => {
+                  setSetupBannerDismissed(true);
+                  try {
+                    localStorage.setItem(SETUP_BANNER_DISMISSED_KEY, 'true');
+                  } catch {
+                    // ignore
+                  }
+                }}
+              >
+                <X size={13} />
+              </button>
+            </div>
+          </div>
+        )}
+
       {/* Up Next / Live Class Compact Strip */}
       {upNextClass && (
         <div
-          className={`home-upnext-bar${upNextClass.status === 'now' ? ' is-live' : ''}`}
+          className={`home-upnext-bar${upNextClass.status === 'now' ? ' is-live' : ''}${
+            upNextClass.status === 'today' && upNextClass.minutesUntil <= notifLeadMin
+              ? ' is-imminent'
+              : ''
+          }`}
           role="button"
           tabIndex={0}
           onClick={() => onOpenCourses?.({ section: 'schedule' })}
@@ -828,7 +895,9 @@ export default function FoldersScreen({
               {upNextClass.status === 'now'
                 ? `LIVE · ${upNextClass.minutesLeft}m left`
                 : upNextClass.status === 'today'
-                  ? `NEXT IN ${upNextClass.minutesUntil}m`
+                  ? upNextClass.minutesUntil <= notifLeadMin
+                    ? `STARTING IN ${upNextClass.minutesUntil}m`
+                    : `NEXT IN ${upNextClass.minutesUntil}m`
                   : upNextClass.dayLabel}
             </span>
             <div className="home-upnext-main">
@@ -1024,7 +1093,7 @@ export default function FoldersScreen({
             )}
           </div>
           <div className="bento-tile-title">Planner &amp; Canvas</div>
-          <div className="bento-tile-sub">Calendar, sync &amp; GWA</div>
+          <div className="bento-tile-sub">Calendar, sync &amp; scores</div>
         </button>
 
         {showCoding && (

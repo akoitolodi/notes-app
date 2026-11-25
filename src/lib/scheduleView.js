@@ -166,15 +166,42 @@ function matchCourseForScheduleRow(row, courses = []) {
   );
 }
 
-/** Join `classSchedule` rows with `courses` so Timetable & Study Load show rich metadata. */
+/**
+ * Join `classSchedule` rows with `courses` so Timetable & Study Load show rich metadata,
+ * while strictly stripping archived-course rows, deleted-course orphans, and exact duplicates.
+ */
 export function resolveScheduleEntries(courses = [], scheduleRows = []) {
-  const out = [];
+  const coursesById = new Map();
+  for (const c of courses) {
+    if (c && c.id != null) coursesById.set(c.id, c);
+  }
+  const activeCourses = courses.filter(c => !c?.archived);
+  const archivedNormKeys = new Set(
+    courses
+      .filter(c => c?.archived)
+      .flatMap(c => [c.code, c.name, c.nickname, c.icsCourseTag])
+      .map(s => String(s || '').replace(/\s+lab$/i, '').trim().toLowerCase())
+      .filter(Boolean)
+  );
+
+  const deduped = new Map();
   for (const r of scheduleRows) {
+    if (!r) continue;
     const startMin = timeToMinutes(r.startTime);
     const endMin = timeToMinutes(r.endTime);
     if (startMin === null || endMin === null || endMin <= startMin) continue;
 
-    const course = matchCourseForScheduleRow(r, courses);
+    if (r.courseId != null && courses.length > 0) {
+      const linked = coursesById.get(r.courseId);
+      if (!linked || linked.archived) continue; // deleted-course orphan or archived course
+    }
+
+    const course = matchCourseForScheduleRow(r, activeCourses);
+    if (!course && archivedNormKeys.size > 0) {
+      const subjNorm = String(r.subject || '').replace(/\s+lab$/i, '').trim().toLowerCase();
+      if (subjNorm && archivedNormKeys.has(subjNorm)) continue;
+    }
+
     const kind =
       r.kind === 'LAB' || /\blab\b/i.test(String(r.subject || '')) ? 'LAB' : 'LEC';
     const baseCode = course?.code || course?.nickname || String(r.subject || 'Course').trim();
@@ -185,7 +212,7 @@ export function resolveScheduleEntries(courses = [], scheduleRows = []) {
           ? `${baseCode} lab`
           : baseCode;
 
-    out.push({
+    const entry = {
       id: r.id,
       courseId: course?.id ?? r.courseId ?? null,
       course,
@@ -203,14 +230,85 @@ export function resolveScheduleEntries(courses = [], scheduleRows = []) {
       instructor: String(r.instructor || course?.instructor || '').trim(),
       units: Number(course?.units) || 3,
       color: r.color || course?.color || '#f59e0b',
-    });
+    };
+
+    const identity = entry.courseId ? `c:${entry.courseId}` : `s:${entry.baseCode.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+    const slotKey = `${identity}|${entry.dayOfWeek}|${entry.startMin}|${entry.endMin}|${entry.kind}`;
+    const prev = deduped.get(slotKey);
+    if (!prev) {
+      deduped.set(slotKey, entry);
+    } else {
+      const prevScore = (prev.room ? 2 : 0) + (prev.instructor ? 1 : 0) + (prev.courseId ? 1 : 0);
+      const nextScore = (entry.room ? 2 : 0) + (entry.instructor ? 1 : 0) + (entry.courseId ? 1 : 0);
+      if (nextScore > prevScore) deduped.set(slotKey, entry);
+    }
   }
+
+  const out = [...deduped.values()];
   out.sort((a, b) => {
     const dDiff = (DAY_ORDER_INDEX.get(a.dayOfWeek) ?? 9) - (DAY_ORDER_INDEX.get(b.dayOfWeek) ?? 9);
     if (dDiff !== 0) return dDiff;
     return a.startMin - b.startMin;
   });
   return out;
+}
+
+/**
+ * Remove orphan rows (pointing to deleted/archived courses) and exact duplicate rows
+ * from `db.classSchedule`. Works with a Dexie `db` instance or custom `{ courses, scheduleRows, deleteRow }`.
+ */
+export async function cleanupOrphanScheduleRows(target) {
+  if (!target) return 0;
+  let courses = [];
+  let scheduleRows = [];
+  let deleteRow;
+
+  if (target.classSchedule && target.courses) {
+    [courses, scheduleRows] = await Promise.all([
+      target.courses.toArray().catch(() => []),
+      target.classSchedule.toArray().catch(() => []),
+    ]);
+    deleteRow = id => target.classSchedule.delete(id).catch(() => {});
+  } else {
+    courses = Array.isArray(target.courses) ? target.courses : [];
+    scheduleRows = Array.isArray(target.scheduleRows) ? target.scheduleRows : [];
+    deleteRow = target.deleteRow || (() => Promise.resolve());
+  }
+
+  const coursesById = new Map(courses.filter(c => c?.id != null).map(c => [c.id, c]));
+  const keptBySlot = new Map();
+  const toDelete = [];
+
+  for (const r of scheduleRows) {
+    if (!r?.id) continue;
+    const startMin = timeToMinutes(r.startTime);
+    const endMin = timeToMinutes(r.endTime);
+    if (startMin === null || endMin === null || endMin <= startMin) {
+      toDelete.push(r.id);
+      continue;
+    }
+    if (r.courseId != null && courses.length > 0) {
+      const c = coursesById.get(r.courseId);
+      if (!c || c.archived) {
+        toDelete.push(r.id);
+        continue;
+      }
+    }
+    const kind = r.kind === 'LAB' || /\blab\b/i.test(String(r.subject || '')) ? 'LAB' : 'LEC';
+    const subjKey = String(r.subject || '').replace(/\s+lab$/i, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const idKey = r.courseId ? `c:${r.courseId}` : `s:${subjKey}`;
+    const slotKey = `${idKey}|${Number(r.dayOfWeek)}|${startMin}|${endMin}|${kind}`;
+    if (keptBySlot.has(slotKey)) {
+      toDelete.push(r.id);
+    } else {
+      keptBySlot.set(slotKey, r.id);
+    }
+  }
+
+  if (toDelete.length > 0) {
+    await Promise.all(toDelete.map(id => deleteRow(id)));
+  }
+  return toDelete.length;
 }
 
 /** Compute 30-min grid bounds (earliest/latest hours) and visible weekday columns. */

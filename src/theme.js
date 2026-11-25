@@ -13,6 +13,7 @@ export const SURFACE_KEY = 'aicn:surface';         // 'studio' | 'glass-frosted'
 export const HINT_KEY = 'aicn:showHint';           // boolean string
 export const REDUCE_MOTION_KEY = 'aicn:reduceMotion'; // 'true' | 'false'
 export const HIDE_STATUS_BAR_KEY = 'aicn:hideStatusBar'; // 'true' | 'false'
+export const REFRESH_RATE_KEY = 'aicn:refreshRate'; // 'max' | '90' | '60'
 
 export const SURFACE_STYLES = [
   ['studio', 'Studio'],
@@ -355,6 +356,7 @@ export function getSettings() {
       font: localStorage.getItem(FONT_KEY) || 'system',
       reduceMotion: localStorage.getItem(REDUCE_MOTION_KEY) === 'true',
       hideStatusBar: localStorage.getItem(HIDE_STATUS_BAR_KEY) === 'true',
+      refreshRate: localStorage.getItem(REFRESH_RATE_KEY) || 'max',
     };
   } catch {
     return {
@@ -367,6 +369,7 @@ export function getSettings() {
       font: 'system',
       reduceMotion: false,
       hideStatusBar: false,
+      refreshRate: 'max',
     };
   }
 }
@@ -412,7 +415,7 @@ let mediaListenerAttached = false;
 export function applySettings() {
   if (typeof document === 'undefined') return;
   const root = document.documentElement;
-  const { theme, themePreset, surface, accent, size, paper, font, reduceMotion, hideStatusBar } = getSettings();
+  const { theme, themePreset, surface, accent, size, paper, font, reduceMotion, hideStatusBar, refreshRate } = getSettings();
   const preset = THEME_PRESETS.find(p => p.id === themePreset) || null;
   root.dataset.surface = normalizeSurface(surface);
 
@@ -468,6 +471,12 @@ export function applySettings() {
 
   try {
     window.BaiNativeTheme?.setHideStatusBar?.(Boolean(hideStatusBar));
+  } catch {
+    // non-native web
+  }
+
+  try {
+    window.BaiNativeDisplay?.setRefreshRateMode?.(refreshRate || 'max');
   } catch {
     // non-native web
   }

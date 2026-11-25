@@ -24,26 +24,51 @@ async function loadLocalNotifications() {
 export const NOTIF_ENABLED_KEY = 'aicn:notifsEnabled';
 export const NOTIF_STICKY_KEY = 'aicn:notifsSticky';
 export const NOTIF_CLASS_REMINDERS_KEY = 'aicn:notifsClass15m';
+export const NOTIF_CLASS_LEAD_KEY = 'aicn:notifsClassLeadMin';
+export const NOTIF_CLASS_PERSISTENT_KEY = 'aicn:notifsClassPersistent';
 export const NOTIF_READ_ANNS_KEY = 'aicn:readAnnIds';
 export const NOTIF_SNOOZE_KEY = 'aicn:alertSnoozeUntil';
+
+export const CLASS_REMINDER_CHANNEL_ID = 'class-reminders';
+export const CLASS_REMINDER_ACTION_TYPE_ID = 'CLASS_REMINDER_ACTIONS';
 
 const STICKY_NOTIF_ID = 900001;
 const SCHEDULED_IDS_KEY = 'aicn:scheduledNotifIds';
 const HOUR_MS = 3600 * 1000;
 const DAY_MS = 24 * HOUR_MS;
+let _channelInitialized = false;
+
+function clampLeadMin(val) {
+  const n = Math.round(Number(val));
+  if (!Number.isFinite(n) || n <= 0) return 10;
+  return Math.max(1, Math.min(60, n));
+}
 
 export function getNotificationSettings() {
   try {
     const en = localStorage.getItem(NOTIF_ENABLED_KEY);
     const st = localStorage.getItem(NOTIF_STICKY_KEY);
     const cr = localStorage.getItem(NOTIF_CLASS_REMINDERS_KEY);
+    const leadRaw = localStorage.getItem(NOTIF_CLASS_LEAD_KEY);
+    const persistRaw = localStorage.getItem(NOTIF_CLASS_PERSISTENT_KEY);
+    const classEnabled = cr === 'true';
     return {
       enabled: en === null ? true : en !== 'false',
       stickyOngoing: st === null ? true : st !== 'false',
-      classReminders15m: cr === 'true',
+      classReminders15m: classEnabled,
+      classRemindersEnabled: classEnabled,
+      classReminderLeadMin: leadRaw !== null ? clampLeadMin(leadRaw) : 10,
+      classReminderPersistent: persistRaw === null ? true : persistRaw !== 'false',
     };
   } catch {
-    return { enabled: true, stickyOngoing: true, classReminders15m: false };
+    return {
+      enabled: true,
+      stickyOngoing: true,
+      classReminders15m: false,
+      classRemindersEnabled: false,
+      classReminderLeadMin: 10,
+      classReminderPersistent: true,
+    };
   }
 }
 
@@ -55,8 +80,21 @@ export function saveNotificationSettings(patch) {
     if (patch.stickyOngoing !== undefined) {
       localStorage.setItem(NOTIF_STICKY_KEY, patch.stickyOngoing ? 'true' : 'false');
     }
-    if (patch.classReminders15m !== undefined) {
-      localStorage.setItem(NOTIF_CLASS_REMINDERS_KEY, patch.classReminders15m ? 'true' : 'false');
+    const clsFlag =
+      patch.classRemindersEnabled !== undefined
+        ? patch.classRemindersEnabled
+        : patch.classReminders15m;
+    if (clsFlag !== undefined) {
+      localStorage.setItem(NOTIF_CLASS_REMINDERS_KEY, clsFlag ? 'true' : 'false');
+    }
+    if (patch.classReminderLeadMin !== undefined) {
+      localStorage.setItem(NOTIF_CLASS_LEAD_KEY, String(clampLeadMin(patch.classReminderLeadMin)));
+    }
+    if (patch.classReminderPersistent !== undefined) {
+      localStorage.setItem(
+        NOTIF_CLASS_PERSISTENT_KEY,
+        patch.classReminderPersistent ? 'true' : 'false'
+      );
     }
   } catch {
     // ignore
@@ -216,18 +254,20 @@ export function buildDeadlineSchedules(items = [], nowMs = Date.now(), { stickyO
 }
 
 /**
- * Pure deterministic 15-minute before-class notification schedule builder.
- * Includes exact Room/Lab and unread Canvas announcement hints per course.
+ * Pure deterministic customizable before-class notification schedule builder
+ * (default 10m lead, optional persistent ongoing mode, room/lab + teacher + unread posts).
  */
 export function buildClassReminderSchedules(
   courses = [],
   scheduleRows = [],
   unreadAnnouncements = [],
   nowMs = Date.now(),
-  { leadMinutes = 15 } = {}
+  { leadMinutes = 10, persistent = false } = {}
 ) {
   const entries = resolveScheduleEntries(courses, scheduleRows);
   if (entries.length === 0) return [];
+  const lead = clampLeadMin(leadMinutes);
+  const persist = Boolean(persistent);
 
   const unreadByCourseId = new Map();
   for (const ann of unreadAnnouncements || []) {
@@ -254,29 +294,67 @@ export function buildClassReminderSchedules(
         e.startMin % 60,
         0
       ).getTime();
-      const triggerAt = classStart - leadMinutes * 60 * 1000;
-      if (triggerAt <= nowMs + 60000 || triggerAt >= nowMs + 7 * DAY_MS) continue;
+      const classEnd = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() + offset,
+        Math.floor(e.endMin / 60),
+        e.endMin % 60,
+        0
+      ).getTime();
 
       const unreadCount = e.courseId ? unreadByCourseId.get(e.courseId) || 0 : 0;
       const roomPart = e.room ? ` · ${e.room}` : '';
       const timeRange = formatTimeRange12h(e.startTime, e.endTime);
+      const teacherHint = e.instructor ? ` · ${e.instructor}` : '';
       const unreadHint =
         unreadCount > 0
           ? ` · ${unreadCount} unread post${unreadCount === 1 ? '' : 's'}`
           : '';
+      const body = `${timeRange}${teacherHint}${unreadHint}`;
+
+      const triggerAt = classStart - lead * 60 * 1000;
+      const isImminentNow = offset === 0 && nowMs >= triggerAt && nowMs < classEnd;
+
+      if (persist && isImminentNow) {
+        const minsLeft = Math.max(1, Math.ceil((classStart - nowMs) / 60000));
+        out.push({
+          id: stableNotifId(`class-now:${e.baseCode}:${e.dayOfWeek}:${e.startTime}`),
+          title:
+            nowMs < classStart
+              ? `🔔 Class in ${minsLeft}m: ${e.code}${roomPart}`
+              : `🔔 In Class Now: ${e.code}${roomPart}`,
+          body,
+          at: null,
+          classEndAt: classEnd,
+          ongoing: true,
+          autoCancel: false,
+          channelId: CLASS_REMINDER_CHANNEL_ID,
+          actionTypeId: CLASS_REMINDER_ACTION_TYPE_ID,
+        });
+        break;
+      }
+
+      if (triggerAt <= nowMs + 60000 || triggerAt >= nowMs + 7 * DAY_MS) continue;
 
       out.push({
         id: stableNotifId(`class:${e.baseCode}:${e.dayOfWeek}:${e.startTime}`),
-        title: `Class in ${leadMinutes}m: ${e.code}${roomPart}`,
-        body: `${timeRange}${unreadHint}`,
+        title: `${persist ? '🔔 ' : ''}Class in ${lead}m: ${e.code}${roomPart}`,
+        body,
         at: triggerAt,
-        ongoing: false,
+        classEndAt: classEnd,
+        ongoing: persist,
+        autoCancel: !persist,
+        channelId: CLASS_REMINDER_CHANNEL_ID,
+        actionTypeId: persist ? CLASS_REMINDER_ACTION_TYPE_ID : undefined,
       });
       break;
     }
   }
 
-  return out.sort((a, b) => a.at - b.at).slice(0, 24);
+  return out
+    .sort((a, b) => (a.at || 0) - (b.at || 0))
+    .slice(0, 24);
 }
 
 export async function requestNotificationPermission() {
@@ -297,6 +375,38 @@ export async function requestNotificationPermission() {
   return false;
 }
 
+async function ensureClassReminderChannel(localNotifs) {
+  if (_channelInitialized || !localNotifs) return;
+  _channelInitialized = true;
+  try {
+    await localNotifs.createChannel?.({
+      id: CLASS_REMINDER_CHANNEL_ID,
+      name: 'Class Reminders',
+      description: 'Persistent upcoming class reminders with room & teacher info',
+      importance: 4,
+      visibility: 1,
+      vibration: true,
+    });
+  } catch {
+    // ignore on web or unsupported OS
+  }
+  try {
+    await localNotifs.registerActionTypes?.({
+      types: [
+        {
+          id: CLASS_REMINDER_ACTION_TYPE_ID,
+          actions: [
+            { id: 'dismiss', title: 'Dismiss', destructive: true },
+            { id: 'open-schedule', title: 'Open Schedule', foreground: true },
+          ],
+        },
+      ],
+    });
+  } catch {
+    // ignore if action types unsupported
+  }
+}
+
 /** Reconcile native Android scheduled reminders & sticky notification with current Dexie items. */
 export async function syncDeadlineNotifications() {
   const cfg = getNotificationSettings();
@@ -311,6 +421,8 @@ export async function syncDeadlineNotifications() {
       return { scheduledCount: 0, stickyActive: false, needsPermission: true };
     }
 
+    await ensureClassReminderChannel(localNotifs);
+
     // Cancel previously scheduled app reminders cleanly before re-scheduling
     let prevIds = [];
     try {
@@ -318,7 +430,9 @@ export async function syncDeadlineNotifications() {
     } catch {
       prevIds = [];
     }
-    const toCancel = [...new Set([...prevIds, STICKY_NOTIF_ID])].map(id => ({ id: Number(id) })).filter(x => x.id);
+    const toCancel = [...new Set([...prevIds, STICKY_NOTIF_ID])]
+      .map(id => ({ id: Number(id) }))
+      .filter(x => x.id);
     if (toCancel.length > 0) {
       await localNotifs.cancel({ notifications: toCancel }).catch(() => {});
     }
@@ -334,7 +448,7 @@ export async function syncDeadlineNotifications() {
     });
 
     let classReminders = [];
-    if (cfg.classReminders15m) {
+    if (cfg.classRemindersEnabled || cfg.classReminders15m) {
       const [courses, schedRows] = await Promise.all([
         db.courses.toArray().catch(() => []),
         db.classSchedule.toArray().catch(() => []),
@@ -344,7 +458,8 @@ export async function syncDeadlineNotifications() {
         it => it.type === 'announcement' && !readSet.has(it.externalUid || String(it.id))
       );
       classReminders = buildClassReminderSchedules(courses, schedRows, unreadAnns, Date.now(), {
-        leadMinutes: 15,
+        leadMinutes: cfg.classReminderLeadMin,
+        persistent: cfg.classReminderPersistent,
       });
     }
 
@@ -353,9 +468,12 @@ export async function syncDeadlineNotifications() {
       id: s.id,
       title: s.title,
       body: s.body,
-      schedule: { at: new Date(s.at), allowWhileIdle: true },
+      ...(s.at ? { schedule: { at: new Date(s.at), allowWhileIdle: true } } : {}),
       smallIcon: 'ic_stat_icon_config_sample',
-      autoCancel: true,
+      ongoing: Boolean(s.ongoing),
+      autoCancel: s.autoCancel !== undefined ? Boolean(s.autoCancel) : !s.ongoing,
+      ...(s.channelId ? { channelId: s.channelId } : {}),
+      ...(s.actionTypeId ? { actionTypeId: s.actionTypeId } : {}),
     }));
 
     if (sticky) {

@@ -43,7 +43,7 @@ import {
   parsePastedAnnouncement,
   buildCanvasNoteContent,
 } from '../lib/canvasSync';
-import { computeTargetFinal } from '../lib/gradeCalc';
+import { evaluateQuizScore, summarizeQuizHistory } from '../lib/gradeCalc';
 import { syncDeadlineNotifications } from '../lib/notifications';
 import MarkdownContent from './ui/MarkdownContent';
 import { useDialog } from './ui/DialogProvider';
@@ -59,11 +59,9 @@ const TIMETABLE_DAYS = [
 ];
 const CLASS_COLORS = ['#0a84ff', '#28b44c', '#ff9f0a', '#af52de', '#ff375f', '#30b0c7'];
 
-const DEFAULT_GRADE_ROWS = [
-  { id: 'q', name: 'Quizzes / Assignments', weight: '25', score: '88' },
-  { id: 'm', name: 'Midterm Exam', weight: '25', score: '85' },
-  { id: 'l', name: 'Labs / Projects', weight: '20', score: '92' },
-];
+const QUIZ_PASS_KEY = 'aicn:quizPassPct';
+const QUIZ_BASE_KEY = 'aicn:quizGradeBase';
+const QUIZ_HISTORY_KEY = 'aicn:quizHistory:v1';
 
 function formatMonthTitle(year, month) {
   return new Date(year, month, 1).toLocaleDateString([], { month: 'long', year: 'numeric' });
@@ -147,44 +145,67 @@ export default function StudentHubScreen({
   const [clsInstructor, setClsInstructor] = useState('');
   const [clsColor, setClsColor] = useState(CLASS_COLORS[0]);
 
-  // Grades calculator state (persisted in localStorage so students keep their term setup)
-  const [gradeRows, setGradeRows] = useState(() => {
+  // Quiz & Exam Pass Calculator state (persisted locally)
+  const [coursesList, setCoursesList] = useState([]);
+  const [quizScore, setQuizScore] = useState('');
+  const [quizTotal, setQuizTotal] = useState('50');
+  const [quizPassPct, setQuizPassPct] = useState(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem('aicn:gradeRows') || 'null');
-      return Array.isArray(saved) && saved.length > 0 ? saved : DEFAULT_GRADE_ROWS;
+      const n = Number(localStorage.getItem(QUIZ_PASS_KEY));
+      return Number.isFinite(n) && n >= 1 && n <= 100 ? n : 75;
     } catch {
-      return DEFAULT_GRADE_ROWS;
+      return 75;
     }
   });
-  const [targetPct, setTargetPct] = useState(() => {
+  const [quizBase, setQuizBase] = useState(() => {
     try {
-      return localStorage.getItem('aicn:gradeTarget') || '90';
+      const b = Number(localStorage.getItem(QUIZ_BASE_KEY));
+      return b === 50 || b === 60 ? b : 0;
     } catch {
-      return '90';
+      return 0;
+    }
+  });
+  const [quizLabel, setQuizLabel] = useState('');
+  const [quizCourse, setQuizCourse] = useState('');
+  const [quizHistory, setQuizHistory] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(QUIZ_HISTORY_KEY) || '[]');
+      return Array.isArray(saved) ? saved : [];
+    } catch {
+      return [];
     }
   });
 
   useEffect(() => {
     try {
-      localStorage.setItem('aicn:gradeRows', JSON.stringify(gradeRows));
+      localStorage.setItem(QUIZ_PASS_KEY, String(quizPassPct));
     } catch {
       // ignore
     }
-  }, [gradeRows]);
+  }, [quizPassPct]);
 
   useEffect(() => {
     try {
-      localStorage.setItem('aicn:gradeTarget', String(targetPct));
+      localStorage.setItem(QUIZ_BASE_KEY, String(quizBase));
     } catch {
       // ignore
     }
-  }, [targetPct]);
+  }, [quizBase]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(QUIZ_HISTORY_KEY, JSON.stringify(quizHistory.slice(0, 60)));
+    } catch {
+      // ignore
+    }
+  }, [quizHistory]);
 
   const refreshData = useCallback(async () => {
-    const [allItems, allClasses, allFolders, heat] = await Promise.all([
+    const [allItems, allClasses, allFolders, allCourses, heat] = await Promise.all([
       db.plannerItems.toArray().catch(() => []),
       db.classSchedule.toArray().catch(() => []),
       db.folders.toArray().catch(() => []),
+      db.courses.toArray().catch(() => []),
       getActivityHeatmap(112),
     ]);
     allItems.sort((a, b) => String(a.dateKey || '').localeCompare(String(b.dateKey || '')) || (a.dueAt || 0) - (b.dueAt || 0));
@@ -194,6 +215,7 @@ export default function StudentHubScreen({
     setItems(allItems);
     setClasses(allClasses);
     setFolders(safeFolders);
+    setCoursesList(allCourses.filter(c => !c.archived));
     setHeatmap(heat);
   }, []);
 
@@ -498,11 +520,47 @@ export default function StudentHubScreen({
     [items]
   );
 
-  // Grade calculation
-  const gradeResult = useMemo(
-    () => computeTargetFinal({ components: gradeRows, targetPercent: Number(targetPct) || 90 }),
-    [gradeRows, targetPct]
+  // Quiz & Exam Pass calculation + history summary
+  const quizEval = useMemo(
+    () =>
+      evaluateQuizScore({
+        score: quizScore,
+        total: quizTotal,
+        passingPercent: quizPassPct,
+        base: quizBase,
+      }),
+    [quizScore, quizTotal, quizPassPct, quizBase]
   );
+  const quizSummary = useMemo(
+    () => summarizeQuizHistory(quizHistory, quizPassPct),
+    [quizHistory, quizPassPct]
+  );
+
+  const handleSaveQuizRecord = () => {
+    if (!quizEval.hasScore || quizEval.total <= 0) {
+      toast('Enter both your score and total items first', { type: 'error' });
+      return;
+    }
+    const entry = {
+      id: `q-${Date.now()}`,
+      label: quizLabel.trim() || `Quiz #${quizHistory.length + 1}`,
+      course: quizCourse.trim(),
+      score: quizEval.score,
+      total: quizEval.total,
+      base: quizBase,
+      passingPercent: quizEval.passingPercent,
+      rawPercent: quizEval.rawPercent,
+      transmutedPercent: quizEval.transmutedPercent,
+      passed: Boolean(quizEval.passed),
+      at: Date.now(),
+    };
+    setQuizHistory(prev => [entry, ...prev].slice(0, 60));
+    setQuizLabel('');
+    toast(
+      `${entry.label}: ${entry.transmutedPercent}% — ${entry.passed ? 'PASSED ✓' : 'FAILED ✕'}`,
+      { type: entry.passed ? 'success' : 'info' }
+    );
+  };
 
   // Activity heatmap summary
   const heatSummary = useMemo(() => {
@@ -576,7 +634,7 @@ export default function StudentHubScreen({
           ['calendar', 'Calendar', CalendarIcon],
           ['todos', 'To-Dos & Canvas', CheckSquare],
           ['timetable', 'Timetable', Clock],
-          ['grades', 'Grades & Map', GraduationCap],
+          ['grades', 'Scores & Map', GraduationCap],
         ].map(([id, label, Icon]) => (
           <button
             key={id}
@@ -1442,131 +1500,238 @@ export default function StudentHubScreen({
             )}
           </div>
 
-          {/* GWA / GPA & Target Final Exam Calculator */}
+          {/* Quiz & Exam Pass Calculator */}
           <div className="list-group settings-group">
-            <div className="settings-label">GWA (PH) / GPA (US) &amp; Target Final Calculator</div>
+            <div className="settings-label">Quiz &amp; Exam Pass Calculator</div>
             <p className="settings-help" style={{ marginTop: 0 }}>
-              Enter your completed weights &amp; scores (%) to see your standing and the exact Final Exam score needed.
+              Check immediately if your quiz or exam passed — or leave Your Score blank to see the minimum score needed before taking the test.
             </p>
 
-            <div className="grade-stats-grid">
-              <div className="grade-stat-card">
-                <div className="grade-stat-label">Standing</div>
-                <div className="grade-stat-val">{gradeResult.currentStanding}%</div>
+            {/* Score / Total Inputs */}
+            <div className="quiz-inputs-grid">
+              <div>
+                <label className="pattern-mini-label" htmlFor="quiz-score-input">
+                  Your Score (opt.)
+                </label>
+                <input
+                  id="quiz-score-input"
+                  type="number"
+                  min="0"
+                  step="0.5"
+                  className="input-field"
+                  placeholder="e.g. 36"
+                  value={quizScore}
+                  onChange={e => setQuizScore(e.target.value)}
+                />
               </div>
-              <div className="grade-stat-card">
-                <div className="grade-stat-label">PH GWA</div>
-                <div className="grade-stat-val">{gradeResult.phGwa.toFixed(2)}</div>
-              </div>
-              <div className="grade-stat-card">
-                <div className="grade-stat-label">US GPA</div>
-                <div className="grade-stat-val">{gradeResult.usGpa.toFixed(2)}</div>
+              <div className="quiz-slash-sep">/</div>
+              <div>
+                <label className="pattern-mini-label" htmlFor="quiz-total-input">
+                  Total Items
+                </label>
+                <input
+                  id="quiz-total-input"
+                  type="number"
+                  min="1"
+                  step="1"
+                  className="input-field"
+                  placeholder="e.g. 50"
+                  value={quizTotal}
+                  onChange={e => setQuizTotal(e.target.value)}
+                />
               </div>
             </div>
 
-            <div className="grade-target-banner">
-              {gradeResult.remainingWeight > 0 ? (
-                <>
-                  Remaining weight: <strong>{gradeResult.remainingWeight}%</strong> — To hit{' '}
-                  <strong>{targetPct}%</strong>, you need{' '}
-                  <strong
-                    style={{
-                      color:
-                        gradeResult.requiredOnRemaining > 100
-                          ? '#ff453a'
-                          : gradeResult.requiredOnRemaining <= 75
-                            ? '#28b44c'
-                            : 'var(--accent-ink)',
-                    }}
-                  >
-                    {gradeResult.requiredOnRemaining}%
-                  </strong>{' '}
-                  on the Final!
-                </>
-              ) : (
-                <>
-                  All 100% weight accounted for — Final Grade: <strong>{gradeResult.earnedWeighted}%</strong> (PH GWA{' '}
-                  <strong>{gradeResult.phGwa.toFixed(2)}</strong>)
-                </>
-              )}
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 }}>
-              <label className="settings-help" style={{ margin: 0, whiteSpace: 'nowrap' }}>
-                Target Final %:
-              </label>
-              <input
-                type="number"
-                min="50"
-                max="100"
-                className="input-field"
-                style={{ maxWidth: 96 }}
-                value={targetPct}
-                onChange={e => setTargetPct(e.target.value)}
-              />
-            </div>
-
-            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {gradeRows.map((row, idx) => (
-                <div key={row.id || idx} className="grade-row">
-                  <input
-                    className="input-field"
-                    placeholder="Component"
-                    value={row.name}
-                    onChange={e =>
-                      setGradeRows(prev =>
-                        prev.map((r, i) => (i === idx ? { ...r, name: e.target.value } : r))
-                      )
-                    }
-                  />
-                  <input
-                    type="number"
-                    className="input-field"
-                    placeholder="Wt %"
-                    aria-label="Weight percentage"
-                    value={row.weight}
-                    onChange={e =>
-                      setGradeRows(prev =>
-                        prev.map((r, i) => (i === idx ? { ...r, weight: e.target.value } : r))
-                      )
-                    }
-                  />
-                  <input
-                    type="number"
-                    className="input-field"
-                    placeholder="Score %"
-                    aria-label="Score percentage"
-                    value={row.score}
-                    onChange={e =>
-                      setGradeRows(prev =>
-                        prev.map((r, i) => (i === idx ? { ...r, score: e.target.value } : r))
-                      )
-                    }
-                  />
+            {/* Customizable Passing % Chips */}
+            <div style={{ marginTop: 12 }}>
+              <div className="pattern-mini-label" style={{ marginBottom: 6 }}>
+                Passing Percentage ({quizPassPct}%)
+              </div>
+              <div className="flex items-center gap-6" style={{ flexWrap: 'wrap' }}>
+                {[50, 60, 70, 75, 80].map(pct => (
                   <button
+                    key={pct}
                     type="button"
-                    className="row-icon-btn"
-                    aria-label="Remove grade row"
-                    onClick={() => setGradeRows(prev => prev.filter((_, i) => i !== idx))}
+                    className={`row-action-chip${Number(quizPassPct) === pct ? ' active-chip' : ''}`}
+                    onClick={() => setQuizPassPct(pct)}
                   >
-                    <Trash2 size={15} />
+                    {pct}%
                   </button>
-                </div>
-              ))}
+                ))}
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  className="input-field"
+                  style={{ width: 68, padding: '4px 7px', fontSize: 12, textAlign: 'center' }}
+                  aria-label="Custom passing percentage"
+                  value={quizPassPct}
+                  onChange={e => {
+                    const n = Number(e.target.value);
+                    if (Number.isFinite(n)) setQuizPassPct(Math.max(1, Math.min(100, n)));
+                  }}
+                />
+              </div>
             </div>
 
-            <button
-              type="button"
-              className="btn btn-ghost btn-sm mt-10"
-              onClick={() =>
-                setGradeRows(prev => [
-                  ...prev,
-                  { id: String(Date.now()), name: 'Component', weight: '10', score: '90' },
-                ])
-              }
-            >
-              <Plus size={14} /> Add Component
-            </button>
+            {/* Grading Base Toggle */}
+            <div style={{ marginTop: 12 }}>
+              <div className="pattern-mini-label" style={{ marginBottom: 6 }}>
+                Grading System
+              </div>
+              <div className="view-switcher view-switcher-inline" style={{ margin: 0 }}>
+                {[
+                  [0, 'Raw (Zero-Based)'],
+                  [50, 'Base-50'],
+                  [60, 'Base-60'],
+                ].map(([b, lbl]) => (
+                  <button
+                    key={b}
+                    type="button"
+                    className={`view-switch-btn${quizBase === b ? ' active' : ''}`}
+                    onClick={() => setQuizBase(b)}
+                  >
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Verdict Card */}
+            {quizEval.total > 0 && (
+              <div
+                className={`quiz-verdict-card${
+                  quizEval.passed === true
+                    ? ' is-pass'
+                    : quizEval.passed === false
+                      ? ' is-fail'
+                      : ''
+                }`}
+              >
+                {quizEval.hasScore ? (
+                  <>
+                    <div className="flex items-center justify-between gap-8">
+                      <div>
+                        <div className="quiz-verdict-pct">{quizEval.transmutedPercent}%</div>
+                        {quizBase > 0 && (
+                          <div style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
+                            Raw score: {quizEval.rawPercent}% ({quizEval.score}/{quizEval.total})
+                          </div>
+                        )}
+                      </div>
+                      <span className={`quiz-verdict-pill ${quizEval.passed ? 'is-pass' : 'is-fail'}`}>
+                        {quizEval.passed ? 'PASSED ✓' : 'FAILED ✕'}
+                      </span>
+                    </div>
+
+                    <div className="quiz-meter-track">
+                      <div
+                        className={`quiz-meter-fill ${quizEval.passed ? 'is-pass' : 'is-fail'}`}
+                        style={{ width: `${Math.min(100, Math.max(2, quizEval.transmutedPercent))}%` }}
+                      />
+                      <span
+                        className="quiz-meter-threshold"
+                        style={{ left: `${Math.min(99, Math.max(1, quizEval.passingPercent))}%` }}
+                        title={`Passing mark: ${quizEval.passingPercent}%`}
+                      />
+                    </div>
+
+                    <div className="quiz-verdict-meta">
+                      <span>
+                        Min to pass: <strong>{quizEval.minScore} / {quizEval.total}</strong>
+                      </span>
+                      <span>
+                        {quizEval.pointsMargin >= 0
+                          ? `+${quizEval.pointsMargin} pts above passing`
+                          : `${Math.abs(quizEval.pointsMargin)} pts short of passing`}
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <div>
+                    <div className="pattern-mini-label">Before the Quiz / Exam</div>
+                    <div style={{ fontSize: 15, fontWeight: 700, marginTop: 3 }}>
+                      Need at least <strong>{quizEval.minScore} / {quizEval.total}</strong> to pass ({quizEval.passingPercent}%)
+                    </div>
+                    <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', marginTop: 3 }}>
+                      Max allowed mistakes: <strong>{quizEval.maxMistakes}</strong> ({quizEval.rawPercentRequired}% raw)
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Quick Save to Personal Quiz Log */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: 6, marginTop: 10 }}>
+              <select
+                className="input-field"
+                value={quizCourse}
+                onChange={e => setQuizCourse(e.target.value)}
+                aria-label="Course for quiz log"
+                style={{ fontSize: 12 }}
+              >
+                <option value="">General / Subject</option>
+                {coursesList.map(c => (
+                  <option key={c.id} value={c.code || c.name}>
+                    {c.code || c.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                className="input-field"
+                placeholder="Label (Quiz 1, Midterm)"
+                value={quizLabel}
+                onChange={e => setQuizLabel(e.target.value)}
+                style={{ fontSize: 12 }}
+              />
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                disabled={!quizEval.hasScore || quizEval.total <= 0}
+                onClick={handleSaveQuizRecord}
+              >
+                <Plus size={14} /> Save
+              </button>
+            </div>
+
+            {/* Saved Quiz History */}
+            {quizHistory.length > 0 && (
+              <div className="quiz-history-box">
+                <div className="flex items-center justify-between gap-8" style={{ marginBottom: 6, flexWrap: 'wrap' }}>
+                  <span className="settings-label" style={{ margin: 0 }}>
+                    Saved Scores ({quizSummary.passedCount}/{quizSummary.count} passed)
+                  </span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent-ink)' }}>
+                    Avg: {quizSummary.avgPercent}% · Need next: {Math.min(100, quizSummary.neededNextPercent)}%
+                  </span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {quizHistory.slice(0, 12).map(q => (
+                    <div key={q.id} className="quiz-history-row">
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700 }}>
+                          {q.course ? `${q.course} · ` : ''}{q.label}
+                        </div>
+                        <div style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
+                          {q.score}/{q.total} · {q.transmutedPercent}% (pass {q.passingPercent}%{q.base ? `, Base-${q.base}` : ''})
+                        </div>
+                      </div>
+                      <span className={`quiz-verdict-pill ${q.passed ? 'is-pass' : 'is-fail'}`} style={{ fontSize: 10.5, padding: '2px 7px' }}>
+                        {q.passed ? 'PASS' : 'FAIL'}
+                      </span>
+                      <button
+                        type="button"
+                        className="row-icon-btn"
+                        aria-label={`Delete ${q.label}`}
+                        onClick={() => setQuizHistory(prev => prev.filter(item => item.id !== q.id))}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

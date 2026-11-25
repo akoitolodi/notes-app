@@ -413,6 +413,16 @@ export default function AnnouncementsScreen({ onBack, onOpenNote, onChanged }) {
   const handleLinkCourse = async (item, courseId) => {
     const course = coursesList.find(c => c.id === Number(courseId));
     if (!course || !item?.course) return;
+    // Remove this announcement alias from any previous course to enforce 1-to-1 ownership
+    const otherUpdates = coursesList
+      .filter(c => c.id !== course.id && Array.isArray(c.canvasAliases) && c.canvasAliases.includes(item.course))
+      .map(c =>
+        db.courses.update(c.id, {
+          canvasAliases: c.canvasAliases.filter(a => a !== item.course),
+        })
+      );
+    if (otherUpdates.length > 0) await Promise.all(otherUpdates);
+
     const prevAliases = Array.isArray(course.canvasAliases) ? course.canvasAliases : [];
     const nextAliases = prevAliases.includes(item.course)
       ? prevAliases
@@ -801,7 +811,33 @@ export default function AnnouncementsScreen({ onBack, onOpenNote, onChanged }) {
                   </div>
 
                   {/* Secretly matched course class time & room */}
-                  {item._scheduleMatch ? (
+                  {linkingItemId === item.id && coursesList.length > 0 ? (
+                    <div className="flex items-center gap-6" style={{ flexWrap: 'wrap', marginTop: 6 }}>
+                      <select
+                        className="settings-input"
+                        style={{ fontSize: 12, padding: '4px 8px', width: 'auto', minWidth: 160 }}
+                        defaultValue={item._scheduleMatch?.course?.id || ''}
+                        onChange={e => {
+                          if (e.target.value) handleLinkCourse(item, e.target.value);
+                        }}
+                      >
+                        <option value="">Choose subject for time…</option>
+                        {coursesList.map(c => (
+                          <option key={c.id} value={c.id}>
+                            {c.code || c.name}
+                            {c.section ? ` (Sec ${c.section})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="row-action-chip"
+                        onClick={() => setLinkingItemId(null)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : item._scheduleMatch ? (
                     <div className="ann-schedule-pill">
                       <Clock size={12} style={{ flexShrink: 0 }} />
                       <span className="ann-schedule-text">{item._scheduleMatch.summaryText}</span>
@@ -810,47 +846,30 @@ export default function AnnouncementsScreen({ onBack, onOpenNote, onChanged }) {
                           Next: {item._scheduleMatch.nextMeetingLabel}
                         </span>
                       )}
+                      {coursesList.length > 1 && item.course && (
+                        <button
+                          type="button"
+                          className="row-action-chip"
+                          style={{ padding: '1px 6px', fontSize: 10.5 }}
+                          onClick={() => setLinkingItemId(item.id)}
+                          title="Change matched course"
+                        >
+                          Change
+                        </button>
+                      )}
                     </div>
                   ) : (
                     coursesList.length > 0 &&
                     item.course && (
                       <div style={{ marginTop: 6 }}>
-                        {linkingItemId === item.id ? (
-                          <div className="flex items-center gap-6" style={{ flexWrap: 'wrap' }}>
-                            <select
-                              className="settings-input"
-                              style={{ fontSize: 12, padding: '4px 8px', width: 'auto', minWidth: 160 }}
-                              defaultValue=""
-                              onChange={e => {
-                                if (e.target.value) handleLinkCourse(item, e.target.value);
-                              }}
-                            >
-                              <option value="">Choose subject for time…</option>
-                              {coursesList.map(c => (
-                                <option key={c.id} value={c.id}>
-                                  {c.code || c.name}
-                                  {c.section ? ` (Sec ${c.section})` : ''}
-                                </option>
-                              ))}
-                            </select>
-                            <button
-                              type="button"
-                              className="row-action-chip"
-                              onClick={() => setLinkingItemId(null)}
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            type="button"
-                            className="row-action-chip"
-                            style={{ fontSize: 11 }}
-                            onClick={() => setLinkingItemId(item.id)}
-                          >
-                            <Link2 size={11} /> Link class schedule
-                          </button>
-                        )}
+                        <button
+                          type="button"
+                          className="row-action-chip"
+                          style={{ fontSize: 11 }}
+                          onClick={() => setLinkingItemId(item.id)}
+                        >
+                          <Link2 size={11} /> Link class schedule
+                        </button>
                       </div>
                     )
                   )}
