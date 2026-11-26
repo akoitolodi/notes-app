@@ -411,8 +411,8 @@ export function detectBlankNoteIntents(body, { isZeroAi = false, enabled = true 
       id: `code:${codeHit.langId}`,
       kind: 'code',
       badge: codeHit.langName,
-      title: `${codeHit.langName} code detected`,
-      summary: codeHit.isFenced ? 'Ready for 1-tap Run' : 'Raw code recognized — 1-tap Run or Wrap',
+      title: `${codeHit.langName} code`,
+      summary: codeHit.isFenced ? 'Ready to run' : 'Run or wrap block',
       meta: codeHit,
     });
   }
@@ -548,8 +548,8 @@ export function detectBlankNoteIntents(body, { isZeroAi = false, enabled = true 
       id: `flashcards:${termHit.count}`,
       kind: 'flashcards',
       badge: `${termHit.count} Terms`,
-      title: `${termHit.count} Term/Definition pairs detected`,
-      summary: 'Turn into offline Flashcards in 1 tap',
+      title: `${termHit.count} Term/Definition pairs`,
+      summary: 'Make offline flashcards',
       meta: termHit,
     });
   }

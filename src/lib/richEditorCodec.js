@@ -260,6 +260,40 @@ function serializeInlineNodes(node) {
 }
 
 /**
+ * Extract plain source code inside a <pre> while preserving line breaks from <br>,
+ * <div>, and <p> elements inserted by Android WebView / Chromium contentEditable,
+ * and leaving quotes (', ") untouched.
+ */
+export function extractPreCodeText(preNode) {
+  if (!preNode) return '';
+  let out = '';
+  const walk = node => {
+    if (!node) return;
+    if (node.nodeType === 3) {
+      out += (node.nodeValue || '').replace(/\u00A0/g, ' ');
+      return;
+    }
+    if (node.nodeType !== 1) return;
+    const t = node.tagName.toLowerCase();
+    if (t === 'br') {
+      out += '\n';
+      return;
+    }
+    const isBlock = t === 'div' || t === 'p' || t === 'li';
+    if (isBlock && out.length > 0 && !out.endsWith('\n')) {
+      out += '\n';
+    }
+    const beforeLen = out.length;
+    Array.from(node.childNodes).forEach(walk);
+    if (isBlock && out.length > beforeLen && !out.endsWith('\n')) {
+      out += '\n';
+    }
+  };
+  walk(preNode);
+  return out.replace(/\r\n?/g, '\n').replace(/\n$/, '');
+}
+
+/**
  * Convert the contentEditable DOM tree cleanly back into canonical Markdown.
  * Preserves headings, bold, italic, checklists, bullets, numbered lists,
  * fenced code blocks, GFM tables, [[Wiki-Links]], and $LaTeX$ equations.
@@ -311,7 +345,7 @@ export function cleanHtmlToMarkdown(rootEl) {
     // Fenced code block
     if (tag === 'pre') {
       const lang = node.dataset?.lang || '';
-      const rawCode = (node.textContent || '').replace(/\r\n?/g, '\n').replace(/\n$/, '');
+      const rawCode = extractPreCodeText(node);
       blocks.push(`\`\`\`${lang}\n${rawCode}\n\`\`\``);
       return;
     }

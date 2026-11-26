@@ -867,10 +867,10 @@ export default function FoldersScreen({
               </span>
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
-                  New here? Quick Setup &amp; Tour
+                  Quick Setup &amp; Tour
                 </div>
                 <div style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
-                  Import schedule PDF, connect free AI, or explore tools
+                  Import schedule, connect AI, or explore tools
                 </div>
               </div>
             </div>
@@ -1027,7 +1027,7 @@ export default function FoldersScreen({
               className="home-ann-empty"
               onClick={onOpenAnnouncements}
             >
-              <span>Connect Canvas Course RSS feeds or paste class announcements so you never miss teacher updates.</span>
+              <span>Connect Canvas RSS feeds or paste class announcements.</span>
               <ChevronRight size={15} style={{ flexShrink: 0, opacity: 0.6 }} />
             </button>
           ) : (

@@ -1,16 +1,23 @@
-## What's New in Notes by Bai v2.1.0
+## What's New in Notes by Bai v2.4.0
 
-### 1. 1-Tap Class Schedule PDF Auto-Importer
-- **Upload Class Schedule / COR PDF**: Drop your university registration/class schedule PDF (e.g. *Holy Name University Student's Class Schedule*) or paste schedule rows under **Courses → Import Schedule PDF** or **Import PDF / Doc** to automatically create Courses, Weekly Timetable slots, Study Load units, and optional matching Note folders — 100% offline.
-- **Multi-Row & Lab Detection**: Automatically groups split lecture + Computer Lab rows (`NET 101A`, `CCS 105`, `IPT 101A`), cleans room labels, and supports smart merge re-imports without erasing notes or grades.
+### 1. Code Block Wrapping & Smart Output Fixes
+- **Preserved Newlines & Quotes in Code Blocks**: Fixed Clean Edit Mode `<pre>` serialization (`extractPreCodeText`) and Enter/Paste handling so wrapping C/C++/Python/JS code never squishes lines together or breaks quotes (`'`, `"`).
+- **Clean Scrollable Smart Output Drawer**: Fixed Step-by-Step AI math/code output cards overflowing over the bottom Smart Bar, plus wrapped long API error callouts cleanly on narrow screens.
 
-### 2. Smart Course Time on Canvas Announcements + Quick Links + Hybrid Reply
-- **Automatic Schedule Pill on Announcements**: Matches Canvas announcement course names (including section/acronym titles like `C - Integrative Programming and Technologies` → `IPT 101A`) and displays class times, rooms, and `Next: ...` right on both Home and Announcements cards.
-- **Hybrid Reply Composer**: Reply directly via Canvas API when an Access Token is enabled, or compose with Quick Templates / **Draft with AI** and **Copy & Open in Canvas** (with a `Replied ✓` badge) when using RSS-only Canvas accounts.
-- **1-Tap Quick Links & Save Teacher**: Extracts Google Meet, Google Chat, Zoom, and Google Drive links as tappable pills, and lets you save a teacher's name onto a blank course in one tap.
+### 2. Free-Only Live Models, 1-Tap Reasoning Picker & New Providers
+- **DeepSeek, SambaNova, GitHub Models & HuggingFace**: Added official OpenAI-compatible presets alongside Groq, Gemini, OpenRouter, Cerebras, Mistral, NVIDIA, and Kilo.
+- **Free vs All Filter + Pricing/Thinking Badges**: Live `/models` refresh automatically sorts free models first, shows `FREE`/`PAID`/`THINK` tags, and lets you filter to **Free Only** so you never accidentally hit HTTP 402 paid-model errors (with clear HTTP 402 guidance + backup failover).
+- **1-Tap Primary & Reasoning Model Picker**: Switch between **Primary** and **Reasoning** right above the model chips and tap any model to assign it — no more manually typing reasoning model IDs.
 
-### 3. Home "Up Next Class" Strip & 15-Min Before-Class Reminders
-- **Home Up Next Class Bar**: Shows your live/next class, time, and room right on Home with 1-tap **Start Note** for that subject's folder.
-- **15-Min Class Reminders**: Optional toggle under **Settings → Notifications** & Schedule Import to ping 15 minutes before each class with room/lab and unread announcement counts.
+### 3. Fast Line Explain & Highlight Partial Selection
+- **Compact Context Explain (~1–2s)**: Tapping any line in Read Mode now uses a lightweight nearby context window instead of rescanning the whole note.
+- **Explain Selection**: Highlight any specific phrase or partial line in Read Mode and tap **Explain Selection** to explain only the selected part.
+
+### 4. Reliable Classroom Lecture Recording & Live Dictation
+- **Native Android Audio Recorder (`BaiNativeRecorder`)**: Fixes Android WebView "Permission denied" errors in Groq Whisper mode even when mic permission is already granted, with automatic rolling **25s** chunk transcription for long teacher discussions.
+- **Continuous Live Speech Recognition**: Reuses Android's `SpeechRecognizer` with fast 60ms restart, generous 4s silence timeouts, resilient transient-error retries, and automatic trailing-word flush on pause/stop so no spoken words are dropped midway.
+
+### 5. Cleaner Copy Throughout
+- Trimmed redundant filler text across Settings, Home, Smart Detect, and Lecture Recorder.
 
 > **Update Note**: Install `Notes-by-Bai.apk` directly over your current version (do not uninstall).

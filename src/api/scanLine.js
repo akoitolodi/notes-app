@@ -3,7 +3,7 @@
  */
 import { getApiBase } from '../config';
 import { getAiMode, getExplainStyle } from '../lib/aiConfig';
-import { scanLine as directScanLine } from '../lib/aiDirect';
+import { scanLine as directScanLine, explainSnippetFast } from '../lib/aiDirect';
 
 export async function scanLine(note, line, request = 'simpler', style = null) {
   const activeStyle = style || getExplainStyle();
@@ -32,4 +32,17 @@ export async function scanLine(note, line, request = 'simpler', style = null) {
   }
 
   return res.json();
+}
+
+/**
+ * Fast initial explanation for a single tapped line OR highlighted partial snippet.
+ * Uses compact ~600-char context in Direct mode (~1-2s) and falls back cleanly in Termux mode.
+ */
+export async function explainSnippet({ note, targetText, subject = 'General', style = null, isPartial = false }) {
+  const activeStyle = style || getExplainStyle();
+  if (getAiMode() === 'direct') {
+    return explainSnippetFast({ note, targetText, subject, style: activeStyle, isPartial });
+  }
+  const promptLine = isPartial ? `Explain only this selected part: "${targetText}"` : targetText;
+  return scanLine(note, promptLine, 'simpler', activeStyle);
 }

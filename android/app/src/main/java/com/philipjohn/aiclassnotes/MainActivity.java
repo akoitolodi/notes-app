@@ -8,6 +8,7 @@ import android.content.res.Configuration;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
+import android.media.MediaRecorder;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -38,6 +39,7 @@ import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.WebViewListener;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.lang.reflect.Method;
@@ -51,7 +53,9 @@ public class MainActivity extends BridgeActivity {
 
     private static final int MAX_SHARED_BYTES = 12 * 1024 * 1024; // 12 MB safety cap
     private static final int MAX_EXTERNAL_BYTES = 25 * 1024 * 1024; // 25 MB temp export cap
+    private static final int MAX_RECORDER_BYTES = 24 * 1024 * 1024; // 24 MB Groq Whisper safety cap
     private static final int REQ_RECORD_AUDIO = 4201;
+    private static final int REQ_RECORDER_AUDIO = 4202;
     private TextToSpeech tts;
     private volatile boolean ttsReady = false;
     private volatile boolean ttsInitializing = false;
@@ -59,8 +63,13 @@ public class MainActivity extends BridgeActivity {
     private SpeechRecognizer speechRecognizer;
     private volatile boolean speechListening = false;
     private String speechLang = "";
+    private String speechLastPartial = "";
     private int speechConsecutiveErrors = 0;
     private Runnable pendingSpeechRestart;
+    private final Object recorderLock = new Object();
+    private MediaRecorder nativeRecorder = null;
+    private File nativeRecorderFile = null;
+    private volatile boolean nativeRecorderActive = false;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     private static final String THEME_PREFS = "bai_theme_prefs";
@@ -100,6 +109,7 @@ public class MainActivity extends BridgeActivity {
         initNativeFiles();
         initNativeTts();
         initNativeSpeech();
+        initNativeRecorder();
         if (getBridge() != null) {
             safeInsetWebViewListener = new WebViewListener() {
                 @Override
@@ -557,23 +567,31 @@ public class MainActivity extends BridgeActivity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == REQ_RECORD_AUDIO) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                mainHandler.post(() -> startNativeRecognition(speechLang));
+                mainHandler.post(() -> startNativeRecognition(speechLang, true));
             } else {
                 speechListening = false;
                 notifySpeechJs("error", "not-allowed");
                 notifySpeechJs("state", "idle");
+            }
+        } else if (requestCode == REQ_RECORDER_AUDIO) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                mainHandler.post(this::startNativeAudioRecorder);
+            } else {
+                notifyRecorderJs("error", "Microphone permission denied");
             }
         }
     }
 
     @Override
     public void onDestroy() {
+        cancelNativeAudioRecorder();
         try {
             if (pendingSpeechRestart != null) {
                 mainHandler.removeCallbacks(pendingSpeechRestart);
                 pendingSpeechRestart = null;
             }
             speechListening = false;
+            speechLastPartial = "";
             if (speechRecognizer != null) {
                 speechRecognizer.destroy();
                 speechRecognizer = null;
@@ -774,7 +792,15 @@ public class MainActivity extends BridgeActivity {
         });
     }
 
-    private void scheduleSpeechRestart(long delayMs) {
+    private void flushPendingSpeechPartial() {
+        if (speechLastPartial != null && !speechLastPartial.isEmpty()) {
+            final String leftover = speechLastPartial;
+            speechLastPartial = "";
+            notifySpeechJs("final", leftover);
+        }
+    }
+
+    private void scheduleSpeechRestart(long delayMs, final boolean forceRecreate) {
         if (pendingSpeechRestart != null) {
             mainHandler.removeCallbacks(pendingSpeechRestart);
             pendingSpeechRestart = null;
@@ -783,7 +809,7 @@ public class MainActivity extends BridgeActivity {
         pendingSpeechRestart = () -> {
             pendingSpeechRestart = null;
             if (speechListening) {
-                startNativeRecognition(speechLang);
+                startNativeRecognition(speechLang, forceRecreate);
             }
         };
         mainHandler.postDelayed(pendingSpeechRestart, delayMs);
@@ -801,8 +827,10 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
-    private void startNativeRecognition(final String lang) {
-        destroySpeechRecognizer();
+    private void startNativeRecognition(final String lang, final boolean forceRecreate) {
+        if (forceRecreate) {
+            destroySpeechRecognizer();
+        }
         try {
             if (!SpeechRecognizer.isRecognitionAvailable(getApplicationContext())) {
                 speechListening = false;
@@ -812,123 +840,130 @@ public class MainActivity extends BridgeActivity {
             }
 
             speechListening = true;
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(getApplicationContext());
-            speechRecognizer.setRecognitionListener(new RecognitionListener() {
-                @Override
-                public void onReadyForSpeech(Bundle params) {
-                    speechConsecutiveErrors = 0;
-                    notifySpeechJs("state", "listening");
-                }
+            if (speechRecognizer == null) {
+                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(getApplicationContext());
+                speechRecognizer.setRecognitionListener(new RecognitionListener() {
+                    @Override
+                    public void onReadyForSpeech(Bundle params) {
+                        speechConsecutiveErrors = 0;
+                        notifySpeechJs("state", "listening");
+                    }
 
-                @Override
-                public void onBeginningOfSpeech() {}
+                    @Override
+                    public void onBeginningOfSpeech() {}
 
-                @Override
-                public void onRmsChanged(float rmsdB) {}
+                    @Override
+                    public void onRmsChanged(float rmsdB) {}
 
-                @Override
-                public void onBufferReceived(byte[] buffer) {}
+                    @Override
+                    public void onBufferReceived(byte[] buffer) {}
 
-                @Override
-                public void onEndOfSpeech() {}
+                    @Override
+                    public void onEndOfSpeech() {}
 
-                @Override
-                public void onError(int error) {
-                    if (!speechListening) return;
-                    if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
+                    @Override
+                    public void onError(int error) {
+                        if (!speechListening) return;
+                        flushPendingSpeechPartial();
                         notifySpeechJs("interim", "");
-                        scheduleSpeechRestart(260);
-                        return;
-                    }
-                    if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
-                        scheduleSpeechRestart(450);
-                        return;
-                    }
-                    if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
-                        speechListening = false;
-                        notifySpeechJs("error", "not-allowed");
-                        notifySpeechJs("state", "idle");
-                        return;
-                    }
-                    if (error == SpeechRecognizer.ERROR_AUDIO) {
-                        speechListening = false;
-                        notifySpeechJs("error", "audio-capture");
-                        notifySpeechJs("state", "idle");
-                        return;
-                    }
-                    if (error == SpeechRecognizer.ERROR_NETWORK || error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT) {
-                        speechListening = false;
-                        notifySpeechJs("error", "network");
-                        notifySpeechJs("state", "idle");
-                        return;
-                    }
-                    // Language fallback if chosen locale isn't installed locally
-                    if (error == 12 || error == 13) {
-                        if (speechLang != null && !speechLang.isEmpty()) {
-                            speechLang = "";
-                            scheduleSpeechRestart(250);
+
+                        if (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) {
+                            scheduleSpeechRestart(70, false);
                             return;
                         }
-                    }
-                    speechConsecutiveErrors += 1;
-                    if (speechConsecutiveErrors >= 3) {
-                        speechListening = false;
-                        notifySpeechJs("error", "speech-error-" + error);
-                        notifySpeechJs("state", "idle");
-                    } else {
-                        scheduleSpeechRestart(350);
-                    }
-                }
-
-                @Override
-                public void onResults(Bundle results) {
-                    speechConsecutiveErrors = 0;
-                    ArrayList<String> matches = results != null
-                        ? results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                        : null;
-                    if (matches != null && !matches.isEmpty()) {
-                        String text = matches.get(0);
-                        if (text != null && !text.trim().isEmpty()) {
-                            notifySpeechJs("final", text.trim());
+                        if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY || error == SpeechRecognizer.ERROR_CLIENT) {
+                            scheduleSpeechRestart(250, true);
+                            return;
+                        }
+                        if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+                            speechListening = false;
+                            notifySpeechJs("error", "not-allowed");
+                            notifySpeechJs("state", "idle");
+                            return;
+                        }
+                        // Language fallback if chosen locale isn't installed locally
+                        if (error == 12 || error == 13) {
+                            if (speechLang != null && !speechLang.isEmpty()) {
+                                speechLang = "";
+                                scheduleSpeechRestart(180, true);
+                                return;
+                            }
+                        }
+                        speechConsecutiveErrors += 1;
+                        if (speechConsecutiveErrors >= 6) {
+                            speechListening = false;
+                            String code = (error == SpeechRecognizer.ERROR_NETWORK || error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT)
+                                ? "network"
+                                : (error == SpeechRecognizer.ERROR_AUDIO ? "audio-capture" : ("speech-error-" + error));
+                            notifySpeechJs("error", code);
+                            notifySpeechJs("state", "idle");
+                        } else {
+                            long backoff = 350L * Math.min(4, speechConsecutiveErrors);
+                            scheduleSpeechRestart(backoff, true);
                         }
                     }
-                    notifySpeechJs("interim", "");
-                    if (speechListening) {
-                        scheduleSpeechRestart(240);
-                    }
-                }
 
-                @Override
-                public void onPartialResults(Bundle partialResults) {
-                    ArrayList<String> matches = partialResults != null
-                        ? partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                        : null;
-                    if (matches != null && !matches.isEmpty()) {
-                        String text = matches.get(0);
-                        if (text != null && !text.trim().isEmpty()) {
-                            notifySpeechJs("interim", text.trim());
+                    @Override
+                    public void onResults(Bundle results) {
+                        speechConsecutiveErrors = 0;
+                        speechLastPartial = "";
+                        ArrayList<String> matches = results != null
+                            ? results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                            : null;
+                        if (matches != null && !matches.isEmpty()) {
+                            String text = matches.get(0);
+                            if (text != null && !text.trim().isEmpty()) {
+                                notifySpeechJs("final", text.trim());
+                            }
+                        }
+                        notifySpeechJs("interim", "");
+                        if (speechListening) {
+                            scheduleSpeechRestart(60, false);
                         }
                     }
-                }
 
-                @Override
-                public void onEvent(int eventType, Bundle params) {}
-            });
+                    @Override
+                    public void onPartialResults(Bundle partialResults) {
+                        ArrayList<String> matches = partialResults != null
+                            ? partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                            : null;
+                        if (matches != null && !matches.isEmpty()) {
+                            String text = matches.get(0);
+                            if (text != null && !text.trim().isEmpty()) {
+                                speechConsecutiveErrors = 0;
+                                speechLastPartial = text.trim();
+                                notifySpeechJs("interim", speechLastPartial);
+                            }
+                        }
+                    }
+
+                    @Override
+                    public void onEvent(int eventType, Bundle params) {}
+                });
+            }
 
             Intent intent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
             intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
             intent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
             intent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
             intent.putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, getPackageName());
+            intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 4000L);
+            intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 3500L);
+            intent.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 8000L);
             if (lang != null && !lang.trim().isEmpty()) {
                 intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, lang.trim());
                 intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, lang.trim());
             }
             speechRecognizer.startListening(intent);
         } catch (Exception e) {
-            speechListening = false;
-            notifySpeechJs("error", "audio-capture");
-            notifySpeechJs("state", "idle");
+            speechConsecutiveErrors += 1;
+            if (speechListening && speechConsecutiveErrors < 4) {
+                scheduleSpeechRestart(400, true);
+            } else {
+                speechListening = false;
+                notifySpeechJs("error", "audio-capture");
+                notifySpeechJs("state", "idle");
+            }
         }
     }
 
@@ -943,6 +978,7 @@ public class MainActivity extends BridgeActivity {
         public void start(final String lang) {
             speechLang = lang != null ? lang.trim() : "";
             speechConsecutiveErrors = 0;
+            speechLastPartial = "";
             mainHandler.post(() -> {
                 if (pendingSpeechRestart != null) {
                     mainHandler.removeCallbacks(pendingSpeechRestart);
@@ -959,7 +995,7 @@ public class MainActivity extends BridgeActivity {
                     );
                     return;
                 }
-                startNativeRecognition(speechLang);
+                startNativeRecognition(speechLang, true);
             });
         }
 
@@ -971,10 +1007,218 @@ public class MainActivity extends BridgeActivity {
                     mainHandler.removeCallbacks(pendingSpeechRestart);
                     pendingSpeechRestart = null;
                 }
+                flushPendingSpeechPartial();
                 destroySpeechRecognizer();
                 notifySpeechJs("interim", "");
                 notifySpeechJs("state", "idle");
             });
+        }
+    }
+
+    // Native Android MediaRecorder bridge for Groq Whisper (bypasses WebView getUserMedia permission blocks)
+    private void initNativeRecorder() {
+        try {
+            if (getBridge() != null && getBridge().getWebView() != null) {
+                getBridge().getWebView().addJavascriptInterface(new AndroidRecorderBridge(), "BaiNativeRecorder");
+            }
+        } catch (Exception ignored) {
+            // ignore bridge attach error
+        }
+    }
+
+    private void notifyRecorderJs(final String eventType, final String payload) {
+        final String js =
+            "try { if (window.__baiRecorderCallback) window.__baiRecorderCallback("
+                + JSONObject.quote(eventType != null ? eventType : "")
+                + ", "
+                + JSONObject.quote(payload != null ? payload : "")
+                + "); } catch(e) {}";
+        mainHandler.post(() -> {
+            try {
+                if (getBridge() != null && getBridge().getWebView() != null) {
+                    getBridge().getWebView().evaluateJavascript(js, null);
+                }
+            } catch (Exception ignored) {
+                // ignore
+            }
+        });
+    }
+
+    @SuppressWarnings("deprecation")
+    private MediaRecorder createConfiguredRecorder(File outFile) throws Exception {
+        MediaRecorder rec = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+            ? new MediaRecorder(this)
+            : new MediaRecorder();
+        rec.setAudioSource(MediaRecorder.AudioSource.MIC);
+        rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+        rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
+        rec.setAudioSamplingRate(16000);
+        rec.setAudioEncodingBitRate(32000);
+        rec.setAudioChannels(1);
+        rec.setOutputFile(outFile.getAbsolutePath());
+        rec.prepare();
+        rec.start();
+        return rec;
+    }
+
+    private void cleanupStaleRecorderFiles() {
+        try {
+            File[] files = getCacheDir().listFiles();
+            if (files == null) return;
+            long cutoff = System.currentTimeMillis() - 60L * 60L * 1000L;
+            for (File f : files) {
+                if (f.getName().startsWith("bai_lecture_") && f.getName().endsWith(".m4a") && f.lastModified() < cutoff) {
+                    f.delete();
+                }
+            }
+        } catch (Exception ignored) {
+            // ignore
+        }
+    }
+
+    private String readAndDeleteAudioFileBase64(File file) {
+        if (file == null || !file.exists()) return "";
+        try (FileInputStream in = new FileInputStream(file)) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buf = new byte[16384];
+            int total = 0;
+            int n;
+            while ((n = in.read(buf)) != -1) {
+                total += n;
+                if (total > MAX_RECORDER_BYTES) break;
+                out.write(buf, 0, n);
+            }
+            byte[] bytes = out.toByteArray();
+            return bytes.length > 0 ? Base64.encodeToString(bytes, Base64.NO_WRAP) : "";
+        } catch (Exception ignored) {
+            return "";
+        } finally {
+            try {
+                file.delete();
+            } catch (Exception ignored) {
+                // ignore
+            }
+        }
+    }
+
+    private void releaseRecorderOnly() {
+        if (nativeRecorder != null) {
+            try {
+                nativeRecorder.stop();
+            } catch (Exception ignored) {
+                // stop can throw if recording was < 100ms
+            }
+            try {
+                nativeRecorder.reset();
+                nativeRecorder.release();
+            } catch (Exception ignored) {
+                // ignore
+            }
+            nativeRecorder = null;
+        }
+    }
+
+    private void startNativeAudioRecorder() {
+        synchronized (recorderLock) {
+            releaseRecorderOnly();
+            if (nativeRecorderFile != null) {
+                try {
+                    nativeRecorderFile.delete();
+                } catch (Exception ignored) {
+                    // ignore
+                }
+                nativeRecorderFile = null;
+            }
+            cleanupStaleRecorderFiles();
+            try {
+                File outFile = new File(getCacheDir(), "bai_lecture_" + System.currentTimeMillis() + ".m4a");
+                nativeRecorder = createConfiguredRecorder(outFile);
+                nativeRecorderFile = outFile;
+                nativeRecorderActive = true;
+                notifyRecorderJs("started", "");
+            } catch (Exception e) {
+                nativeRecorderActive = false;
+                releaseRecorderOnly();
+                notifyRecorderJs("error", "Could not start microphone: " + (e.getMessage() != null ? e.getMessage() : "busy"));
+            }
+        }
+    }
+
+    private void cancelNativeAudioRecorder() {
+        synchronized (recorderLock) {
+            nativeRecorderActive = false;
+            releaseRecorderOnly();
+            if (nativeRecorderFile != null) {
+                try {
+                    nativeRecorderFile.delete();
+                } catch (Exception ignored) {
+                    // ignore
+                }
+                nativeRecorderFile = null;
+            }
+        }
+    }
+
+    private final class AndroidRecorderBridge {
+
+        @JavascriptInterface
+        public boolean isAvailable() {
+            return true;
+        }
+
+        @JavascriptInterface
+        public void start() {
+            mainHandler.post(() -> {
+                boolean granted =
+                    ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO)
+                        == PackageManager.PERMISSION_GRANTED;
+                if (!granted) {
+                    ActivityCompat.requestPermissions(
+                        MainActivity.this,
+                        new String[] { Manifest.permission.RECORD_AUDIO },
+                        REQ_RECORDER_AUDIO
+                    );
+                    return;
+                }
+                startNativeAudioRecorder();
+            });
+        }
+
+        @JavascriptInterface
+        public String flushChunk() {
+            File completedFile;
+            synchronized (recorderLock) {
+                if (!nativeRecorderActive || nativeRecorder == null) return "";
+                completedFile = nativeRecorderFile;
+                releaseRecorderOnly();
+                nativeRecorderFile = null;
+                try {
+                    File nextFile = new File(getCacheDir(), "bai_lecture_" + System.currentTimeMillis() + ".m4a");
+                    nativeRecorder = createConfiguredRecorder(nextFile);
+                    nativeRecorderFile = nextFile;
+                } catch (Exception e) {
+                    nativeRecorderActive = false;
+                    releaseRecorderOnly();
+                }
+            }
+            return readAndDeleteAudioFileBase64(completedFile);
+        }
+
+        @JavascriptInterface
+        public String stop() {
+            File completedFile;
+            synchronized (recorderLock) {
+                nativeRecorderActive = false;
+                completedFile = nativeRecorderFile;
+                releaseRecorderOnly();
+                nativeRecorderFile = null;
+            }
+            return readAndDeleteAudioFileBase64(completedFile);
+        }
+
+        @JavascriptInterface
+        public void cancel() {
+            cancelNativeAudioRecorder();
         }
     }
 

@@ -92,26 +92,38 @@ export function createDictationSession({
     let active = false;
     let paused = false;
     let currentLang = lang || '';
+    let lastInterim = '';
+
+    const flushInterim = () => {
+      const leftover = lastInterim.trim();
+      lastInterim = '';
+      onInterim?.('');
+      if (leftover) onFinal?.(leftover);
+    };
 
     const bindCallback = () => {
       window.__baiSpeechCallback = (eventType, payload) => {
         if (eventType === 'interim') {
-          if (active && !paused) onInterim?.(String(payload || '').trim());
+          if (active && !paused) {
+            lastInterim = String(payload || '').trim();
+            onInterim?.(lastInterim);
+          }
           return;
         }
         if (eventType === 'final') {
           const clean = String(payload || '').trim();
+          lastInterim = '';
           onInterim?.('');
           if (clean && active && !paused) onFinal?.(clean);
           return;
         }
         if (eventType === 'error') {
           const code = String(payload || 'unknown');
+          flushInterim();
           onError?.(friendlySpeechError(code), code);
           if (FATAL_ERRORS.has(code) || code === 'network' || code === 'unsupported' || code.startsWith('speech-error-')) {
             active = false;
             paused = false;
-            onInterim?.('');
             onStateChange?.('idle');
           }
           return;
@@ -119,6 +131,7 @@ export function createDictationSession({
         if (eventType === 'state') {
           if (payload === 'idle') {
             if (!paused) {
+              flushInterim();
               active = false;
               onStateChange?.('idle');
             }
@@ -140,14 +153,15 @@ export function createDictationSession({
         bindCallback();
         active = true;
         paused = false;
+        lastInterim = '';
         onStateChange?.('listening');
         bridge.start(currentLang || (typeof navigator !== 'undefined' ? navigator.language : 'en-US') || 'en-US');
         return true;
       },
       pause() {
         if (!active || paused) return;
+        flushInterim();
         paused = true;
-        onInterim?.('');
         onStateChange?.('paused');
         try {
           window.BaiNativeSpeech.stop();
@@ -159,13 +173,14 @@ export function createDictationSession({
         if (!active || !paused) return;
         bindCallback();
         paused = false;
+        lastInterim = '';
         onStateChange?.('listening');
         window.BaiNativeSpeech.start(currentLang || (typeof navigator !== 'undefined' ? navigator.language : 'en-US') || 'en-US');
       },
       stop() {
+        flushInterim();
         active = false;
         paused = false;
-        onInterim?.('');
         onStateChange?.('idle');
         if (typeof window !== 'undefined' && window.__baiSpeechCallback) {
           window.__baiSpeechCallback = null;
@@ -179,6 +194,7 @@ export function createDictationSession({
       setLang(nextLang) {
         currentLang = nextLang || '';
         if (active && !paused) {
+          flushInterim();
           try {
             window.BaiNativeSpeech.stop();
           } catch {
@@ -188,7 +204,7 @@ export function createDictationSession({
             if (active && !paused && hasNativeAndroidSpeech()) {
               window.BaiNativeSpeech.start(currentLang || 'en-US');
             }
-          }, 180);
+          }, 120);
         }
       },
       isActive() {
@@ -204,6 +220,14 @@ export function createDictationSession({
   let currentLang = lang || '';
   let restartTimer = null;
   let consecutiveErrors = 0;
+  let lastInterim = '';
+
+  const flushWebInterim = () => {
+    const leftover = lastInterim.trim();
+    lastInterim = '';
+    onInterim?.('');
+    if (leftover) onFinal?.(leftover);
+  };
 
   const clearRestart = () => {
     if (restartTimer) {
@@ -248,7 +272,8 @@ export function createDictationSession({
           interim += text;
         }
       }
-      onInterim?.(interim.trim());
+      lastInterim = interim.trim();
+      onInterim?.(lastInterim);
       if (finalChunk.trim()) {
         onFinal?.(finalChunk.trim());
       }
@@ -258,29 +283,29 @@ export function createDictationSession({
       const code = event?.error || 'unknown';
       if (code === 'aborted') return;
       if (code === 'no-speech') {
-        // Common silence timeout on mobile — let onend silently restart
+        flushWebInterim();
         return;
       }
       consecutiveErrors += 1;
-      onError?.(friendlySpeechError(code), code);
-      if (FATAL_ERRORS.has(code) || consecutiveErrors >= 3) {
+      flushWebInterim();
+      if (FATAL_ERRORS.has(code) || consecutiveErrors >= 4) {
+        onError?.(friendlySpeechError(code), code);
         active = false;
         paused = false;
         clearRestart();
         cleanupRec();
-        onInterim?.('');
         onStateChange?.('idle');
       }
     };
 
     rec.onend = () => {
-      onInterim?.('');
+      flushWebInterim();
       if (active && !paused) {
-        // Auto-restart after Android Chrome's ~60s continuous speech cutoff
+        // Fast auto-restart after Android Chrome's continuous speech cutoff
         clearRestart();
         restartTimer = setTimeout(() => {
           if (active && !paused) spawn();
-        }, 200);
+        }, 90);
       }
     };
 
@@ -288,11 +313,10 @@ export function createDictationSession({
     try {
       rec.start();
     } catch {
-      // Retry once if browser was still tearing down previous instance
       clearRestart();
       restartTimer = setTimeout(() => {
         if (active && !paused) spawn();
-      }, 300);
+      }, 220);
     }
   };
 
@@ -300,7 +324,7 @@ export function createDictationSession({
     async start() {
       if (!Ctor) {
         onError?.(
-          'Live speech recognition is not available in this browser/WebView — tap the mic icon on your keyboard to dictate, then tap Clean with AI.',
+          'Live speech recognition unavailable here — use your keyboard mic, then tap Clean with AI.',
           'unsupported'
         );
         return false;
@@ -312,6 +336,7 @@ export function createDictationSession({
       }
       active = true;
       paused = false;
+      lastInterim = '';
       consecutiveErrors = 0;
       onStateChange?.('listening');
       spawn();
@@ -320,38 +345,40 @@ export function createDictationSession({
 
     pause() {
       if (!active || paused) return;
+      flushWebInterim();
       paused = true;
       clearRestart();
       cleanupRec();
-      onInterim?.('');
       onStateChange?.('paused');
     },
 
     resume() {
       if (!active || !paused) return;
       paused = false;
+      lastInterim = '';
       consecutiveErrors = 0;
       onStateChange?.('listening');
       spawn();
     },
 
     stop() {
+      flushWebInterim();
       active = false;
       paused = false;
       clearRestart();
       cleanupRec();
-      onInterim?.('');
       onStateChange?.('idle');
     },
 
     setLang(nextLang) {
       currentLang = nextLang || '';
       if (active && !paused) {
+        flushWebInterim();
         clearRestart();
         cleanupRec();
         restartTimer = setTimeout(() => {
           if (active && !paused) spawn();
-        }, 150);
+        }, 120);
       }
     },
 

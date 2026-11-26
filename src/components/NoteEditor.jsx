@@ -33,7 +33,7 @@ import {
   LayoutTemplate,
 } from 'lucide-react';
 import { scanNote } from '../api/scan';
-import { scanLine } from '../api/scanLine';
+import { scanLine, explainSnippet } from '../api/scanLine';
 import {
   db,
   createNote,
@@ -170,6 +170,8 @@ export default function NoteEditor({
   const [panelOpen, setPanelOpen] = useState(false);
   const [selectedLineId, setSelectedLineId] = useState(null);
   const [busyLine, setBusyLine] = useState(null);
+  const [selectionSnippet, setSelectionSnippet] = useState('');
+  const noteLinesRef = useRef(null);
   const [dismissed, setDismissed] = useState(() => {
     const map = {};
     (note?.blocks || []).forEach(b => {
@@ -628,10 +630,14 @@ export default function NoteEditor({
     [blocks, body, note.id, busyLine, toast]
   );
 
-  /** Tap ANY line in Read Mode: show explanation or fetch on demand (retryable if failed). */
+  /** Tap ANY line in Read Mode: fast compact explanation on demand (skips when selecting partial text). */
   const handleLineTap = useCallback(
     async (block, lineIdx) => {
       if (isZeroAi) return;
+      const activeSel =
+        typeof window !== 'undefined' ? window.getSelection?.()?.toString().trim() || '' : '';
+      if (activeSel.length >= 2) return;
+
       const lineText = (body.split('\n')[lineIdx] || '').trim();
       if (!lineText || !/[a-zA-Z0-9\u00C0-\uFFFF]/.test(lineText)) return;
       setPanelOpen(true);
@@ -654,9 +660,16 @@ export default function NoteEditor({
       setBusyLine(id);
 
       try {
-        const result = await scanNote(body, subject, [lineIdx + 1]);
-        const fresh = (result.blocks || []).find(b => b.id === id);
-        if (fresh) {
+        const res = await explainSnippet({ note: body, targetText: lineText, subject, isPartial: false });
+        const fresh = {
+          id,
+          text: lineText,
+          explanation: res?.explanation || '',
+          terms: Array.isArray(res?.terms) ? res.terms : [],
+          mistake: null,
+          _failed: !res?.explanation,
+        };
+        if (!fresh._failed) {
           setBlocks(prev => {
             const lineNo = b => parseInt(String(b.id).replace('line-', ''), 10) || 0;
             const updated = [...prev.filter(b => b.id !== id), fresh].sort(
@@ -669,7 +682,7 @@ export default function NoteEditor({
           setBlocks(prev =>
             prev.map(b =>
               b.id === id
-                ? { ...b, explanation: 'The AI had no extra explanation for this line.', _failed: true }
+                ? { ...b, explanation: 'No extra explanation needed for this line.', _failed: true }
                 : b
             )
           );
@@ -686,8 +699,76 @@ export default function NoteEditor({
         setBusyLine(null);
       }
     },
-    [body, subject, note.id, busyLine, toast]
+    [body, subject, note.id, busyLine, isZeroAi, toast]
   );
+
+  /** Explain ONLY the user's highlighted text selection inside Read Mode. */
+  const handleExplainSelection = useCallback(async () => {
+    const snippet = selectionSnippet.trim();
+    if (!snippet || isZeroAi || busyLine) return;
+    setSelectionSnippet('');
+    try {
+      window.getSelection?.()?.removeAllRanges?.();
+    } catch {
+      // ignore
+    }
+    const id = `sel-${Date.now()}`;
+    const placeholder = { id, text: snippet, explanation: '', terms: [], mistake: null, _failed: false };
+    setBlocks(prev => [...prev.filter(b => !String(b.id).startsWith('sel-')), placeholder]);
+    setSelectedLineId(id);
+    setPanelOpen(true);
+    setBusyLine(id);
+
+    try {
+      const res = await explainSnippet({ note: body, targetText: snippet, subject, isPartial: true });
+      const expl = res?.explanation || '';
+      setBlocks(prev =>
+        prev.map(b =>
+          b.id === id
+            ? {
+                ...b,
+                explanation: expl || 'Could not explain selection.',
+                terms: Array.isArray(res?.terms) ? res.terms : [],
+                _failed: !expl,
+              }
+            : b
+        )
+      );
+    } catch (err) {
+      setBlocks(prev =>
+        prev.map(b =>
+          b.id === id ? { ...b, explanation: `Failed: ${err.message}`, _failed: true } : b
+        )
+      );
+    } finally {
+      setBusyLine(null);
+    }
+  }, [selectionSnippet, isZeroAi, busyLine, body, subject]);
+
+  // Listen for partial text highlighting inside Read Mode lines
+  useEffect(() => {
+    if (mode !== 'read' || isZeroAi || drawMode) {
+      setSelectionSnippet('');
+      return undefined;
+    }
+    const syncSelection = () => {
+      const sel = window.getSelection?.();
+      const container = noteLinesRef.current;
+      if (!sel || sel.isCollapsed || !container) {
+        setSelectionSnippet('');
+        return;
+      }
+      const txt = sel.toString().trim();
+      const anchorInNotes = sel.anchorNode && container.contains(sel.anchorNode);
+      if (anchorInNotes && txt.length >= 2 && txt.length <= 600) {
+        setSelectionSnippet(txt);
+      } else {
+        setSelectionSnippet('');
+      }
+    };
+    document.addEventListener('selectionchange', syncSelection);
+    return () => document.removeEventListener('selectionchange', syncSelection);
+  }, [mode, isZeroAi, drawMode]);
 
   const handleShowOriginal = useCallback(
     async lineId => {
@@ -1463,7 +1544,7 @@ export default function NoteEditor({
           )}
 
           {/* Note Lines (groups fenced code blocks & Markdown tables cleanly while preserving per-line AI explanations) */}
-          <div className="note-lines">
+          <div className="note-lines" ref={noteLinesRef}>
             {groupNoteLines(lines).map(seg => {
               if (seg.type === 'code') {
                 return (
@@ -1548,6 +1629,17 @@ export default function NoteEditor({
           )}
         </div>
       </div>
+
+      {selectionSnippet && !panelOpen && !isZeroAi && !drawMode && (
+        <button
+          type="button"
+          className="fab explain-sel-fab"
+          onMouseDown={e => e.preventDefault()}
+          onClick={handleExplainSelection}
+        >
+          <Sparkles size={15} /> Explain Selection
+        </button>
+      )}
 
       {drawMode && (
         <AnnotateBar

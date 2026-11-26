@@ -106,7 +106,13 @@ const CleanRichEditor = forwardRef(function CleanRichEditor(
       focusEnd();
       const sel = window.getSelection?.();
       const selected = sel ? sel.toString() : '';
-      insertHtmlAtCursor(`<code class="ce-code">${escapeHtml(selected || 'code')}</code>&nbsp;`);
+      if (selected.includes('\n')) {
+        insertHtmlAtCursor(
+          `<pre class="ce-pre" data-lang=""><code>${escapeHtml(selected)}</code></pre><p class="ce-p"><br></p>`
+        );
+      } else {
+        insertHtmlAtCursor(`<code class="ce-code">${escapeHtml(selected || 'code')}</code>&nbsp;`);
+      }
     },
 
     async insertMath() {
@@ -192,11 +198,41 @@ const CleanRichEditor = forwardRef(function CleanRichEditor(
   };
 
   const handleKeyDown = e => {
-    // Pressing Enter inside a checklist row cleanly starts a new checklist or exits if empty
     if (e.key === 'Enter') {
       const sel = window.getSelection?.();
       const node = sel?.anchorNode;
-      const row = (node?.nodeType === 1 ? node : node?.parentElement)?.closest?.('.ce-check');
+      const anchorEl = node?.nodeType === 1 ? node : node?.parentElement;
+
+      // Keep newlines intact inside <pre> code blocks on Enter (exit block on Shift+Enter)
+      const preEl = anchorEl?.closest?.('pre');
+      if (preEl) {
+        e.preventDefault();
+        if (e.shiftKey) {
+          const p = document.createElement('p');
+          p.className = 'ce-p';
+          p.innerHTML = '<br>';
+          preEl.after(p);
+          const r = document.createRange();
+          r.setStart(p, 0);
+          r.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(r);
+        } else if (sel.rangeCount) {
+          const range = sel.getRangeAt(0);
+          range.deleteContents();
+          const nl = document.createTextNode('\n');
+          range.insertNode(nl);
+          range.setStartAfter(nl);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+        }
+        emitChange();
+        return;
+      }
+
+      // Pressing Enter inside a checklist row cleanly starts a new checklist or exits if empty
+      const row = anchorEl?.closest?.('.ce-check');
       if (row) {
         e.preventDefault();
         const textEl = row.querySelector('.ce-check-text');
@@ -230,6 +266,30 @@ const CleanRichEditor = forwardRef(function CleanRichEditor(
     }
   };
 
+  const handlePaste = e => {
+    const sel = window.getSelection?.();
+    const node = sel?.anchorNode;
+    const anchorEl = node?.nodeType === 1 ? node : node?.parentElement;
+    if (anchorEl?.closest?.('pre')) {
+      const plain = e.clipboardData?.getData?.('text/plain');
+      if (typeof plain === 'string') {
+        e.preventDefault();
+        const normalized = plain.replace(/\r\n?/g, '\n');
+        if (sel.rangeCount) {
+          const range = sel.getRangeAt(0);
+          range.deleteContents();
+          const txt = document.createTextNode(normalized);
+          range.insertNode(txt);
+          range.setStartAfter(txt);
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
+          emitChange();
+        }
+      }
+    }
+  };
+
   const isEmpty = !String(value || '').trim();
 
   return (
@@ -248,6 +308,7 @@ const CleanRichEditor = forwardRef(function CleanRichEditor(
       }}
       onKeyUp={detectWikiInSelection}
       onKeyDown={handleKeyDown}
+      onPaste={handlePaste}
       onClick={handleClick}
     />
   );

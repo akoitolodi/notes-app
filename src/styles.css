@@ -640,6 +640,21 @@ a:hover {
   bottom: 16px;
 }
 
+/* Floating Explain Selection pill in Read Mode */
+.fab.explain-sel-fab {
+  width: auto;
+  height: 42px;
+  padding: 0 16px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
+}
+
 /* ============================================================
    6. Lists, Folders, Search & Swipe Rows
    ============================================================ */
@@ -1236,6 +1251,8 @@ a:hover {
   border-radius: 10px;
   padding: 10px 12px;
   margin: 4px 0 8px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .inline-mistake-fix {
   font-weight: 600;
@@ -2506,7 +2523,35 @@ a:hover {
   gap: 6px;
   margin-top: 8px;
 }
+.model-target-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.model-active-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: var(--bg);
+  border: 1px solid var(--divider);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
 .model-chip {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-width: 100%;
+  text-align: left;
+  word-break: break-word;
   border: 1px solid var(--divider);
   border-radius: 8px;
   background: var(--bg);
@@ -2515,6 +2560,26 @@ a:hover {
   font-family: var(--font-mono);
   padding: 5px 9px;
   cursor: pointer;
+}
+.model-chip-tag {
+  font-family: var(--font-sans);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 1px 5px;
+  border-radius: 999px;
+}
+.model-chip-tag.is-free {
+  background: rgba(16, 185, 129, 0.16);
+  color: #10b981;
+}
+.model-chip-tag.is-paid {
+  background: rgba(245, 158, 11, 0.16);
+  color: #f59e0b;
+}
+.model-chip-tag.is-think {
+  background: rgba(139, 92, 246, 0.18);
+  color: #a78bfa;
 }
 .model-chip.active {
   border-color: var(--accent);
@@ -5588,6 +5653,7 @@ a:hover {
   border-radius: 11px;
   padding: 9px 10px;
   max-height: 220px;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -5600,6 +5666,7 @@ a:hover {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  flex-shrink: 0;
 }
 .smart-output-title {
   font-size: 12px;
@@ -9586,10 +9653,17 @@ a:hover {
 /* ===== v2.3.0 Clean Smart AI Output, Truth Tables & Networking Practical Lab ===== */
 .smart-output-prose {
   font-size: 13.5px;
-  line-height: 1.6;
+  line-height: 1.55;
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  max-height: 155px;
+  padding: 8px 9px;
+  border-radius: 8px;
+  background: var(--bg);
 }
 
 .truth-table-wrap {

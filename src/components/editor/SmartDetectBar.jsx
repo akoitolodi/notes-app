@@ -226,14 +226,14 @@ const SmartDetectBar = memo(function SmartDetectBar({
 
   const handleWrapCodeBlock = meta => {
     if (!meta || meta.isFenced || typeof meta.startLine !== 'number') return;
-    const lines = String(body || '').split(/\r?\n/);
+    const lines = String(body || '').replace(/\r\n?/g, '\n').split('\n');
     const before = lines.slice(0, meta.startLine);
     const codeSeg = lines.slice(meta.startLine, meta.endLine + 1);
     const after = lines.slice(meta.endLine + 1);
     const fenceTag = meta.langId === 'javascript' ? 'js' : meta.langId === 'python' ? 'py' : meta.langId;
     const next = [...before, `\`\`\`${fenceTag}`, ...codeSeg, '```', ...after].join('\n');
     onReplaceBody?.(next);
-    toast(`Formatted as ${meta.langName} code block`, { type: 'success' });
+    toast(`Wrapped as ${meta.langName} block`, { type: 'success' });
   };
 
   const handleAiAssist = async ({ mode, promptTitle, systemPrompt, userPrompt, insertHeading }) => {

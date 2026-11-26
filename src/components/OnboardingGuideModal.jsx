@@ -112,7 +112,16 @@ const FEATURE_CARDS = [
   },
 ];
 
-const QUICK_AI_CHOICES = ['groq', 'gemini', 'openrouter', 'cerebras', 'mistral', 'nvidia'];
+const QUICK_AI_CHOICES = [
+  'groq',
+  'gemini',
+  'openrouter',
+  'cerebras',
+  'deepseek',
+  'sambanova',
+  'github',
+  'mistral',
+];
 
 export default function OnboardingGuideModal({
   initialView = 'wizard', // 'wizard' | 'guide'

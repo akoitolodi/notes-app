@@ -10,54 +10,168 @@ export function hasGroqTranscriptionKey() {
   return Boolean(getKeyForProvider('groq')?.trim());
 }
 
-export function isMediaRecorderSupported() {
+export function hasNativeAndroidRecorder() {
   return (
     typeof window !== 'undefined' &&
-    typeof navigator !== 'undefined' &&
-    Boolean(navigator.mediaDevices?.getUserMedia) &&
-    typeof window.MediaRecorder !== 'undefined'
+    Boolean(window.BaiNativeRecorder) &&
+    typeof window.BaiNativeRecorder.start === 'function'
   );
 }
 
-/** Start capturing microphone audio into a Promise-based stoppable session. */
+export function base64ToAudioBlob(base64, mimeType = 'audio/mp4') {
+  const clean = String(base64 || '').replace(/^data:[^;]+;base64,/, '').trim();
+  if (!clean) return new Blob([], { type: mimeType });
+  const bin = atob(clean);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new Blob([bytes], { type: mimeType });
+}
+
+export function isMediaRecorderSupported() {
+  return (
+    hasNativeAndroidRecorder() ||
+    (typeof window !== 'undefined' &&
+      typeof navigator !== 'undefined' &&
+      Boolean(navigator.mediaDevices?.getUserMedia) &&
+      typeof window.MediaRecorder !== 'undefined')
+  );
+}
+
+/** Start capturing microphone audio (prefers native Android MediaRecorder to avoid WebView mic blocks). */
 export async function startLectureAudioRecording() {
-  if (!isMediaRecorderSupported()) {
-    throw new Error('Audio recording is not supported in this WebView — use Live Dictation mode.');
+  if (hasNativeAndroidRecorder()) {
+    return new Promise((resolve, reject) => {
+      const bridge = window.BaiNativeRecorder;
+      let settled = false;
+      window.__baiRecorderCallback = (ev, payload) => {
+        if (settled) return;
+        if (ev === 'started') {
+          settled = true;
+          resolve({
+            mimeType: 'audio/mp4',
+            isNative: true,
+            flushChunk: () => {
+              try {
+                const b64 = bridge.flushChunk?.();
+                return b64 ? base64ToAudioBlob(b64, 'audio/mp4') : null;
+              } catch {
+                return null;
+              }
+            },
+            stop: async () => {
+              try {
+                const b64 = bridge.stop();
+                window.__baiRecorderCallback = null;
+                return base64ToAudioBlob(b64, 'audio/mp4');
+              } catch (e) {
+                window.__baiRecorderCallback = null;
+                throw e;
+              }
+            },
+            cancel: () => {
+              window.__baiRecorderCallback = null;
+              try {
+                bridge.cancel?.();
+              } catch {
+                // ignore
+              }
+            },
+          });
+        } else if (ev === 'error') {
+          settled = true;
+          window.__baiRecorderCallback = null;
+          reject(new Error(String(payload || 'Microphone permission denied')));
+        }
+      };
+      try {
+        bridge.start();
+      } catch (e) {
+        if (!settled) {
+          settled = true;
+          window.__baiRecorderCallback = null;
+          reject(e);
+        }
+      }
+    });
   }
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+  if (!isMediaRecorderSupported()) {
+    throw new Error('Audio recording unavailable here — use Live Dictation.');
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+      throw new Error('Mic permission blocked by browser/WebView. Use Live Dictation or grant Mic access in App Settings.');
+    }
+    throw err;
+  }
   const preferredMime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg']
     .find(m => typeof MediaRecorder.isTypeSupported === 'function' && MediaRecorder.isTypeSupported(m));
-  const recorder = preferredMime ? new MediaRecorder(stream, { mimeType: preferredMime }) : new MediaRecorder(stream);
-  const chunks = [];
-  recorder.ondataavailable = ev => {
-    if (ev.data && ev.data.size > 0) chunks.push(ev.data);
+  let chunks = [];
+  const spawnWebRecorder = () => {
+    const rec = preferredMime ? new MediaRecorder(stream, { mimeType: preferredMime }) : new MediaRecorder(stream);
+    rec.ondataavailable = ev => {
+      if (ev.data && ev.data.size > 0) chunks.push(ev.data);
+    };
+    rec.start(500);
+    return rec;
   };
+  let recorder = spawnWebRecorder();
+  const activeMime = recorder.mimeType || preferredMime || 'audio/webm';
 
-  recorder.start(500);
   return {
-    mimeType: recorder.mimeType || preferredMime || 'audio/webm',
+    mimeType: activeMime,
+    isNative: false,
+    flushChunk: () =>
+      new Promise(resolve => {
+        if (!recorder || recorder.state !== 'recording') {
+          resolve(null);
+          return;
+        }
+        const prev = recorder;
+        prev.onstop = () => {
+          const finished = chunks;
+          chunks = [];
+          try {
+            recorder = spawnWebRecorder();
+          } catch {
+            // stream closed
+          }
+          const blob = new Blob(finished, { type: activeMime });
+          resolve(blob.size > 0 ? blob : null);
+        };
+        try {
+          prev.stop();
+        } catch {
+          resolve(null);
+        }
+      }),
     stop: () =>
       new Promise((resolve, reject) => {
         try {
-          recorder.onstop = () => {
+          const cur = recorder;
+          cur.onstop = () => {
             try {
               stream.getTracks().forEach(t => t.stop());
             } catch {
               // ignore
             }
-            const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+            const blob = new Blob(chunks, { type: activeMime });
+            chunks = [];
             resolve(blob);
           };
-          recorder.onerror = err => reject(err?.error || new Error('Recording failed'));
-          if (recorder.state !== 'inactive') recorder.stop();
-          else resolve(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }));
+          cur.onerror = err => reject(err?.error || new Error('Recording failed'));
+          if (cur.state !== 'inactive') cur.stop();
+          else resolve(new Blob(chunks, { type: activeMime }));
         } catch (err) {
           reject(err);
         }
       }),
     cancel: () => {
       try {
-        if (recorder.state !== 'inactive') recorder.stop();
+        if (recorder && recorder.state !== 'inactive') recorder.stop();
         stream.getTracks().forEach(t => t.stop());
       } catch {
         // ignore

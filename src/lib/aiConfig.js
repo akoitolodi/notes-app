@@ -114,14 +114,14 @@ export const PROVIDERS = {
     free: true,
     baseUrl: 'https://api.mistral.ai/v1',
     defaultModel: 'mistral-small-latest',
-    reasonModel: 'magistral-medium-latest',
+    reasonModel: 'magistral-small-latest',
     models: [
       'mistral-small-latest',
+      'magistral-small-latest',
+      'codestral-latest',
       'mistral-medium-latest',
       'mistral-large-latest',
       'magistral-medium-latest',
-      'magistral-small-latest',
-      'codestral-latest',
     ],
     keyUrl: 'https://console.mistral.ai/api-keys',
   },
@@ -161,6 +161,63 @@ export const PROVIDERS = {
       'openai/gpt-5.4',
     ],
     keyUrl: 'https://kilo.ai',
+  },
+  deepseek: {
+    name: 'DeepSeek',
+    badge: 'Low cost',
+    free: false,
+    baseUrl: 'https://api.deepseek.com/v1',
+    defaultModel: 'deepseek-chat',
+    reasonModel: 'deepseek-reasoner',
+    models: ['deepseek-chat', 'deepseek-reasoner'],
+    keyUrl: 'https://platform.deepseek.com/api_keys',
+  },
+  sambanova: {
+    name: 'SambaNova',
+    badge: 'Free tier',
+    free: true,
+    baseUrl: 'https://api.sambanova.ai/v1',
+    defaultModel: 'Meta-Llama-3.3-70B-Instruct',
+    reasonModel: 'DeepSeek-R1',
+    models: [
+      'Meta-Llama-3.3-70B-Instruct',
+      'DeepSeek-R1',
+      'DeepSeek-V3-0324',
+      'Qwen3-32B',
+      'Meta-Llama-3.1-8B-Instruct',
+    ],
+    keyUrl: 'https://cloud.sambanova.ai/apis',
+  },
+  github: {
+    name: 'GitHub Models',
+    badge: 'Free w/ GitHub',
+    free: true,
+    baseUrl: 'https://models.inference.ai.azure.com',
+    defaultModel: 'gpt-4.1-mini',
+    reasonModel: 'DeepSeek-R1',
+    models: [
+      'gpt-4.1-mini',
+      'gpt-4o-mini',
+      'DeepSeek-R1',
+      'Llama-3.3-70B-Instruct',
+      'Phi-4',
+    ],
+    keyUrl: 'https://github.com/settings/tokens',
+  },
+  huggingface: {
+    name: 'HuggingFace',
+    badge: 'Free credits',
+    free: true,
+    baseUrl: 'https://router.huggingface.co/v1',
+    defaultModel: 'Qwen/Qwen2.5-72B-Instruct',
+    reasonModel: 'deepseek-ai/DeepSeek-R1',
+    models: [
+      'Qwen/Qwen2.5-72B-Instruct',
+      'deepseek-ai/DeepSeek-R1',
+      'meta-llama/Llama-3.3-70B-Instruct',
+      'google/gemma-3-27b-it',
+    ],
+    keyUrl: 'https://huggingface.co/settings/tokens',
   },
   custom: {
     name: 'Custom',
@@ -496,16 +553,80 @@ function getFetchedModelsMap() {
   }
 }
 
+const FREE_TIER_PROVIDERS = new Set(['groq', 'cerebras', 'sambanova', 'github', 'nvidia', 'huggingface']);
+const REASONING_MODEL_ID_RE =
+  /(r1\b|r1:|reasoner|thinking|qwen[-/]?3|qwq|magistral|\bo1\b|\bo3\b|\bo4\b|gemini-2\.5-pro|ultra)/i;
+
+/** Detect whether a model ID is a dedicated reasoning/thinking model. */
+export function isReasoningModelId(modelId) {
+  return REASONING_MODEL_ID_RE.test(String(modelId || ''));
+}
+
+/** Detect whether a model entry is free-tier / zero-cost vs paid/subscription. */
+export function isModelFree(providerId, modelId, rawObj = null) {
+  const id = String(modelId || '').toLowerCase();
+  if (!id) return false;
+  if (id.endsWith(':free') || id === 'openrouter/free') return true;
+
+  if (rawObj && typeof rawObj === 'object') {
+    const p = rawObj.pricing;
+    if (p && p.prompt !== undefined && p.completion !== undefined) {
+      const pr = Number(p.prompt);
+      const cp = Number(p.completion);
+      if (Number.isFinite(pr) && Number.isFinite(cp)) {
+        return pr === 0 && cp === 0;
+      }
+    }
+    if (typeof rawObj.is_free === 'boolean') return rawObj.is_free;
+    if (typeof rawObj.free === 'boolean') return rawObj.free;
+  }
+
+  if (providerId === 'openrouter' || providerId === 'kilo') {
+    return id.endsWith(':free') || id === 'openrouter/free';
+  }
+  if (providerId === 'gemini') {
+    return /flash|pro|gemma/i.test(id) && !/ultra|deep-research/i.test(id);
+  }
+  if (providerId === 'mistral') {
+    return /(small|open-mistral|codestral|magistral-small|pixtral-12b)/i.test(id);
+  }
+  if (FREE_TIER_PROVIDERS.has(providerId)) return true;
+  return false;
+}
+
+function getFetchedMetaMap() {
+  try {
+    return JSON.parse(localStorage.getItem(`${FETCHED_MODELS_KEY}:meta`) || '{}') || {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Rich catalog entries for a provider: [{ id, free, reasoning }].
+ */
+export function getModelCatalogForProvider(providerId) {
+  const preset = PROVIDERS[providerId] || PROVIDERS.groq;
+  const fetched = getFetchedModelsMap()[providerId];
+  const metaMap = getFetchedMetaMap()[providerId] || {};
+  const base = Array.isArray(preset.models) ? preset.models : [];
+  const mergedIds =
+    Array.isArray(fetched) && fetched.length > 0 ? [...new Set([...fetched, ...base])] : base;
+  return mergedIds.map(id => {
+    const m = metaMap[id];
+    const free = typeof m?.free === 'boolean' ? m.free : isModelFree(providerId, id);
+    const reasoning =
+      typeof m?.reasoning === 'boolean' ? m.reasoning : isReasoningModelId(id);
+    return { id, free, reasoning };
+  });
+}
+
 /**
  * Returns the list of models for a provider, combining any live-fetched models
  * from the provider's /models endpoint with the curated preset defaults.
  */
 export function getModelsForProvider(providerId) {
-  const preset = PROVIDERS[providerId] || PROVIDERS.groq;
-  const fetched = getFetchedModelsMap()[providerId];
-  const base = Array.isArray(preset.models) ? preset.models : [];
-  if (!Array.isArray(fetched) || fetched.length === 0) return base;
-  return [...new Set([...fetched, ...base])];
+  return getModelCatalogForProvider(providerId).map(m => m.id);
 }
 
 const NON_CHAT_MODEL_RE =
@@ -513,7 +634,7 @@ const NON_CHAT_MODEL_RE =
 
 /**
  * Queries GET ${baseUrl}/models to discover live available models for the provider,
- * caches them in localStorage, and returns the cleaned list of chat model IDs.
+ * extracts pricing/free metadata, caches both IDs & metadata, and returns cleaned chat IDs.
  */
 export async function fetchLiveModelsForProvider(providerId, { baseUrl = '', key = '' } = {}) {
   const preset = PROVIDERS[providerId] || PROVIDERS.groq;
@@ -539,29 +660,43 @@ export async function fetchLiveModelsForProvider(providerId, { baseUrl = '', key
         ? data
         : [];
 
-  let ids = rawList
-    .map(item => String(item?.id || item?.name || '').trim().replace(/^models\//, ''))
-    .filter(id => id && !NON_CHAT_MODEL_RE.test(id));
-
-  if (providerId === 'openrouter') {
-    const freeIds = ids.filter(id => id.endsWith(':free') || id === 'openrouter/free');
-    const otherIds = ids.filter(id => !id.endsWith(':free') && id !== 'openrouter/free');
-    ids = [...freeIds.slice(0, 20), ...otherIds.slice(0, 8)];
-  } else {
-    ids = ids.slice(0, 24);
+  const metaById = {};
+  const seen = new Set();
+  const allEntries = [];
+  for (const item of rawList) {
+    const id = String(item?.id || item?.name || '').trim().replace(/^models\//, '');
+    if (!id || NON_CHAT_MODEL_RE.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    const free = isModelFree(providerId, id, item);
+    const reasoning = isReasoningModelId(id);
+    metaById[id] = { free, reasoning };
+    allEntries.push({ id, free, reasoning });
   }
 
-  if (ids.length === 0) {
+  // Sort free models first so free-tier users immediately see usable options
+  const freeEntries = allEntries.filter(e => e.free);
+  const paidEntries = allEntries.filter(e => !e.free);
+  let orderedIds = [...freeEntries.slice(0, 24), ...paidEntries.slice(0, 10)].map(e => e.id);
+
+  if (orderedIds.length === 0) {
     throw new Error('No chat models returned by endpoint');
   }
 
   const presetModels = Array.isArray(preset.models) ? preset.models : [];
-  const merged = [...new Set([...presetModels.filter(m => ids.includes(m)), ...ids])];
+  const merged = [...new Set([...presetModels.filter(m => orderedIds.includes(m)), ...orderedIds])];
+  for (const id of merged) {
+    if (!metaById[id]) {
+      metaById[id] = { free: isModelFree(providerId, id), reasoning: isReasoningModelId(id) };
+    }
+  }
 
   try {
     const map = getFetchedModelsMap();
     map[providerId] = merged;
     localStorage.setItem(FETCHED_MODELS_KEY, JSON.stringify(map));
+    const metaAll = getFetchedMetaMap();
+    metaAll[providerId] = metaById;
+    localStorage.setItem(`${FETCHED_MODELS_KEY}:meta`, JSON.stringify(metaAll));
   } catch {
     // non-fatal
   }

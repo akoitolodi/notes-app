@@ -26,6 +26,7 @@ export default function LectureRecorderSheet({ onSaved, onClose }) {
   );
   const [recording, setRecording] = useState(false);
   const [elapsedSec, setElapsedSec] = useState(0);
+  const [dictLang, setDictLang] = useState('');
   const [transcript, setTranscript] = useState('');
   const [interim, setInterim] = useState('');
   const [busy, setBusy] = useState(false);
@@ -33,6 +34,8 @@ export default function LectureRecorderSheet({ onSaved, onClose }) {
 
   const recorderRef = useRef(null);
   const dictRef = useRef(null);
+  const elapsedRef = useRef(0);
+  const chunkBusyRef = useRef(false);
 
   useEffect(() => {
     db.folders
@@ -53,11 +56,34 @@ export default function LectureRecorderSheet({ onSaved, onClose }) {
     };
   }, []);
 
+  // Rolling 25s auto-chunk upload during Groq Whisper lecture recording
   useEffect(() => {
     if (!recording) return undefined;
-    const id = setInterval(() => setElapsedSec(s => s + 1), 1000);
+    elapsedRef.current = 0;
+    const id = setInterval(() => {
+      elapsedRef.current += 1;
+      const next = elapsedRef.current;
+      setElapsedSec(next);
+      if (mode === 'groq' && next % 25 === 0 && recorderRef.current?.flushChunk && !chunkBusyRef.current) {
+        chunkBusyRef.current = true;
+        setStatusMsg('Transcribing chunk…');
+        Promise.resolve(recorderRef.current.flushChunk())
+          .then(blob => {
+            if (!blob || blob.size <= 1200) return '';
+            return transcribeLectureWithGroq(blob);
+          })
+          .then(txt => {
+            if (txt) setTranscript(prev => (prev ? `${prev} ${txt}` : txt));
+          })
+          .catch(() => {})
+          .finally(() => {
+            chunkBusyRef.current = false;
+            setStatusMsg('');
+          });
+      }
+    }, 1000);
     return () => clearInterval(id);
-  }, [recording]);
+  }, [recording, mode]);
 
   const startRecording = async () => {
     if (recording || busy) return;
@@ -74,15 +100,21 @@ export default function LectureRecorderSheet({ onSaved, onClose }) {
     } else {
       if (!dictRef.current) {
         dictRef.current = createDictationSession({
-          lang: 'en-PH',
-          onTranscript: txt => setTranscript(prev => (prev ? `${prev} ${txt}` : txt)),
-          onInterim: txt => setInterim(txt),
+          lang: dictLang,
+          onFinal: txt => {
+            setInterim('');
+            if (txt) setTranscript(prev => (prev ? `${prev} ${txt}` : txt));
+          },
+          onInterim: txt => {
+            setInterim(txt || '');
+          },
           onError: msg => toast(msg, { type: 'error' }),
           onStateChange: st => setRecording(st === 'listening'),
         });
       }
+      dictRef.current.setLang?.(dictLang);
       setElapsedSec(0);
-      dictRef.current.start();
+      await dictRef.current.start();
     }
   };
 
@@ -91,16 +123,18 @@ export default function LectureRecorderSheet({ onSaved, onClose }) {
     if (mode === 'groq' && recorderRef.current) {
       setRecording(false);
       setBusy(true);
-      setStatusMsg('Transcribing Taglish audio via Groq Whisper…');
+      setStatusMsg('Transcribing Taglish audio…');
       try {
         const blob = await recorderRef.current.stop();
         recorderRef.current = null;
-        const txt = await transcribeLectureWithGroq(blob);
-        if (txt) {
-          setTranscript(prev => (prev ? `${prev}\n${txt}` : txt));
-          toast('Lecture transcribed!', { type: 'success' });
-        } else {
-          toast('No speech detected in recording.');
+        if (blob && blob.size > 800) {
+          const txt = await transcribeLectureWithGroq(blob);
+          if (txt) {
+            setTranscript(prev => (prev ? `${prev}\n${txt}` : txt));
+            toast('Lecture transcribed!', { type: 'success' });
+          } else {
+            toast('No speech detected.');
+          }
         }
       } catch (err) {
         toast(err?.message || 'Transcription failed', { type: 'error' });
@@ -186,10 +220,33 @@ export default function LectureRecorderSheet({ onSaved, onClose }) {
         <div className="settings-help" style={{ marginTop: 0 }}>
           {mode === 'groq'
             ? hasGroqTranscriptionKey()
-              ? 'Records class audio & transcribes mixed English + Filipino/Taglish accurately via your free Groq key.'
-              : 'Add a free Groq API key in Settings to transcribe recorded files, or switch to Offline Live Dictation.'
-            : 'Uses on-device Android / Web Speech recognition 100% offline while listening in class.'}
+              ? 'Records class audio in 25s chunks for Groq Whisper transcription.'
+              : 'Add a Groq key in Settings for Whisper, or switch to Live Dictation.'
+            : 'On-device speech recognition for continuous live note-taking.'}
         </div>
+
+        {mode === 'live' && (
+          <div className="flex gap-6 mt-8">
+            {[
+              ['', 'Auto'],
+              ['en-US', 'English'],
+              ['fil-PH', 'Filipino'],
+            ].map(([code, lbl]) => (
+              <button
+                key={lbl}
+                type="button"
+                className={`row-action-chip${dictLang === code ? ' active-chip' : ''}`}
+                disabled={recording}
+                onClick={() => {
+                  setDictLang(code);
+                  dictRef.current?.setLang?.(code);
+                }}
+              >
+                {lbl}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="flex items-center gap-8 mt-10">
           <select

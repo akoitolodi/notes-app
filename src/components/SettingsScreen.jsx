@@ -74,7 +74,7 @@ import {
   setDeepTutorUrl,
   getGrammarConfig,
   setGrammarConfig,
-  getModelsForProvider,
+  getModelCatalogForProvider,
   fetchLiveModelsForProvider,
   maskKey,
   EXPLAIN_STYLES,
@@ -271,7 +271,9 @@ export default function SettingsScreen({
   const [vaultPinExists, setVaultPinExists] = useState(() => hasVaultPin());
   const [decoyCfg, setDecoyCfg] = useState(() => getDecoyConfig());
   const [decoyPickDigit, setDecoyPickDigit] = useState(() => getDecoyConfig().triggerDigit || '7');
-  const [availableModels, setAvailableModels] = useState(() => getModelsForProvider(getProviderId()));
+  const [modelCatalog, setModelCatalog] = useState(() => getModelCatalogForProvider(getProviderId()));
+  const [freeOnlyModels, setFreeOnlyModels] = useState(true);
+  const [modelPickTarget, setModelPickTarget] = useState('primary'); // 'primary' | 'reason'
   const [fetchingModels, setFetchingModels] = useState(false);
 
   const [showKey, setShowKey] = useState(false);
@@ -344,7 +346,7 @@ export default function SettingsScreen({
     setModel(preset.defaultModel);
     setReasonModel(preset.reasonModel || preset.defaultModel || '');
     setKey(getKeyForProvider(providerId));
-    setAvailableModels(getModelsForProvider(providerId));
+    setModelCatalog(getModelCatalogForProvider(providerId));
   };
 
   const handleRefreshLiveModels = async () => {
@@ -352,15 +354,27 @@ export default function SettingsScreen({
     setFetchingModels(true);
     try {
       const list = await fetchLiveModelsForProvider(provider, { baseUrl, key });
-      setAvailableModels(list);
+      const catalog = getModelCatalogForProvider(provider);
+      setModelCatalog(catalog);
+      const freeEntries = catalog.filter(m => m.free);
       if (list.length > 0 && !list.includes(model)) {
-        handleModelChange(list[0]);
+        const preferred = freeEntries[0]?.id || list[0];
+        handleModelChange(preferred);
       }
-      toast(`Loaded ${list.length} live models from ${PROVIDERS[provider]?.name || 'endpoint'}`, {
-        type: 'success',
-      });
+      if (freeEntries.length > 0) {
+        const freeReason = freeEntries.find(m => m.reasoning);
+        if (freeReason && !list.includes(reasonModel)) {
+          handleReasonModelChange(freeReason.id);
+        }
+      }
+      toast(
+        freeEntries.length > 0
+          ? `Loaded ${list.length} models (${freeEntries.length} free)`
+          : `Loaded ${list.length} live models`,
+        { type: 'success' }
+      );
     } catch (err) {
-      toast(`Could not fetch live models: ${err.message}`, { type: 'error' });
+      toast(`Could not fetch models: ${err.message}`, { type: 'error' });
     } finally {
       setFetchingModels(false);
     }
@@ -622,7 +636,7 @@ export default function SettingsScreen({
           onChange={v => setPref(SURFACE_KEY, v, setSurface)}
         />
         <div className="settings-tip">
-          Studio is default for fastest launch &amp; 60fps scrolling. Turn on Frosted Glass or Aurora Glass for iOS Liquid Glass.
+          Studio is fastest. Frosted or Aurora enables translucent glass.
         </div>
 
         <div className="settings-label mt-16">Note paper style</div>
@@ -712,7 +726,7 @@ export default function SettingsScreen({
           <div style={{ flex: 1 }}>
             <span className="ios-switch-label">Hide status bar (Fullscreen)</span>
             <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
-              Hides Android clock &amp; notification icons; swipe down from top to peek
+              Swipe down from top to peek
             </div>
           </div>
           <span className="ios-switch">
@@ -770,9 +784,9 @@ export default function SettingsScreen({
           }}
         />
         <div className="settings-tip">
-          Uses native Display.Mode &amp; touch frame-rate boost on supported Android phones.
+          Native refresh rate boost on supported devices.
           {displayInfo && displayInfo.maxHz <= 60
-            ? ' Note: Your system currently reports 60Hz max — enable High Refresh Rate for Notes by Bai in Android Display settings if supported.'
+            ? ' Enable High Refresh Rate in Android Display settings if supported.'
             : ''}
         </div>
       </div>
@@ -790,8 +804,8 @@ export default function SettingsScreen({
         />
         <div className="settings-tip">
           {mode === 'termux'
-            ? 'Relays AI requests through your local Express/Termux backend.'
-            : 'Calls your chosen AI provider straight from this device — no backend server needed.'}
+            ? 'Routes AI through your local Termux server.'
+            : 'Connects directly from this device.'}
         </div>
 
         {mode === 'termux' && (
@@ -916,34 +930,113 @@ export default function SettingsScreen({
               </div>
             )}
 
-            {/* Quick-pick Model Chips + Live /models Refresh */}
+            {/* Quick-pick Model Chips + Primary/Reasoning Target + Free-Only Filter */}
             <div className="flex justify-between items-center mt-16" style={{ marginBottom: 6 }}>
-              <div className="settings-label" style={{ marginBottom: 0 }}>Model</div>
+              <div className="settings-label" style={{ marginBottom: 0 }}>Models</div>
               <button
                 type="button"
                 className="btn btn-ghost btn-sm"
                 disabled={fetchingModels}
                 onClick={handleRefreshLiveModels}
-                title="Fetch latest available models from provider /models endpoint"
+                title="Fetch available models from provider"
               >
                 <RotateCw size={13} className={fetchingModels ? 'spin' : ''} />{' '}
-                {fetchingModels ? 'Refreshing…' : 'Refresh live models'}
+                {fetchingModels ? 'Refreshing…' : 'Refresh live'}
               </button>
             </div>
-            {availableModels.length > 0 && (
-              <div className="model-chips">
-                {availableModels.map(m => (
-                  <button
-                    key={m}
-                    type="button"
-                    className={`model-chip${model === m ? ' active' : ''}`}
-                    onClick={() => handleModelChange(m)}
-                  >
-                    {m}
-                  </button>
-                ))}
-              </div>
-            )}
+            {(() => {
+              const freeCount = modelCatalog.filter(m => m.free).length;
+              const hasMixedPricing = freeCount > 0 && freeCount < modelCatalog.length;
+              const filtered =
+                freeOnlyModels && freeCount > 0 ? modelCatalog.filter(m => m.free) : modelCatalog;
+              const visible =
+                modelPickTarget === 'reason'
+                  ? [...filtered].sort((a, b) => Number(b.reasoning) - Number(a.reasoning))
+                  : filtered;
+              return (
+                <>
+                  <div className="model-target-bar">
+                    <div className="flex gap-6">
+                      <button
+                        type="button"
+                        className={`row-action-chip${modelPickTarget === 'primary' ? ' active-chip' : ''}`}
+                        onClick={() => setModelPickTarget('primary')}
+                      >
+                        Primary
+                      </button>
+                      <button
+                        type="button"
+                        className={`row-action-chip${modelPickTarget === 'reason' ? ' active-chip' : ''}`}
+                        onClick={() => setModelPickTarget('reason')}
+                      >
+                        Reasoning
+                      </button>
+                    </div>
+                    {hasMixedPricing && (
+                      <div className="flex gap-6">
+                        <button
+                          type="button"
+                          className={`row-action-chip${freeOnlyModels ? ' active-chip' : ''}`}
+                          onClick={() => setFreeOnlyModels(true)}
+                        >
+                          Free ({freeCount})
+                        </button>
+                        <button
+                          type="button"
+                          className={`row-action-chip${!freeOnlyModels ? ' active-chip' : ''}`}
+                          onClick={() => setFreeOnlyModels(false)}
+                        >
+                          All ({modelCatalog.length})
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="model-active-summary">
+                    <span>
+                      <strong>Primary:</strong> {model || '—'}
+                    </span>
+                    <span>
+                      <strong>Reasoning:</strong> {reasonModel || '—'}
+                    </span>
+                  </div>
+                  {visible.length > 0 && (
+                    <div className="model-chips">
+                      {visible.map(entry => {
+                        const isPicked =
+                          modelPickTarget === 'reason'
+                            ? reasonModel === entry.id
+                            : model === entry.id;
+                        return (
+                          <button
+                            key={entry.id}
+                            type="button"
+                            className={`model-chip${isPicked ? ' active' : ''}`}
+                            onClick={() => {
+                              if (modelPickTarget === 'reason') {
+                                handleReasonModelChange(entry.id);
+                                toast(`Reasoning model: ${entry.id}`);
+                              } else {
+                                handleModelChange(entry.id);
+                              }
+                            }}
+                          >
+                            <span>{entry.id}</span>
+                            {entry.free ? (
+                              <span className="model-chip-tag is-free">FREE</span>
+                            ) : (
+                              <span className="model-chip-tag is-paid">PAID</span>
+                            )}
+                            {entry.reasoning && (
+                              <span className="model-chip-tag is-think">THINK</span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
 
             <button
               type="button"
@@ -1050,7 +1143,7 @@ export default function SettingsScreen({
           </button>
         </div>
         <div className="settings-tip">
-          <strong>Research mode</strong> already searches Wikipedia & OpenAlex academic papers for free with no key. Add an optional Tavily key (1,000 free searches/mo) to layer on live general web results:{' '}
+          Wikipedia &amp; OpenAlex work free. Optional Tavily key adds live web search:{' '}
           <a href="https://app.tavily.com" target="_blank" rel="noopener noreferrer">
             app.tavily.com
           </a>
@@ -1131,9 +1224,9 @@ export default function SettingsScreen({
           </span>
         </label>
 
-        <div className="settings-label mt-16">Open-Source Bridges (Optional — Leave Blank Normally)</div>
+        <div className="settings-label mt-16">Self-Hosted Bridges (Optional)</div>
         <div className="settings-tip">
-          Built-in <strong>DeepTutor Learner Memory</strong> &amp; <strong>Codapi</strong> already work automatically with zero setup. Only fill these if you self-host your own Docker/Python server on PC or Termux.
+          Built-in defaults work automatically. Only fill if self-hosting.
         </div>
         <div className="settings-label mt-12">Codapi Sandbox URL (optional)</div>
         <input
@@ -1510,8 +1603,7 @@ export default function SettingsScreen({
           <Signal size={14} /> Slow Internet Mode ({isSlowNetworkActive() ? 'Active' : 'Normal'})
         </div>
         <div className="settings-tip">
-          Widens AI &amp; Canvas timeouts (45s–60s), retries dropped connections automatically, and trims RAG chunks
-          so AI stays fast on weak campus Wi-Fi or 3G mobile data.
+          Longer timeouts and auto-retries for weak Wi-Fi or mobile data.
         </div>
         <Segmented
           options={[
@@ -1533,8 +1625,7 @@ export default function SettingsScreen({
           <Share2 size={14} /> BaiDrop Import &amp; Local Wi-Fi Sync
         </div>
         <div className="settings-tip">
-          Import a classmate&apos;s portable <code>.bai.json</code> note or paste a <code>BAIDROP1:</code> share code
-          completely offline — or sync unlocked notes over your home/campus Wi-Fi with zero cloud accounts.
+          Import <code>.bai.json</code> or <code>BAIDROP1:</code> codes offline, or sync over local Wi-Fi.
         </div>
 
         <div className="flex gap-8 mt-10">
@@ -1638,7 +1729,7 @@ export default function SettingsScreen({
       <div className="list-group settings-group">
         <div className="settings-label">Backup & Restore</div>
         <div className="settings-tip">
-          All notes live offline on this device. Export a JSON backup regularly so you can restore or move to another device anytime.
+          Notes are stored locally. Export JSON to back up or transfer anytime.
         </div>
         <div className="flex gap-8 mt-12">
           <button
@@ -1672,12 +1763,12 @@ export default function SettingsScreen({
         <div className="settings-label">Quick Tips</div>
         <div className="settings-tip">
           • Use <strong># Heading</strong>, <strong>**bold**</strong>, <strong>- [ ] task</strong>, and <strong>$E = mc^2$</strong> math.<br />
-          • Tap any line in Read mode to inspect or fetch its AI explanation on demand.<br />
-          • Tap an attached photo to zoom, run OCR, or ask AI to explain diagrams.<br />
-          • Press <strong>Ctrl+S</strong> to save immediately or <strong>Ctrl+Shift+S</strong> to save & explain.
+          • Tap any line or highlight text in Read mode to explain.<br />
+          • Tap an attached photo to zoom, run OCR, or explain diagrams.<br />
+          • <strong>Ctrl+S</strong> saves · <strong>Ctrl+Shift+S</strong> saves &amp; explains.
         </div>
         <div className="settings-tip" style={{ marginTop: 10, opacity: 0.7 }}>
-          Notes by Bai v2.3.0
+          Notes by Bai v2.4.0
         </div>
       </div>
 

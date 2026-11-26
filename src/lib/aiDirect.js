@@ -4,6 +4,7 @@
  */
 import { getExplainStyle } from './aiConfig';
 import { aiText } from './aiCore';
+import { cleanAiOutputText } from './cleanAiText';
 import { getScanModeDirective } from './noteModes';
 import {
   CHUNK_SIZE,
@@ -21,6 +22,7 @@ import {
   parseScanResult,
   parseLineResult,
   parseExamResult,
+  parseJsonObject,
 } from '../../shared/aiParsers.js';
 
 /** Call the configured direct provider through aiCore (gains automatic 429 retry & backup failover). */
@@ -68,11 +70,80 @@ export async function scanLine(note, line, request = 'simpler', style = null) {
   const raw = await callAI({
     system: 'You explain class notes. Reply only with valid JSON.',
     user: prompt,
-    maxTokens: 1024,
-    timeoutMs: 120000,
+    maxTokens: 700,
+    timeoutMs: 45000,
   });
 
-  return parseLineResult(raw);
+  const parsed = parseLineResult(raw);
+  return {
+    ...parsed,
+    explanation: cleanAiOutputText(parsed?.explanation || ''),
+  };
+}
+
+/**
+ * Fast lightweight explanation for a tapped line OR highlighted partial snippet (~1-2s).
+ * Sends only a compact nearby context window and skips heavy flashcard/quiz generation.
+ */
+export async function explainSnippetFast({
+  note = '',
+  targetText = '',
+  subject = 'General',
+  style = null,
+  isPartial = false,
+} = {}) {
+  const cleanTarget = String(targetText || '').trim();
+  if (!cleanTarget) throw new Error('Select text or a line to explain.');
+  const activeStyle = style || getExplainStyle();
+
+  // Extract a small ~600-char local context window around targetText
+  const full = String(note || '');
+  const idx = full.indexOf(cleanTarget);
+  let context = '';
+  if (idx !== -1) {
+    const start = Math.max(0, idx - 260);
+    const end = Math.min(full.length, idx + cleanTarget.length + 260);
+    context = full.slice(start, end).trim();
+  } else {
+    context = full.slice(0, 500).trim();
+  }
+
+  const userPrompt = [
+    `Subject: ${subject || 'General'} | Style: ${activeStyle}`,
+    isPartial ? `Selected phrase to explain ONLY:\n"${cleanTarget}"` : `Line to explain:\n"${cleanTarget}"`,
+    context && context !== cleanTarget ? `Nearby note context:\n${context}` : '',
+    'Reply ONLY with valid JSON: {"explanation":"concise clear explanation in plain text (no markdown * or #)","terms":[{"term":"...","definition":"..."}]} (0-2 key terms).',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
+  const raw = await callAI({
+    system:
+      'You are a concise, fast study tutor. Explain ONLY the target phrase/line clearly in 2-4 sentences using plain text (no *, **, #, or $). Output valid JSON only.',
+    user: userPrompt,
+    maxTokens: 450,
+    timeoutMs: 35000,
+  });
+
+  let parsed = null;
+  try {
+    parsed = parseJsonObject(raw);
+  } catch {
+    parsed = { explanation: raw, terms: [] };
+  }
+  const terms = Array.isArray(parsed?.terms)
+    ? parsed.terms
+        .filter(t => t && (t.term || t.definition || t.meaning))
+        .map(t => ({
+          term: cleanAiOutputText(t.term || ''),
+          definition: cleanAiOutputText(t.definition || t.meaning || ''),
+        }))
+        .filter(t => t.term && t.definition)
+    : [];
+  return {
+    explanation: cleanAiOutputText(parsed?.explanation || raw || ''),
+    terms,
+  };
 }
 
 /** Scan a full note or changed lines (chunks automatically when > CHUNK_SIZE lines). */

@@ -289,12 +289,13 @@ export async function aiTextStream({
           await sleep(err?.isEmptyResponse ? 300 : 750, signal);
           continue;
         }
-        // Fail over to backup provider on rate-limit / server error / stall / empty response / retired model
+        // Fail over to backup provider on rate-limit / billing 402 / server error / stall / empty response / retired model
         if (
           !(
             err?.retryable ||
             err?.isFirstByteStall ||
             err?.isEmptyResponse ||
+            err?.httpStatus === 402 ||
             err?.httpStatus === 404 ||
             err?.httpStatus === 410
           )
@@ -482,9 +483,11 @@ function hideLiveThinking(raw) {
 }
 
 function buildHttpError(status, body) {
-  let msg = `AI API error ${status}: ${String(body || '').slice(0, 200)}`;
-  if (status === 404 || status === 410) {
-    msg += '\n\nThis model may have been retired by the provider. Pick another model in Settings → AI Backend.';
+  let msg = `AI API error ${status}: ${String(body || '').slice(0, 180)}`;
+  if (status === 402) {
+    msg = 'Paid subscription required for this model (HTTP 402). Pick a FREE model in Settings → AI Backend.';
+  } else if (status === 404 || status === 410) {
+    msg += '\n\nModel unavailable or retired. Pick another model in Settings → AI Backend.';
   }
   const err = new Error(msg);
   err.httpStatus = status;
@@ -597,6 +600,7 @@ async function directChatWithResilience(
           !(
             err?.retryable ||
             err?.isEmptyResponse ||
+            err?.httpStatus === 402 ||
             err?.httpStatus === 404 ||
             err?.httpStatus === 410
           )
