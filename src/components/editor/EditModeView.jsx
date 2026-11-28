@@ -139,6 +139,29 @@ export default function EditModeView({
   const [grammarResult, setGrammarResult] = useState(null);
   const [grammarError, setGrammarError] = useState('');
   const [polishBusy, setPolishBusy] = useState('');
+  const [editorSelection, setEditorSelection] = useState(null);
+
+  const captureTextareaSelection = el => {
+    if (!el) return;
+    const start = el.selectionStart ?? 0;
+    const end = el.selectionEnd ?? 0;
+    if (end > start) {
+      const text = String(el.value || '').slice(start, end);
+      setEditorSelection(text.trim() ? { text, start, end } : null);
+    } else {
+      setEditorSelection(null);
+    }
+  };
+
+  const captureCleanSelection = () => {
+    try {
+      const sel = typeof window !== 'undefined' ? window.getSelection?.() : null;
+      const txt = sel ? String(sel.toString() || '') : '';
+      setEditorSelection(txt.trim().length >= 4 ? { text: txt, start: null, end: null } : null);
+    } catch {
+      setEditorSelection(null);
+    }
+  };
 
   useEffect(() => {
     let live = true;
@@ -907,13 +930,18 @@ export default function EditModeView({
         )}
 
         {editorMode === 'clean' ? (
-          <CleanRichEditor
-            ref={cleanEditorRef}
-            value={body}
-            onChange={onBodyChange}
-            placeholder="Start writing…"
-            onWikiDetect={setWikiSuggest}
-          />
+          <div onMouseUp={captureCleanSelection} onKeyUp={captureCleanSelection}>
+            <CleanRichEditor
+              ref={cleanEditorRef}
+              value={body}
+              onChange={val => {
+                setEditorSelection(null);
+                onBodyChange(val);
+              }}
+              placeholder="Start writing…"
+              onWikiDetect={setWikiSuggest}
+            />
+          </div>
         ) : (
           <textarea
             ref={textareaRef}
@@ -921,10 +949,16 @@ export default function EditModeView({
             placeholder="Start writing…"
             value={body}
             onChange={e => {
+              setEditorSelection(null);
               onBodyChange(e.target.value);
               detectWikiTrigger(e.target.value, e.target.selectionStart ?? e.target.value.length);
             }}
-            onKeyUp={e => detectWikiTrigger(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
+            onSelect={e => captureTextareaSelection(e.currentTarget)}
+            onMouseUp={e => captureTextareaSelection(e.currentTarget)}
+            onKeyUp={e => {
+              detectWikiTrigger(e.currentTarget.value, e.currentTarget.selectionStart ?? 0);
+              captureTextareaSelection(e.currentTarget);
+            }}
             aria-label="Note body"
             autoFocus
           />
@@ -935,6 +969,7 @@ export default function EditModeView({
       <SmartDetectBar
         title={title}
         body={body}
+        selection={editorSelection}
         subject={subject}
         currentNoteId={currentNoteId}
         currentFolderId={currentFolderId}

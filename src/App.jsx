@@ -8,7 +8,8 @@ import { App as CapApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { FileText } from 'lucide-react';
 import FoldersScreen from './components/FoldersScreen';
-import { db, ensureSeeded, purgeOldTrash, noteHasContent } from './store/db';
+import AppNavShell from './components/AppNavShell';
+import { db, ensureSeeded, purgeOldTrash, noteHasContent, getHomeSummary } from './store/db';
 import { lockVault, subscribeVault } from './lib/vault';
 
 const HOME_CACHE_KEY = 'aicn:homeCache:v1';
@@ -50,6 +51,8 @@ const CoursesDashboardScreen = lazy(() => import('./components/CoursesDashboardS
 const AnnouncementsScreen = lazy(() => import('./components/AnnouncementsScreen'));
 const ThemeStudioScreen = lazy(() => import('./components/ThemeStudioScreen'));
 const OnboardingGuideModal = lazy(() => import('./components/OnboardingGuideModal'));
+const ToolsHubScreen = lazy(() => import('./components/ToolsHubScreen'));
+const SyllabusStudioScreen = lazy(() => import('./components/SyllabusStudioScreen'));
 
 function ScreenLoading({ label = 'Loading…' }) {
   return (
@@ -75,10 +78,12 @@ export default function App() {
   const [noteInitialMode, setNoteInitialMode] = useState(null);
   const [examPaperTarget, setExamPaperTarget] = useState(null); // { sourceNote?, sourceFolder?, sourceCourse?, returnScreen }
   const [themesReturnTo, setThemesReturnTo] = useState('folders');
+  const [syllabusReturnTo, setSyllabusReturnTo] = useState('folders');
   const [coursesInitialSection, setCoursesInitialSection] = useState('courses');
   const [sharedImport, setSharedImport] = useState(null); // { file?, text?, title? } from Android Share Target
   const [onboardingModal, setOnboardingModal] = useState(null); // null | 'wizard' | 'guide'
   const [sidebarTick, setSidebarTick] = useState(0);
+  const [navBadges, setNavBadges] = useState({ unreadAnn: 0, dueCards: 0 });
   const [isWide, setIsWide] = useState(() =>
     typeof window !== 'undefined' ? window.innerWidth >= 900 : false
   );
@@ -90,6 +95,25 @@ export default function App() {
   }, []);
 
   const bumpSidebar = useCallback(() => setSidebarTick(t => t + 1), []);
+
+  // Keep Planner & Courses nav badges fresh without blocking startup
+  useEffect(() => {
+    if (!ready) return undefined;
+    let live = true;
+    Promise.all([
+      db.plannerItems.where('type').equals('announcement').toArray().catch(() => []),
+      getHomeSummary().catch(() => ({ dueCardsCount: 0 })),
+      import('./lib/notifications').catch(() => null),
+    ]).then(([anns, sum, notifMod]) => {
+      if (!live) return;
+      const isReadFn = notifMod?.isAnnouncementRead;
+      const unreadAnn = isReadFn ? anns.filter(a => !isReadFn(a)).length : anns.length;
+      setNavBadges({ unreadAnn, dueCards: sum?.dueCardsCount || 0 });
+    });
+    return () => {
+      live = false;
+    };
+  }, [ready, sidebarTick]);
 
   const handleNoteChanged = useCallback(
     (updatedPatch, opts = {}) => {
@@ -390,6 +414,20 @@ export default function App() {
     pushHistoryEntry('announcements');
   }, [pushHistoryEntry]);
 
+  const handleOpenTools = useCallback(() => {
+    setScreen('tools');
+    pushHistoryEntry('tools');
+  }, [pushHistoryEntry]);
+
+  const handleOpenSyllabus = useCallback(
+    (returnTo = 'folders') => {
+      setSyllabusReturnTo(typeof returnTo === 'string' ? returnTo : 'folders');
+      setScreen('syllabus');
+      pushHistoryEntry('syllabus');
+    },
+    [pushHistoryEntry]
+  );
+
   const handleOpenExamPaper = useCallback(
     ({ sourceNote = null, sourceFolder = null, sourceCourse = null }) => {
       setExamPaperTarget({
@@ -469,6 +507,9 @@ export default function App() {
       screen === 'review' ||
       screen === 'toolkit' ||
       screen === 'coding' ||
+      screen === 'subjects' ||
+      screen === 'tools' ||
+      screen === 'syllabus' ||
       screen === 'planner' ||
       screen === 'courses' ||
       screen === 'announcements' ||
@@ -693,9 +734,43 @@ export default function App() {
             onOpenFolder={handleOpenFolder}
             onOpenExamPaper={handleOpenExamPaper}
             onOpenPlanner={handleOpenPlanner}
+            onOpenSyllabus={() => handleOpenSyllabus('courses')}
+            onOpenReview={handleOpenReview}
+            onOpenSubjects={handleOpenSubjects}
             onChanged={bumpSidebar}
             onRegisterBack={registerOverlayBack}
             initialSection={coursesInitialSection}
+          />
+        </Suspense>
+      );
+    }
+    if (screen === 'syllabus') {
+      return (
+        <Suspense fallback={<ScreenLoading label="Loading AI Syllabus Studio…" />}>
+          <SyllabusStudioScreen
+            onBack={() => {
+              if (syllabusReturnTo === 'courses') setScreen('courses');
+              else if (syllabusReturnTo === 'tools') setScreen('tools');
+              else handleBackToFolders();
+            }}
+            onOpenNote={handleOpenNote}
+            onChanged={bumpSidebar}
+          />
+        </Suspense>
+      );
+    }
+    if (screen === 'tools') {
+      return (
+        <Suspense fallback={<ScreenLoading label="Loading Tools…" />}>
+          <ToolsHubScreen
+            onOpenCoding={handleOpenCoding}
+            onOpenToolkit={handleOpenToolkit}
+            onOpenSubjects={handleOpenSubjects}
+            onOpenSyllabus={() => handleOpenSyllabus('tools')}
+            onOpenThemes={() => handleOpenThemes('folders')}
+            onOpenSettings={handleOpenSettings}
+            onOpenNote={handleOpenNote}
+            onChanged={bumpSidebar}
           />
         </Suspense>
       );
@@ -760,10 +835,52 @@ export default function App() {
   const mainContent = renderMainPanel();
   const showingMainOnMobile = Boolean(mainContent);
 
+  const activeTab =
+    screen === 'courses' || screen === 'syllabus' || screen === 'review' || screen === 'subjects'
+      ? 'courses'
+      : screen === 'planner' || screen === 'announcements'
+        ? 'planner'
+        : screen === 'tools' || screen === 'coding' || screen === 'toolkit'
+          ? 'tools'
+          : 'notes';
+
+  const focusedHideNav =
+    screen === 'editor' ||
+    screen === 'study' ||
+    screen === 'exam' ||
+    screen === 'exam-paper' ||
+    screen === 'settings' ||
+    screen === 'themes' ||
+    screen === 'trash';
+
+  const handleSelectNavTab = tabId => {
+    if (tabId === 'notes') {
+      handleBackToFolders();
+    } else if (tabId === 'courses') {
+      setFolder(null);
+      handleOpenCourses();
+    } else if (tabId === 'planner') {
+      setFolder(null);
+      handleOpenPlanner();
+    } else if (tabId === 'tools') {
+      setFolder(null);
+      handleOpenTools();
+    }
+  };
+
   // Unified stable shell — resizing across 900px never unmounts NoteEditor or loses state!
   return (
     <div className="app-root">
-      <div className={`split-shell${isWide ? ' is-wide' : ''}`}>
+      <div className={`split-shell${isWide ? ' is-wide' : ''}${!focusedHideNav ? ' has-app-nav' : ''}`}>
+        {isWide && !focusedHideNav && (
+          <AppNavShell
+            activeTab={activeTab}
+            isWide
+            unreadAnnCount={navBadges.unreadAnn}
+            dueCount={navBadges.dueCards}
+            onSelectTab={handleSelectNavTab}
+          />
+        )}
         <aside className={`split-sidebar${!isWide && showingMainOnMobile ? ' pane-hidden' : ''}`}>
           {showingSidebarList ? (
             <Suspense fallback={<ScreenLoading label="Loading Notes…" />}>
@@ -785,9 +902,7 @@ export default function App() {
               onOpenCourses={handleOpenCourses}
               onOpenAnnouncements={handleOpenAnnouncements}
               onOpenPlanner={handleOpenPlanner}
-              onOpenToolkit={handleOpenToolkit}
-              onOpenCoding={handleOpenCoding}
-              onOpenSubjects={handleOpenSubjects}
+              onOpenSyllabus={handleOpenSyllabus}
               onOpenTrash={handleOpenTrash}
               onOpenSettings={handleOpenSettings}
               onOpenThemes={() => handleOpenThemes('folders')}
@@ -810,6 +925,15 @@ export default function App() {
           )}
         </main>
       </div>
+      {!isWide && !focusedHideNav && (
+        <AppNavShell
+          activeTab={activeTab}
+          isWide={false}
+          unreadAnnCount={navBadges.unreadAnn}
+          dueCount={navBadges.dueCards}
+          onSelectTab={handleSelectNavTab}
+        />
+      )}
       {onboardingModal && (
         <Suspense fallback={null}>
           <OnboardingGuideModal

@@ -20,6 +20,7 @@ export const DEEPTUTOR_URL_KEY = 'aicn:deepTutorUrl'; // optional self-hosted HK
 export const DEEPTUTOR_MEMORY_KEY = 'aicn:deepTutorMemory'; // built-in DeepTutor Learner Memory ('true' default)
 export const GRAMMAR_CONFIG_KEY = 'aicn:grammarConfig'; // JSON { provider, ltUrl, ltUsername, ltApiKey, grammarlyClientId, grammarlyClientSecret, grammarlyToken, saplingKey }
 export const FETCHED_MODELS_KEY = 'aicn:fetchedModels'; // JSON { [providerId]: string[] }
+export const SMART_ROUTING_KEY = 'aicn:smartTaskRouting'; // boolean string ('true' default)
 
 export const EXPLAIN_STYLES = [
   ['simple', 'Simple'],
@@ -37,8 +38,11 @@ export const PROVIDERS = {
     badge: 'Free tier',
     free: true,
     baseUrl: 'https://api.groq.com/openai/v1',
+    fastModel: 'llama-3.1-8b-instant',
     defaultModel: 'llama-3.3-70b-versatile',
+    codeModel: 'qwen/qwen3-32b',
     reasonModel: 'qwen/qwen3-32b',
+    visionModel: 'meta-llama/llama-4-scout-17b-16e-instruct',
     models: [
       'llama-3.3-70b-versatile',
       'llama-3.1-8b-instant',
@@ -54,8 +58,11 @@ export const PROVIDERS = {
     badge: 'Free tier',
     free: true,
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    fastModel: 'gemini-2.5-flash-lite',
     defaultModel: 'gemini-2.5-flash',
+    codeModel: 'gemini-2.5-flash',
     reasonModel: 'gemini-2.5-pro',
+    visionModel: 'gemini-2.5-flash',
     models: [
       'gemini-2.5-flash',
       'gemini-2.5-pro',
@@ -69,8 +76,11 @@ export const PROVIDERS = {
     badge: 'Free models',
     free: true,
     baseUrl: 'https://openrouter.ai/api/v1',
+    fastModel: 'openrouter/free',
     defaultModel: 'openrouter/free',
+    codeModel: 'qwen/qwen3-235b-a22b:free',
     reasonModel: 'deepseek/deepseek-r1:free',
+    visionModel: 'google/gemma-3-27b-it:free',
     models: [
       'openrouter/free',
       'deepseek/deepseek-r1:free',
@@ -82,23 +92,16 @@ export const PROVIDERS = {
     ],
     keyUrl: 'https://openrouter.ai/keys',
   },
-  openai: {
-    name: 'OpenAI',
-    badge: 'Paid',
-    free: false,
-    baseUrl: 'https://api.openai.com/v1',
-    defaultModel: 'gpt-4.1-mini',
-    reasonModel: 'o4-mini',
-    models: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4.1-nano', 'o4-mini', 'o3', 'gpt-4o-mini'],
-    keyUrl: 'https://platform.openai.com/api-keys',
-  },
   cerebras: {
     name: 'Cerebras',
     badge: 'Free tier',
     free: true,
     baseUrl: 'https://api.cerebras.ai/v1',
+    fastModel: 'llama3.1-8b',
     defaultModel: 'llama-3.3-70b',
+    codeModel: 'qwen-3-235b-a22b',
     reasonModel: 'qwen-3-32b',
+    visionModel: null,
     models: [
       'llama-3.3-70b',
       'qwen-3-32b',
@@ -113,8 +116,11 @@ export const PROVIDERS = {
     badge: 'Free tier',
     free: true,
     baseUrl: 'https://api.mistral.ai/v1',
+    fastModel: 'mistral-small-latest',
     defaultModel: 'mistral-small-latest',
+    codeModel: 'codestral-latest',
     reasonModel: 'magistral-small-latest',
+    visionModel: null,
     models: [
       'mistral-small-latest',
       'magistral-small-latest',
@@ -130,8 +136,11 @@ export const PROVIDERS = {
     badge: 'Free credits',
     free: true,
     baseUrl: 'https://integrate.api.nvidia.com/v1',
+    fastModel: 'nvidia/nemotron-3.5-bolt-e4b',
     defaultModel: 'nvidia/nemotron-3.5-super-vl-120b-a12b',
+    codeModel: 'qwen/qwen3-235b-a22b',
     reasonModel: 'nvidia/nemotron-3-ultra-550b-a55b',
+    visionModel: 'nvidia/nemotron-3.5-super-vl-120b-a12b',
     models: [
       'nvidia/nemotron-3.5-super-vl-120b-a12b',
       'nvidia/nemotron-3-ultra-550b-a55b',
@@ -149,8 +158,11 @@ export const PROVIDERS = {
     badge: 'Free models',
     free: true,
     baseUrl: 'https://api.kilo.ai/api/gateway',
+    fastModel: 'inclusionai/ling-3.2-flash:free',
     defaultModel: 'nvidia/nemotron-3.5-super-vl:free',
+    codeModel: 'nvidia/nemotron-3.5-super-vl:free',
     reasonModel: 'deepseek/deepseek-r1:free',
+    visionModel: 'nvidia/nemotron-3.5-super-vl:free',
     models: [
       'nvidia/nemotron-3.5-super-vl:free',
       'deepseek/deepseek-r1:free',
@@ -162,23 +174,16 @@ export const PROVIDERS = {
     ],
     keyUrl: 'https://kilo.ai',
   },
-  deepseek: {
-    name: 'DeepSeek',
-    badge: 'Low cost',
-    free: false,
-    baseUrl: 'https://api.deepseek.com/v1',
-    defaultModel: 'deepseek-chat',
-    reasonModel: 'deepseek-reasoner',
-    models: ['deepseek-chat', 'deepseek-reasoner'],
-    keyUrl: 'https://platform.deepseek.com/api_keys',
-  },
   sambanova: {
     name: 'SambaNova',
     badge: 'Free tier',
     free: true,
     baseUrl: 'https://api.sambanova.ai/v1',
+    fastModel: 'Meta-Llama-3.1-8B-Instruct',
     defaultModel: 'Meta-Llama-3.3-70B-Instruct',
+    codeModel: 'DeepSeek-V3-0324',
     reasonModel: 'DeepSeek-R1',
+    visionModel: null,
     models: [
       'Meta-Llama-3.3-70B-Instruct',
       'DeepSeek-R1',
@@ -193,8 +198,11 @@ export const PROVIDERS = {
     badge: 'Free w/ GitHub',
     free: true,
     baseUrl: 'https://models.inference.ai.azure.com',
+    fastModel: 'gpt-4o-mini',
     defaultModel: 'gpt-4.1-mini',
+    codeModel: 'gpt-4.1-mini',
     reasonModel: 'DeepSeek-R1',
+    visionModel: 'gpt-4.1-mini',
     models: [
       'gpt-4.1-mini',
       'gpt-4o-mini',
@@ -209,8 +217,11 @@ export const PROVIDERS = {
     badge: 'Free credits',
     free: true,
     baseUrl: 'https://router.huggingface.co/v1',
+    fastModel: 'google/gemma-3-27b-it',
     defaultModel: 'Qwen/Qwen2.5-72B-Instruct',
+    codeModel: 'Qwen/Qwen2.5-72B-Instruct',
     reasonModel: 'deepseek-ai/DeepSeek-R1',
+    visionModel: 'google/gemma-3-27b-it',
     models: [
       'Qwen/Qwen2.5-72B-Instruct',
       'deepseek-ai/DeepSeek-R1',
@@ -221,11 +232,14 @@ export const PROVIDERS = {
   },
   custom: {
     name: 'Custom',
-    badge: 'Your endpoint',
+    badge: 'Local / Free URL',
     free: false,
     baseUrl: '',
+    fastModel: '',
     defaultModel: '',
+    codeModel: '',
     reasonModel: '',
+    visionModel: null,
     models: [],
     keyUrl: '',
   },
@@ -241,7 +255,16 @@ export function getAiMode() {
 
 export function getProviderId() {
   try {
-    return localStorage.getItem(PROVIDER_KEY) || 'groq';
+    const stored = localStorage.getItem(PROVIDER_KEY);
+    if (stored && PROVIDERS[stored]) return stored;
+    // Migrate retired paid-only presets (e.g. 'openai' / 'deepseek') to first saved free provider
+    const map = getKeysMap();
+    for (const pid of Object.keys(map)) {
+      if (pid !== 'custom' && PROVIDERS[pid] && String(map[pid] || '').trim()) {
+        return pid;
+      }
+    }
+    return 'groq';
   } catch {
     return 'groq';
   }
@@ -312,15 +335,21 @@ export function getDirectConfig() {
   migrateLegacyKey();
   const pid = getProviderId();
   const preset = PROVIDERS[pid] || PROVIDERS.groq;
+  let storedProvider = '';
   let baseUrl = preset.baseUrl;
   let model = preset.defaultModel;
   try {
-    baseUrl = localStorage.getItem(BASEURL_KEY) || preset.baseUrl;
-  } catch {
-    // default
-  }
-  try {
-    model = localStorage.getItem(MODEL_KEY) || preset.defaultModel;
+    storedProvider = localStorage.getItem(PROVIDER_KEY) || '';
+    const migratedFromRetired = Boolean(storedProvider && !PROVIDERS[storedProvider]);
+    if (migratedFromRetired) {
+      localStorage.setItem(PROVIDER_KEY, pid);
+      localStorage.setItem(BASEURL_KEY, preset.baseUrl);
+      localStorage.setItem(MODEL_KEY, preset.defaultModel);
+      localStorage.setItem(REASON_KEY, preset.reasonModel || '');
+    } else {
+      baseUrl = localStorage.getItem(BASEURL_KEY) || preset.baseUrl;
+      model = localStorage.getItem(MODEL_KEY) || preset.defaultModel;
+    }
   } catch {
     // default
   }
@@ -374,9 +403,27 @@ export function setAutoFallback(enabled) {
   }
 }
 
+/** Smart Task-Based AI Routing (auto-picks best free model/provider per task, defaults true). */
+export function isSmartRoutingEnabled() {
+  try {
+    const val = localStorage.getItem(SMART_ROUTING_KEY);
+    return val === null ? true : val === 'true';
+  } catch {
+    return true;
+  }
+}
+
+export function setSmartRoutingEnabled(enabled) {
+  try {
+    localStorage.setItem(SMART_ROUTING_KEY, enabled ? 'true' : 'false');
+  } catch {
+    // non-fatal
+  }
+}
+
 /**
  * Return alternative providers for which the user already saved an API key.
- * Used for graceful free-tier failover when the primary provider returns 429/503.
+ * Used for graceful free-tier failover and smart task routing.
  */
 export function getFallbackProviders() {
   migrateLegacyKey();
@@ -393,7 +440,11 @@ export function getFallbackProviders() {
       name: preset.name,
       baseUrl: preset.baseUrl.replace(/\/+$/, ''),
       model: preset.defaultModel,
+      fastModel: preset.fastModel || preset.defaultModel,
+      codeModel: preset.codeModel || preset.defaultModel,
       reasonModel: preset.reasonModel || preset.defaultModel,
+      visionModel: preset.visionModel || null,
+      models: Array.isArray(preset.models) ? preset.models : [preset.defaultModel],
       key,
     });
   }
@@ -556,10 +607,28 @@ function getFetchedModelsMap() {
 const FREE_TIER_PROVIDERS = new Set(['groq', 'cerebras', 'sambanova', 'github', 'nvidia', 'huggingface']);
 const REASONING_MODEL_ID_RE =
   /(r1\b|r1:|reasoner|thinking|qwen[-/]?3|qwq|magistral|\bo1\b|\bo3\b|\bo4\b|gemini-2\.5-pro|ultra)/i;
+const VISION_MODEL_ID_RE =
+  /(gemini-2\.[05]|llama-4-scout|llama-4-maverick|super-vl|gemma-3|gpt-4\.1|gpt-4o|pixtral|vision|vl\b)/i;
+const CODE_MODEL_ID_RE =
+  /(codestral|qwen[-/]?3|deepseek-v3|gemini-2\.5|gpt-4\.1|llama-3\.3-70b)/i;
+const FAST_MODEL_ID_RE =
+  /(instant|flash-lite|flash\b|8b\b|bolt|small|mini|gemma|openrouter\/free)/i;
 
 /** Detect whether a model ID is a dedicated reasoning/thinking model. */
 export function isReasoningModelId(modelId) {
   return REASONING_MODEL_ID_RE.test(String(modelId || ''));
+}
+
+export function isVisionModelId(modelId) {
+  return VISION_MODEL_ID_RE.test(String(modelId || ''));
+}
+
+export function isCodeModelId(modelId) {
+  return CODE_MODEL_ID_RE.test(String(modelId || ''));
+}
+
+export function isFastModelId(modelId) {
+  return FAST_MODEL_ID_RE.test(String(modelId || ''));
 }
 
 /** Detect whether a model entry is free-tier / zero-cost vs paid/subscription. */

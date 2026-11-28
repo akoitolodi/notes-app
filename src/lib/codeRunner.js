@@ -146,6 +146,7 @@ export async function runWithAiVirtualCompiler({ langName, code }) {
     user: `Language: ${langName}\n\`\`\`\n${code.slice(0, 6000)}\n\`\`\``,
     maxTokens: 1200,
     timeoutMs: 60000,
+    task: 'code',
   });
   const durationMs = Math.round(
     (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0

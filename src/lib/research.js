@@ -153,6 +153,7 @@ export async function planResearchQueries({
       user: `Subject: ${subject || 'General'}\nNote title: ${noteTitle || 'Untitled'}\nNote excerpt: ${String(noteExcerpt || '').slice(0, 600)}\nStudent question: ${question}`,
       maxTokens: 220,
       timeoutMs: 30000,
+      task: 'fast',
       signal,
     });
     const parsed = parseJsonObject(raw);

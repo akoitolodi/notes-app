@@ -82,8 +82,8 @@ db.version(7).stores({
   materialChunks: '++id, courseId, materialId',
 });
 
-// v8: additive custom user templates (personal reusable note layouts)
-db.version(8).stores({
+// v9: additive AI Syllabus Studio roadmaps & offline verified topic/lab cache
+db.version(9).stores({
   folders: '++id, name, createdAt',
   notes: '++id, folderId, title, updatedAt, pinned, createdAt',
   examCache: 'folderId',
@@ -98,6 +98,8 @@ db.version(8).stores({
   courseMaterials: '++id, courseId, moduleName, kind, createdAt',
   materialChunks: '++id, courseId, materialId',
   customTemplates: '++id, name, category, createdAt',
+  syllabi: '++id, courseId, code, createdAt, updatedAt',
+  syllabusTopicCache: 'key, syllabusId, updatedAt',
 });
 
 export const COURSE_PALETTE = [
@@ -564,6 +566,8 @@ export async function getHomeSummary() {
     folders.filter(f => f.mode === 'journal' || f.mode === 'vault' || f.isSystemVault || f.isDecoyVault).map(f => f.id)
   );
 
+  const folderNameById = new Map(folders.map(f => [f.id, f.name]));
+  const recentRaw = [];
   const counts = {};
   let totalNotes = 0;
   let pinnedCount = 0;
@@ -580,11 +584,33 @@ export async function getHomeSummary() {
     }
     counts[note.folderId] = (counts[note.folderId] || 0) + 1;
 
-    // Strictly hide locked folders' notes from smart views, tags, and Daily Review
+    // Strictly hide locked folders' notes from smart views, recent notes, tags, and Daily Review
     if (hiddenIds.has(note.folderId)) return;
 
     totalNotes += 1;
     if (note.pinned) pinnedCount += 1;
+
+    if (note.mode !== 'vault') {
+      const cleanPreview = String(note.body || '')
+        .replace(/```[\s\S]*?```/g, ' [code] ')
+        .replace(/^\s*#{1,6}\s+/gm, '')
+        .replace(/^\s*-\s*\[[ xX]\]\s*/gm, '')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/`([^`]+)`/g, '$1')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 90);
+      recentRaw.push({
+        id: note.id,
+        folderId: note.folderId,
+        folderName: folderNameById.get(note.folderId) || note.subject || 'General',
+        title: note.title || 'Untitled Note',
+        preview: cleanPreview || 'No additional text',
+        pinned: Boolean(note.pinned),
+        updatedAt: note.updatedAt || note.createdAt || 0,
+        mode: note.mode || 'study',
+      });
+    }
 
     const skipCards =
       note.mode === 'journal' ||
@@ -629,6 +655,13 @@ export async function getHomeSummary() {
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 
+  const recentNotes = recentRaw
+    .sort((a, b) => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+      return (b.updatedAt || 0) - (a.updatedAt || 0);
+    })
+    .slice(0, 8);
+
   return {
     folders: publicFolders,
     vaultFolders,
@@ -642,6 +675,7 @@ export async function getHomeSummary() {
     totalCardsCount,
     hasLockedFolders: vaultFolders.length > 0,
     tags,
+    recentNotes,
   };
 }
 
@@ -1080,6 +1114,7 @@ export async function exportBackup() {
   const rawNotes = await db.notes.toArray();
   const examCache = await db.examCache.toArray();
   const customTemplates = await db.customTemplates.toArray().catch(() => []);
+  const syllabi = await db.syllabi.toArray().catch(() => []);
 
   // Inline any v4 Blob attachments as dataUrls for portable JSON export
   const notes = [];
@@ -1094,12 +1129,13 @@ export async function exportBackup() {
 
   return {
     app: 'ai-class-notes',
-    schemaVersion: 8,
+    schemaVersion: 9,
     exportedAt: new Date().toISOString(),
     folders,
     notes,
     examCache,
     customTemplates,
+    syllabi,
   };
 }
 
@@ -1116,13 +1152,26 @@ export async function importBackup(payload, { mode = 'merge' } = {}) {
   let foldersAdded = 0;
   let notesAdded = 0;
 
-  await db.transaction('rw', db.folders, db.notes, db.examCache, db.attachments, db.customTemplates, async () => {
+  await db.transaction('rw', db.folders, db.notes, db.examCache, db.attachments, db.customTemplates, db.syllabi, async () => {
     if (mode === 'replace') {
       await db.attachments.clear();
       await db.examCache.clear();
       await db.notes.clear();
       await db.folders.clear();
       await db.customTemplates.clear();
+      await db.syllabi.clear();
+    }
+
+    if (Array.isArray(payload.syllabi) && payload.syllabi.length > 0) {
+      for (const s of payload.syllabi) {
+        if (!s || !s.name) continue;
+        const { id: _oldSylId, ...restSyl } = s;
+        await db.syllabi.add({
+          ...restSyl,
+          createdAt: s.createdAt || Date.now(),
+          updatedAt: s.updatedAt || Date.now(),
+        });
+      }
     }
 
     if (Array.isArray(payload.customTemplates) && payload.customTemplates.length > 0) {
@@ -1335,4 +1384,68 @@ export async function togglePinPlannerItem(id) {
   const next = !item.pinned;
   await db.plannerItems.update(id, { pinned: next, updatedAt: Date.now() });
   return next;
+}
+
+// ---------- AI Syllabus Studio CRUD (v2.5.0) ----------
+
+export async function listSyllabi() {
+  try {
+    const rows = await db.syllabi.toArray();
+    return rows.sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+  } catch {
+    return [];
+  }
+}
+
+export async function getSyllabus(id) {
+  if (!id) return null;
+  return db.syllabi.get(id).catch(() => null);
+}
+
+export async function saveSyllabus(data) {
+  const now = Date.now();
+  const payload = {
+    ...data,
+    updatedAt: now,
+    createdAt: data.createdAt || now,
+  };
+  if (payload.id) {
+    const id = payload.id;
+    await db.syllabi.update(id, payload);
+    return db.syllabi.get(id);
+  }
+  const id = await db.syllabi.add(payload);
+  return db.syllabi.get(id);
+}
+
+export async function updateSyllabusTopicState(syllabusId, topicSlug, patch = {}) {
+  const syl = await db.syllabi.get(syllabusId);
+  if (!syl || !Array.isArray(syl.topics)) return null;
+  const topics = syl.topics.map(t => (t.slug === topicSlug ? { ...t, ...patch } : t));
+  await db.syllabi.update(syllabusId, { topics, updatedAt: Date.now() });
+  return db.syllabi.get(syllabusId);
+}
+
+export async function deleteSyllabus(id) {
+  await db.transaction('rw', db.syllabi, db.syllabusTopicCache, async () => {
+    await db.syllabusTopicCache.where('syllabusId').equals(id).delete().catch(() => {});
+    await db.syllabi.delete(id);
+  });
+}
+
+export async function getSyllabusTopicCache(key) {
+  if (!key) return null;
+  return db.syllabusTopicCache.get(key).catch(() => null);
+}
+
+export async function putSyllabusTopicCache(key, syllabusId, data) {
+  if (!key) return null;
+  const record = {
+    key,
+    syllabusId: syllabusId || 0,
+    ...(data || {}),
+    updatedAt: Date.now(),
+  };
+  await db.syllabusTopicCache.put(record);
+  return record;
 }

@@ -86,6 +86,7 @@ ${memoryDigest ? `\n${memoryDigest}` : ''}`;
     user: `Course Materials Context:\n${contextBlock}\n\nStudent Question:\n${question}`,
     history: history.slice(-8),
     maxTokens: 1600,
+    task: 'balanced',
     signal,
     onToken,
     onStatus,
@@ -120,6 +121,7 @@ export async function generateCourseStudyPack({
         'You create high-yield college study packs from course modules. Return STRICT JSON ONLY: {"title":"Short study pack title","summary":"3-bullet overview in markdown","flashcards":[{"q":"question","a":"concise accurate answer"}],"quiz":[{"q":"multiple choice question","options":["A","B","C","D"],"answer":0,"why":"1 sentence rationale"}]}. Include 8 flashcards and 5 quiz items.',
       user: `Course: ${course.name}\n\nUploaded Module Excerpts:\n${contextText}`,
       maxTokens: 2200,
+      task: 'syllabus',
       signal,
     });
     const m = /\{[\s\S]*\}/.exec(String(raw || ''));
@@ -137,6 +139,7 @@ export async function generateCourseStudyPack({
     system: `You create concise, exam-ready Course Study Guides from uploaded slides/handouts for "${course.name}". Use ## headings, bold key terms, LaTeX formulas ($...$), and cite which module each section came from.`,
     user: `Uploaded Module Excerpts:\n${contextText}`,
     maxTokens: 2200,
+    task: 'syllabus',
     signal,
   });
   return {

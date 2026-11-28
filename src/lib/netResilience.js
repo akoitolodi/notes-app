@@ -53,8 +53,9 @@ export function getAdaptiveTimeouts() {
   const slow = isSlowNetworkActive();
   return {
     slow,
-    aiFirstByteMs: slow ? 45000 : 20000,
-    aiReasonFirstByteMs: slow ? 60000 : 30000,
+    aiFirstByteMs: slow ? 45000 : 18000,
+    aiReasonFirstByteMs: slow ? 30000 : 12000,
+    aiReasonNonStreamMs: slow ? 36000 : 14000,
     aiTotalMs: slow ? 240000 : 180000,
     fetchMs: slow ? 40000 : 22000,
     codapiMs: slow ? 30000 : 18000,

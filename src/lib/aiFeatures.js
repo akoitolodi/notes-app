@@ -52,6 +52,7 @@ export async function chatWithNote({
   onToken = null,
   onStatus = null,
   onFallback = null,
+  onRouteSwitch = null,
   signal = null,
 }) {
   const fullNote = String(note || '');
@@ -131,10 +132,12 @@ ${researchBlock}`;
       history: cleanHistory.slice(-8),
       maxTokens: 900,
       timeoutMs: 180000,
+      task: 'balanced',
       signal,
       onToken,
       onStatus,
       onFallback,
+      onRouteSwitch,
     });
     return {
       text: stripThinking(text),
@@ -175,8 +178,10 @@ ${researchBlock}`;
       timeoutMs: 240000,
       modelOverride: reasonModel,
       useReasoning: true,
+      task: 'reasoning',
       signal,
       onFallback,
+      onRouteSwitch,
     });
 
     // Pass 2: Skeptical Logical Verification & Clean Synthesis (streams live!)
@@ -212,10 +217,12 @@ Write ONLY the verified, clear final answer now.`;
         user: verifyUser,
         maxTokens: 1600,
         timeoutMs: 180000,
+        task: 'balanced',
         signal,
         onToken,
         onStatus,
         onFallback,
+        onRouteSwitch,
       });
 
       return {
@@ -378,7 +385,7 @@ ${String(note || '').slice(0, 7000)}
 ---
 ${crossBlock}`;
 
-  const raw = await aiText({ system: sys, user, maxTokens: 2400, timeoutMs: 180000, signal });
+  const raw = await aiText({ system: sys, user, maxTokens: 2400, timeoutMs: 180000, task: 'reasoning', signal });
   const d = parseJsonObject(raw);
   return {
     strengths: Array.isArray(d.strengths) ? d.strengths.map(String).filter(Boolean) : [],
@@ -434,7 +441,7 @@ ${String(note || '').slice(0, 5000)}
 STUDENT'S PLAIN-LANGUAGE EXPLANATION:
 ${explanation}`;
 
-  const raw = await aiText({ system: sys, user, maxTokens: 1400, timeoutMs: 180000, signal });
+  const raw = await aiText({ system: sys, user, maxTokens: 1400, timeoutMs: 180000, task: 'reasoning', signal });
   const d = parseJsonObject(raw);
   const score = Number.isFinite(Number(d.score)) ? Math.max(0, Math.min(100, Math.round(Number(d.score)))) : 0;
   return {
@@ -455,6 +462,7 @@ export async function summarizeNote({ note, subject, style, onToken = null, sign
     user: (note || '').slice(0, 8000),
     maxTokens: 500,
     timeoutMs: 120000,
+    task: 'fast',
     onToken,
     signal,
   });
@@ -547,6 +555,7 @@ Rules: answers must appear in the note; test cause-effect & key definitions rath
     user: (note || '').slice(0, 8000),
     maxTokens: 2000,
     timeoutMs: 180000,
+    task: 'fast',
     signal,
   });
   const d = parseJsonObject(raw);
@@ -565,6 +574,7 @@ Reply in the note's language. Make hooks genuinely memorable, not generic.`;
     user: (note || '').slice(0, 8000),
     maxTokens: 1500,
     timeoutMs: 180000,
+    task: 'fast',
     signal,
   });
   const d = parseJsonObject(raw);
@@ -586,6 +596,7 @@ Vary difficulty. Reply in the notes' language.`;
     user: notesText.slice(0, 10000),
     maxTokens: 3000,
     timeoutMs: 240000,
+    task: 'reasoning',
     signal,
   });
   const d = parseJsonObject(raw);
@@ -611,7 +622,7 @@ export async function analyzeWeakness({ note, quiz, answers, style, signal = nul
 OUTPUT: ONLY valid JSON: {"weakAreas": ["area1", "area2"], "practice": [{"question": "...", "choices": ["A","B","C","D"], "answer": 0, "explanation": "why this choice is right and why common traps fail"}]}
 Base everything on the quiz results and the note. ${sLine} Reply in the note's language.`;
   const user = `NOTE:\n---\n${(note || '').slice(0, 5000)}\n---\n\nQUIZ RESULTS:\n${JSON.stringify(qa, null, 1)}`;
-  const raw = await aiText({ system: sys, user, maxTokens: 2000, timeoutMs: 180000, signal });
+  const raw = await aiText({ system: sys, user, maxTokens: 2000, timeoutMs: 180000, task: 'reasoning', signal });
   const d = parseJsonObject(raw);
   const practice = (d.practice || [])
     .filter(p => p && typeof p.question === 'string' && Array.isArray(p.choices) && p.choices.length >= 2)
@@ -638,7 +649,7 @@ export async function gradeAnswer({ note, question, userAnswer, style, signal = 
 OUTPUT: ONLY valid JSON: {"score": <0-100>, "verdict": "excellent|good|partial|poor", "feedback": "2-3 sentences: what was logically sound, what was missing or imprecise, and how to sharpen it"}
 Reply in the notes' language. ${sLine}`;
   const user = `NOTES:\n---\n${(note || '').slice(0, 6000)}\n---\nQUESTION: ${question}\n\nSTUDENT ANSWER: ${userAnswer || '(empty)'}`;
-  const raw = await aiText({ system: sys, user, maxTokens: 1200, timeoutMs: 180000, signal });
+  const raw = await aiText({ system: sys, user, maxTokens: 1200, timeoutMs: 180000, task: 'reasoning', signal });
   const d = parseJsonObject(raw);
   const score = Number.isFinite(Number(d.score))
     ? Math.max(0, Math.min(100, Math.round(Number(d.score))))
@@ -668,7 +679,7 @@ export async function findRelatedNotes({ currentNote, otherNotes, signal = null 
 OUTPUT: ONLY valid JSON: {"links": [{"index": <number from the list>, "reason": "why they relate (one short sentence)"}]}
 Only include genuinely related notes (max 4). If none relate, return {"links": []}. Reply in the current note's language.`;
   const user = `CURRENT NOTE: ${currentNote.title || 'Untitled'}\n${(currentNote.body || '').slice(0, 2500)}\n\nOTHER NOTES:\n${list.slice(0, 7000)}`;
-  const raw = await aiText({ system: sys, user, maxTokens: 1200, timeoutMs: 180000, signal });
+  const raw = await aiText({ system: sys, user, maxTokens: 1200, timeoutMs: 180000, task: 'fast', signal });
   const d = parseJsonObject(raw);
   return (d.links || [])
     .filter(l => Number.isInteger(l.index) && otherNotes[l.index])
@@ -696,6 +707,7 @@ RULES:
     user: `SUBJECT: ${subject}\n\nRAW TRANSCRIPT:\n---\n${clean.slice(0, 9000)}\n---`,
     maxTokens: 2000,
     timeoutMs: 180000,
+    task: 'fast',
     signal,
   });
   return stripThinking(out).trim() || clean;
@@ -744,6 +756,7 @@ Provide a crisp, high-signal Markdown analysis (under 240 words):
     user: `LANGUAGE: ${lang || 'auto-detect'}\n${noteContext ? `NOTE CONTEXT: ${noteContext.slice(0, 600)}\n\n` : ''}CODE:\n\`\`\`${lang}\n${src.slice(0, 5000)}\n\`\`\``,
     maxTokens: 1200,
     timeoutMs: 180000,
+    task: 'code',
     onToken,
     signal,
   });

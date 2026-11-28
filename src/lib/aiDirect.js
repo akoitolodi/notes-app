@@ -25,9 +25,9 @@ import {
   parseJsonObject,
 } from '../../shared/aiParsers.js';
 
-/** Call the configured direct provider through aiCore (gains automatic 429 retry & backup failover). */
-export async function callAI({ system, user, maxTokens = 8192, timeoutMs = 180000, signal = null }) {
-  return aiText({ system, user, maxTokens, timeoutMs, signal });
+/** Call the configured direct provider through aiCore (gains automatic 429 retry, task routing & backup failover). */
+export async function callAI({ system, user, maxTokens = 8192, timeoutMs = 180000, task = 'balanced', signal = null }) {
+  return aiText({ system, user, maxTokens, timeoutMs, task, signal });
 }
 
 /** Scan a single chunk using BLOCKS_SYSTEM_PROMPT (never redundantly requesting quiz/cards). */
@@ -72,6 +72,7 @@ export async function scanLine(note, line, request = 'simpler', style = null) {
     user: prompt,
     maxTokens: 700,
     timeoutMs: 45000,
+    task: 'fast',
   });
 
   const parsed = parseLineResult(raw);
@@ -123,6 +124,7 @@ export async function explainSnippetFast({
     user: userPrompt,
     maxTokens: 450,
     timeoutMs: 35000,
+    task: 'fast',
   });
 
   let parsed = null;
@@ -274,6 +276,7 @@ export async function examSummary({ subject, notes, style = null, signal = null 
     user: prompt,
     maxTokens: 8192,
     timeoutMs: 300000,
+    task: 'syllabus',
     signal,
   });
 

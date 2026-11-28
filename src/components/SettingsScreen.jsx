@@ -59,6 +59,8 @@ import {
   setExplainStyle,
   getAutoFallback,
   setAutoFallback,
+  isSmartRoutingEnabled,
+  setSmartRoutingEnabled,
   getFallbackProviders,
   isAiProviderLocked,
   setAiProviderLocked,
@@ -259,6 +261,7 @@ export default function SettingsScreen({
   const [tavilyKey, setTavilyKey] = useState(() => getTavilyKey());
   const [termuxUrl, setTermuxUrl] = useState(() => getRawApiBaseOverride());
   const [autoFallback, setAutoFallbackState] = useState(() => getAutoFallback());
+  const [smartRouting, setSmartRoutingState] = useState(() => isSmartRoutingEnabled());
   const [aiLocked, setAiLocked] = useState(() => isAiProviderLocked() && Boolean(getKeyForProvider(getProviderId()).trim()));
   const [devToolkitOn, setDevToolkitOn] = useState(() => isDevToolkitEnabled());
   const [learnCodingOn, setLearnCodingOn] = useState(() => isLearnCodingEnabled());
@@ -1049,6 +1052,26 @@ export default function SettingsScreen({
 
             <label className="ios-switch-row mt-12">
               <span className="ios-switch-label" style={{ fontSize: 14 }}>
+                Smart Task Routing (Auto)
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+                  Automatically picks the fastest/strongest free model per task (Quick, Code, Deep Think, Vision, Syllabus) and auto-switches if Deep Think stalls. Turn off to pin manually.
+                </div>
+              </span>
+              <span className="ios-switch">
+                <input
+                  type="checkbox"
+                  checked={smartRouting}
+                  onChange={e => {
+                    setSmartRoutingState(e.target.checked);
+                    setSmartRoutingEnabled(e.target.checked);
+                  }}
+                />
+                <span className="ios-switch-track" />
+              </span>
+            </label>
+
+            <label className="ios-switch-row mt-12">
+              <span className="ios-switch-label" style={{ fontSize: 14 }}>
                 Auto-fallback on rate limits (429)
                 <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
                   {(() => {
@@ -1768,7 +1791,7 @@ export default function SettingsScreen({
           • <strong>Ctrl+S</strong> saves · <strong>Ctrl+Shift+S</strong> saves &amp; explains.
         </div>
         <div className="settings-tip" style={{ marginTop: 10, opacity: 0.7 }}>
-          Notes by Bai v2.4.0
+          Notes by Bai v2.5.0
         </div>
       </div>
 

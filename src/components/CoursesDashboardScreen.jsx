@@ -117,6 +117,9 @@ export default function CoursesDashboardScreen({
   onOpenFolder,
   onOpenExamPaper,
   onOpenPlanner,
+  onOpenSyllabus,
+  onOpenReview,
+  onOpenSubjects,
   onChanged,
   onRegisterBack = null,
   initialSection = 'courses',
@@ -1151,6 +1154,26 @@ export default function CoursesDashboardScreen({
             Schedule ({schedule.length})
           </button>
         </div>
+
+        {(onOpenSyllabus || onOpenReview || onOpenSubjects) && (
+          <div className="quick-action-row" style={{ marginTop: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+            {onOpenSyllabus && (
+              <button type="button" className="row-action-chip active-chip" onClick={onOpenSyllabus}>
+                <Sparkles size={12} /> AI Syllabus Studio
+              </button>
+            )}
+            {onOpenReview && (
+              <button type="button" className="row-action-chip" onClick={onOpenReview}>
+                <Layers size={12} /> Daily Review
+              </button>
+            )}
+            {onOpenSubjects && (
+              <button type="button" className="row-action-chip" onClick={onOpenSubjects}>
+                <GraduationCap size={12} /> Subject Labs
+              </button>
+            )}
+          </div>
+        )}
 
         {dashSection === 'schedule' ? (
           <div style={{ padding: '10px var(--gutter) 20px' }}>

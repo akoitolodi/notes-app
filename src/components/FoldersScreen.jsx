@@ -24,12 +24,9 @@ import {
   Brain,
   Lock,
   Unlock,
-  Wrench,
   KeyRound,
   Shield,
   EyeOff,
-  Code2,
-  Calendar,
   BookOpen,
   Bell,
   Megaphone,
@@ -39,7 +36,7 @@ import {
   ExternalLink,
   Compass,
   Mic,
-  Timer,
+  Sparkles,
 } from 'lucide-react';
 import {
   db,
@@ -53,7 +50,7 @@ import {
 } from '../store/db';
 import { getReviewStats } from '../lib/spacedRepetition';
 import { NOTE_MODE_LIST, getModeMeta } from '../lib/noteModes';
-import { isDevToolkitEnabled, isLearnCodingEnabled, getDirectConfig } from '../lib/aiConfig';
+import { getDirectConfig } from '../lib/aiConfig';
 import {
   isVaultUnlocked,
   getVaultSessionMode,
@@ -88,7 +85,6 @@ import { useDialog } from './ui/DialogProvider';
 const TemplatePickerSheet = lazy(() => import('./TemplatePickerSheet'));
 const ImportSheet = lazy(() => import('./ImportSheet'));
 const PinLockSheet = lazy(() => import('./PinLockSheet'));
-const FocusPomodoroSheet = lazy(() => import('./FocusPomodoroSheet'));
 const LectureRecorderSheet = lazy(() => import('./LectureRecorderSheet'));
 
 const HOME_CACHE_KEY = 'aicn:homeCache:v1';
@@ -103,7 +99,18 @@ const EMPTY_SUMMARY = {
   totalCardsCount: 0,
   hasLockedFolders: false,
   tags: [],
+  recentNotes: [],
 };
+
+function formatShortAge(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const today = new Date();
+  if (d.toDateString() === today.toDateString()) {
+    return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
 
 function readHomeCache() {
   try {
@@ -165,9 +172,7 @@ export default function FoldersScreen({
   onOpenCourses,
   onOpenAnnouncements,
   onOpenPlanner,
-  onOpenToolkit,
-  onOpenCoding,
-  onOpenSubjects,
+  onOpenSyllabus,
   onOpenTrash,
   onOpenSettings,
   onOpenThemes,
@@ -184,12 +189,7 @@ export default function FoldersScreen({
   const [vaultMode, setVaultMode] = useState(() => getVaultSessionMode());
   const [pinRequest, setPinRequest] = useState(null); // { mode: 'unlock'|'setup', onDone }
   const [decoyMenuOpen, setDecoyMenuOpen] = useState(false);
-  const [focusOpen, setFocusOpen] = useState(false);
   const [recorderOpen, setRecorderOpen] = useState(false);
-  const [todayClassCount, setTodayClassCount] = useState(() => Number(initialCache?.todayClassCount || 0));
-  const [showToolkit, setShowToolkit] = useState(() => isDevToolkitEnabled());
-  const [showCoding, setShowCoding] = useState(() => isLearnCodingEnabled());
-  const [plannerDueCount, setPlannerDueCount] = useState(() => Number(initialCache?.plannerDueCount || 0));
   const [courseCount, setCourseCount] = useState(() => Number(initialCache?.courseCount || 0));
   const [annPreview, setAnnPreview] = useState(() =>
     initialCache?.annPreview || { total: 0, unread: 0, pinned: 0, latest: [] }
@@ -297,23 +297,17 @@ export default function FoldersScreen({
 
       setSummary(homeSum);
       setReviewStats(getReviewStats());
-      setShowToolkit(isDevToolkitEnabled());
-      setShowCoding(isLearnCodingEnabled());
       setNotifLeadMin(getNotificationSettings().classReminderLeadMin || 10);
       setVaultUnlocked(isVaultUnlocked());
       setVaultMode(getVaultSessionMode());
-      setPlannerDueCount(nextDueCount);
       setCourseCount(nextCourseCount);
-      setTodayClassCount(nextTodayCount);
       setAlertSummary(alerts);
       setAnnPreview(nextAnnPreview);
       setUpNextClass(nextUpSummary);
 
       writeHomeCache({
         summary: { ...homeSum, vaultFolders: [] },
-        plannerDueCount: nextDueCount,
         courseCount: nextCourseCount,
-        todayClassCount: nextTodayCount,
         annPreview: nextAnnPreview,
         upNextClass: nextUpSummary,
       });
@@ -321,11 +315,8 @@ export default function FoldersScreen({
       const homeSum = await getHomeSummary().catch(() => EMPTY_SUMMARY);
       setSummary(homeSum);
       setReviewStats(getReviewStats());
-      setShowToolkit(isDevToolkitEnabled());
-      setShowCoding(isLearnCodingEnabled());
       setNotifLeadMin(getNotificationSettings().classReminderLeadMin || 10);
       setVaultUnlocked(isVaultUnlocked());
-      setPlannerDueCount(0);
       setCourseCount(0);
       setAlertSummary(null);
       setAnnPreview({ total: 0, unread: 0, pinned: 0, latest: [] });
@@ -583,12 +574,22 @@ export default function FoldersScreen({
     pinnedCount,
     trashCount,
     dueCardsCount = 0,
-    totalCardsCount = 0,
     tags,
+    recentNotes = [],
   } = summary;
 
+  const urgentHeadline =
+    alertSummary && alertSummary.totalUrgent > 0 && !alertSummary.snoozed
+      ? [
+          alertSummary.overdue.length > 0 ? `${alertSummary.overdue.length} overdue` : '',
+          alertSummary.dueToday.length > 0 ? `${alertSummary.dueToday.length} due today` : '',
+        ]
+          .filter(Boolean)
+          .join(' · ')
+      : '';
+
   return (
-    <div className="screen list-pad-bottom">
+    <div className="screen list-pad-bottom-nav">
       <header className="navbar navbar-home">
         <span className="home-brand-eyebrow">Notes by Bai</span>
         <div className="flex items-center gap-6">
@@ -628,7 +629,7 @@ export default function FoldersScreen({
       </header>
 
       <div
-        className="home-hero-header"
+        className="home-hero-header home-hero-editorial"
         onContextMenu={e => {
           e.preventDefault();
           handleToggleHiddenVault();
@@ -637,7 +638,7 @@ export default function FoldersScreen({
       >
         <div className="home-hero-eyebrow">{getStudioGreeting()}</div>
         <div className="home-hero-row">
-          <h1 className="home-hero-title">Folders</h1>
+          <h1 className="home-hero-title">Notes</h1>
           <span className="home-hero-sub">
             {totalNotes} {totalNotes === 1 ? 'note' : 'notes'} · {folders.length}{' '}
             {folders.length === 1 ? 'subject' : 'subjects'}
@@ -724,263 +725,86 @@ export default function FoldersScreen({
         </div>
       )}
 
-      {/* Persistent In-App Reminder Banner for Overdue / Due Today / Unread Canvas Announcements */}
-      {alertSummary && alertSummary.totalUrgent > 0 && !alertSummary.snoozed && (
-        <div className="sticky-alert-banner" role="alert">
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 9 }}>
-            <Bell size={17} style={{ color: '#ff375f', flexShrink: 0, marginTop: 2 }} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13.5, fontWeight: 700, lineHeight: 1.3 }}>
-                {[
-                  alertSummary.overdue.length > 0 ? `${alertSummary.overdue.length} overdue` : '',
-                  alertSummary.dueToday.length > 0 ? `${alertSummary.dueToday.length} due today` : '',
-                  alertSummary.unreadAnnouncements.length > 0
-                    ? `${alertSummary.unreadAnnouncements.length} new announcement${alertSummary.unreadAnnouncements.length === 1 ? '' : 's'}`
-                    : '',
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
-                {(alertSummary.overdue[0] || alertSummary.dueToday[0] || alertSummary.unreadAnnouncements[0])?.title}
-              </div>
-              <div className="flex gap-6 mt-8" style={{ flexWrap: 'wrap' }}>
-                {(alertSummary.overdue.length > 0 || alertSummary.dueToday.length > 0) && (
-                  <button type="button" className="row-action-chip active-chip" onClick={onOpenPlanner}>
-                    View Tasks
-                  </button>
-                )}
-                {alertSummary.unreadAnnouncements.length > 0 && onOpenAnnouncements && (
-                  <button
-                    type="button"
-                    className="row-action-chip active-chip"
-                    onClick={onOpenAnnouncements}
-                  >
-                    Open Announcements
-                  </button>
-                )}
-                {alertSummary.overdue.length > 0 && (
-                  <button
-                    type="button"
-                    className="row-action-chip"
-                    onClick={async () => {
-                      const { markPastTasksDone } = await import('../lib/canvasSync');
-                      const n = await markPastTasksDone();
-                      refresh();
-                      toast(`Marked ${n} past/submitted item${n === 1 ? '' : 's'} as Done!`, { type: 'success' });
-                    }}
-                  >
-                    ✓ Mark Overdue Done
-                  </button>
-                )}
-                {alertSummary.unreadAnnouncements.length > 0 && (
-                  <button
-                    type="button"
-                    className="row-action-chip"
-                    onClick={() => {
-                      markAllAnnouncementsRead(alertSummary.unreadAnnouncements);
-                      refresh();
-                    }}
-                  >
-                    Mark Posts Read
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="row-action-chip"
-                  onClick={() => {
-                    snoozeInAppBanner(60);
-                    refresh();
-                    toast('Reminder snoozed for 1 hour');
-                  }}
-                >
-                  Snooze 1h
-                </button>
-              </div>
-            </div>
-          </div>
+      {/* 1. Compact 1-Line Smart Context Strip (Live/Next Class, Due Review, or Urgent Task) */}
+      {(upNextClass || dueCardsCount > 0 || urgentHeadline) && (
+        <div className="home-context-row">
+          {urgentHeadline && (
+            <button
+              type="button"
+              className="home-context-pill is-urgent"
+              onClick={onOpenPlanner}
+            >
+              <Bell size={13} />
+              <span>{urgentHeadline}</span>
+            </button>
+          )}
+          {upNextClass && (
+            <button
+              type="button"
+              className={`home-context-pill${upNextClass.status === 'now' ? ' is-live' : ''}`}
+              onClick={() => onOpenCourses?.({ section: 'schedule' })}
+            >
+              <Clock size={13} />
+              <span>
+                {upNextClass.status === 'now'
+                  ? `LIVE · ${upNextClass.code} (${upNextClass.minutesLeft}m left)`
+                  : upNextClass.status === 'today' && upNextClass.minutesUntil <= notifLeadMin
+                    ? `In ${upNextClass.minutesUntil}m · ${upNextClass.code}`
+                    : `${upNextClass.dayLabel} · ${upNextClass.code} ${upNextClass.timeRange}`}
+              </span>
+            </button>
+          )}
+          {dueCardsCount > 0 && (
+            <button
+              type="button"
+              className="home-context-pill is-review"
+              onClick={onOpenReview}
+            >
+              <Brain size={13} />
+              <span>
+                {dueCardsCount} due review{reviewStats.streak > 0 ? ` · ${reviewStats.streak}d` : ''}
+              </span>
+              {reviewStats.streak > 0 && <Flame size={12} />}
+            </button>
+          )}
         </div>
       )}
 
-      {/* Compact 3-Chip Quick Stat Bento Strip */}
-      <div className="home-stat-strip" role="region" aria-label="Quick Collections">
-        <button
-          type="button"
-          className="home-stat-card"
-          onClick={() => onOpenFolder({ id: '__all__', name: 'All Notes', isSmart: true })}
-        >
-          <div className="home-stat-top">
-            <span className="home-stat-icon tone-indigo">
-              <FileText size={15} />
-            </span>
-            <span className="home-stat-val">{totalNotes}</span>
-          </div>
-          <div className="home-stat-label">All Notes</div>
-        </button>
-
-        <button
-          type="button"
-          className="home-stat-card"
-          onClick={() => onOpenFolder({ id: '__pinned__', name: 'Pinned', isSmart: true })}
-        >
-          <div className="home-stat-top">
-            <span className="home-stat-icon tone-amber">
-              <Pin size={15} />
-            </span>
-            <span className="home-stat-val">{pinnedCount}</span>
-          </div>
-          <div className="home-stat-label">Pinned</div>
-        </button>
-
-        <button
-          type="button"
-          className={`home-stat-card${dueCardsCount > 0 ? ' has-due' : ''}`}
-          onClick={onOpenReview}
-        >
-          <div className="home-stat-top">
-            <span className="home-stat-icon tone-violet">
-              <Brain size={15} />
-            </span>
-            {reviewStats.streak > 0 ? (
-              <span className="streak-pill" style={{ padding: '2px 6px', fontSize: 10.5 }}>
-                <Flame size={10} /> {reviewStats.streak}d
-              </span>
-            ) : (
-              <span className="home-stat-val">{dueCardsCount > 0 ? dueCardsCount : totalCardsCount}</span>
-            )}
-          </div>
-          <div className="home-stat-label">
-            {dueCardsCount > 0 ? `${dueCardsCount} Due Review` : 'Daily Review'}
-          </div>
-        </button>
-      </div>
-
-      {/* Compact Setup & Tour Nudge for New Unconfigured Users */}
-      {!setupBannerDismissed &&
-        courseCount === 0 &&
-        !getDirectConfig().apiKey?.trim() &&
-        (onOpenSetupWizard || onOpenFeatureGuide) && (
-          <div className="home-setup-nudge">
-            <div className="flex items-center gap-8" style={{ flex: 1, minWidth: 0 }}>
-              <span className="home-stat-icon tone-indigo" style={{ flexShrink: 0 }}>
-                <Compass size={15} />
-              </span>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
-                  Quick Setup &amp; Tour
-                </div>
-                <div style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
-                  Import schedule, connect AI, or explore tools
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center gap-6" style={{ flexShrink: 0 }}>
-              <button
-                type="button"
-                className="row-action-chip active-chip"
-                onClick={() => (onOpenSetupWizard ? onOpenSetupWizard() : onOpenFeatureGuide?.())}
-              >
-                Start
-              </button>
-              <button
-                type="button"
-                className="row-icon-btn"
-                aria-label="Dismiss setup banner"
-                onClick={() => {
-                  setSetupBannerDismissed(true);
-                  try {
-                    localStorage.setItem(SETUP_BANNER_DISMISSED_KEY, 'true');
-                  } catch {
-                    // ignore
-                  }
-                }}
-              >
-                <X size={13} />
-              </button>
-            </div>
-          </div>
-        )}
-
-      {/* Up Next / Live Class Compact Strip */}
-      {upNextClass && (
-        <div
-          className={`home-upnext-bar${upNextClass.status === 'now' ? ' is-live' : ''}${
-            upNextClass.status === 'today' && upNextClass.minutesUntil <= notifLeadMin
-              ? ' is-imminent'
-              : ''
-          }`}
-          role="button"
-          tabIndex={0}
-          onClick={() => onOpenCourses?.({ section: 'schedule' })}
-          onKeyDown={e => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              onOpenCourses?.({ section: 'schedule' });
-            }
-          }}
-        >
-          <div className="home-upnext-left">
-            <span className="home-upnext-badge">
-              {upNextClass.status === 'now'
-                ? `LIVE · ${upNextClass.minutesLeft}m left`
-                : upNextClass.status === 'today'
-                  ? upNextClass.minutesUntil <= notifLeadMin
-                    ? `STARTING IN ${upNextClass.minutesUntil}m`
-                    : `NEXT IN ${upNextClass.minutesUntil}m`
-                  : upNextClass.dayLabel}
-            </span>
-            <div className="home-upnext-main">
-              <strong>{upNextClass.code}</strong> · {upNextClass.timeRange}
-              {upNextClass.room ? ` · ${upNextClass.room}` : ''}
-            </div>
-          </div>
-          <button
-            type="button"
-            className="row-action-chip active-chip"
-            style={{ flexShrink: 0 }}
-            onClick={async e => {
-              e.stopPropagation();
-              const targetFolder =
-                summary.folders.find(f => f.id === upNextClass.folderId) ||
-                summary.folders.find(f => f.name.toLowerCase() === upNextClass.code.toLowerCase()) ||
-                summary.folders.find(f => f.name === 'General') ||
-                summary.folders[0];
-              if (!targetFolder) return;
-              const dateTag = new Date().toLocaleDateString([], { month: 'short', day: 'numeric' });
-              const created = await createNote(
-                targetFolder.id,
-                `${upNextClass.code} — ${dateTag}`,
-                '',
-                upNextClass.code
-              );
-              onOpenNote(created, targetFolder, 'edit');
-            }}
-          >
-            <SquarePen size={11} /> Start Note
-          </button>
-        </div>
-      )}
-
-      {/* Dedicated Live Announcements Command Card */}
+      {/* 2. TOP SPOTLIGHT: Announcements Card — Easiest Seen Right at the Top! */}
       {onOpenAnnouncements && (
-        <section className={`home-ann-panel${annPreview.unread > 0 ? ' has-unread' : ''}`}>
+        <section
+          className={`home-ann-panel home-ann-spotlight${annPreview.unread > 0 ? ' has-unread' : ''}`}
+          aria-label="Class Announcements Spotlight"
+        >
           <div className="home-ann-header">
             <button
               type="button"
               className="home-ann-title-btn"
               onClick={onOpenAnnouncements}
             >
-              <span className="home-ann-icon">
-                <Megaphone size={17} />
+              <span className="home-ann-icon home-ann-icon-spot">
+                <Megaphone size={18} />
               </span>
               <span className="home-ann-title">Announcements</span>
               {annPreview.unread > 0 ? (
-                <span className="home-ann-badge is-new">{annPreview.unread} new</span>
+                <span className="home-ann-badge is-new">{annPreview.unread} unread</span>
               ) : annPreview.total > 0 ? (
                 <span className="home-ann-badge">{annPreview.total}</span>
               ) : null}
             </button>
             <div className="flex items-center gap-6">
+              {annPreview.unread > 0 && alertSummary?.unreadAnnouncements?.length > 0 && (
+                <button
+                  type="button"
+                  className="row-action-chip"
+                  onClick={() => {
+                    markAllAnnouncementsRead(alertSummary.unreadAnnouncements);
+                    refresh();
+                  }}
+                >
+                  Mark read
+                </button>
+              )}
               <button
                 type="button"
                 className="icon-btn"
@@ -1013,10 +837,10 @@ export default function FoldersScreen({
               </button>
               <button
                 type="button"
-                className="row-action-chip"
+                className="row-action-chip active-chip"
                 onClick={onOpenAnnouncements}
               >
-                Open <ChevronRight size={13} />
+                View All <ChevronRight size={13} />
               </button>
             </div>
           </div>
@@ -1027,8 +851,8 @@ export default function FoldersScreen({
               className="home-ann-empty"
               onClick={onOpenAnnouncements}
             >
-              <span>Connect Canvas RSS feeds or paste class announcements.</span>
-              <ChevronRight size={15} style={{ flexShrink: 0, opacity: 0.6 }} />
+              <span>Connect Canvas RSS feeds or paste teacher announcements so updates appear right here.</span>
+              <ChevronRight size={15} style={{ flexShrink: 0, opacity: 0.7 }} />
             </button>
           ) : (
             <div className="home-ann-items">
@@ -1036,7 +860,7 @@ export default function FoldersScreen({
                 <button
                   key={item.id}
                   type="button"
-                  className="home-ann-item"
+                  className={`home-ann-item${!item._read ? ' is-unread' : ''}`}
                   onClick={onOpenAnnouncements}
                 >
                   <div className="home-ann-item-top">
@@ -1075,129 +899,146 @@ export default function FoldersScreen({
         </section>
       )}
 
-      {/* Quick Creation, Import, Record & Focus Row */}
-      <div className="quick-action-row" style={{ flexWrap: 'wrap' }}>
+      {/* Compact Setup & Tour Nudge for New Unconfigured Users */}
+      {!setupBannerDismissed &&
+        courseCount === 0 &&
+        !getDirectConfig().key?.trim() &&
+        (onOpenSetupWizard || onOpenFeatureGuide) && (
+          <div className="home-setup-nudge">
+            <div className="flex items-center gap-8" style={{ flex: 1, minWidth: 0 }}>
+              <span className="home-stat-icon tone-indigo" style={{ flexShrink: 0 }}>
+                <Compass size={15} />
+              </span>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
+                  Quick Setup &amp; Tour
+                </div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-secondary)' }}>
+                  Import schedule, connect free AI, or explore tools
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-6" style={{ flexShrink: 0 }}>
+              <button
+                type="button"
+                className="row-action-chip active-chip"
+                onClick={() => (onOpenSetupWizard ? onOpenSetupWizard() : onOpenFeatureGuide?.())}
+              >
+                Start
+              </button>
+              <button
+                type="button"
+                className="row-icon-btn"
+                aria-label="Dismiss setup banner"
+                onClick={() => {
+                  setSetupBannerDismissed(true);
+                  try {
+                    localStorage.setItem(SETUP_BANNER_DISMISSED_KEY, 'true');
+                  } catch {
+                    // ignore
+                  }
+                }}
+              >
+                <X size={13} />
+              </button>
+            </div>
+          </div>
+        )}
+
+      {/* 3. Recent & Pinned Notes Carousel */}
+      <div className="home-section-row">
+        <div className="section-heading" style={{ padding: 0 }}>Recent &amp; Pinned</div>
+        <div className="flex items-center gap-6">
+          <button
+            type="button"
+            className="row-action-chip"
+            onClick={() => onOpenFolder({ id: '__all__', name: 'All Notes', isSmart: true })}
+          >
+            <FileText size={11} /> All ({totalNotes})
+          </button>
+          {pinnedCount > 0 && (
+            <button
+              type="button"
+              className="row-action-chip"
+              onClick={() => onOpenFolder({ id: '__pinned__', name: 'Pinned', isSmart: true })}
+            >
+              <Pin size={11} /> {pinnedCount}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {recentNotes.length > 0 && (
+        <div className="recent-notes-strip" role="region" aria-label="Recent and pinned notes">
+          {recentNotes.map(rn => (
+            <button
+              key={rn.id}
+              type="button"
+              className={`recent-note-card${rn.pinned ? ' is-pinned' : ''}`}
+              onClick={async () => {
+                const full = await db.notes.get(rn.id);
+                if (!full) return;
+                const targetF = folders.find(f => f.id === full.folderId) || {
+                  id: '__all__',
+                  name: rn.folderName || 'All Notes',
+                };
+                onOpenNote(full, targetF);
+              }}
+            >
+              <div className="recent-note-top">
+                <span className="recent-note-folder">{rn.folderName}</span>
+                {rn.pinned && <Pin size={11} style={{ color: 'var(--accent-ink)', flexShrink: 0 }} />}
+              </div>
+              <div className="recent-note-title">{rn.title}</div>
+              <div className="recent-note-preview">{rn.preview}</div>
+              <div className="recent-note-foot">{formatShortAge(rn.updatedAt)}</div>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* 4. Compact Quick Capture Row */}
+      <div className="quick-action-row home-capture-strip">
         <button
           type="button"
-          className="quick-action-btn"
+          className="quick-action-chip"
           onClick={() => setImportOpen(true)}
         >
           <span className="quick-action-icon tone-indigo">
-            <FileUp size={15} />
+            <FileUp size={14} />
           </span>
-          <span>Import PDF / Doc</span>
+          <span>Import PDF/Doc</span>
         </button>
         <button
           type="button"
-          className="quick-action-btn"
+          className="quick-action-chip"
           onClick={() => setTemplatesOpen(true)}
         >
           <span className="quick-action-icon tone-amber">
-            <LayoutTemplate size={15} />
+            <LayoutTemplate size={14} />
           </span>
           <span>Templates</span>
         </button>
         <button
           type="button"
-          className="quick-action-btn"
+          className="quick-action-chip"
           onClick={() => setRecorderOpen(true)}
         >
-          <span className="quick-action-icon tone-emerald">
-            <Mic size={15} />
+          <span className="quick-action-icon tone-rose">
+            <Mic size={14} />
           </span>
-          <span>Record Lecture</span>
+          <span>Record</span>
         </button>
-        <button
-          type="button"
-          className="quick-action-btn"
-          onClick={() => setFocusOpen(true)}
-        >
-          <span className="quick-action-icon tone-violet">
-            <Timer size={15} />
-          </span>
-          <span>Focus Timer</span>
-        </button>
-      </div>
-
-      {/* Bento Workspace Hub Grid (with dedicated 1-Tap Schedule tile!) */}
-      <div className="home-bento-grid" role="region" aria-label="Student Workspace Hubs">
-        <button
-          type="button"
-          className="bento-tile bento-indigo"
-          onClick={() => onOpenCourses?.({ section: 'schedule' })}
-        >
-          <div className="bento-tile-top">
-            <span className="bento-tile-icon">
-              <Clock size={18} />
+        {onOpenSyllabus && (
+          <button
+            type="button"
+            className="quick-action-chip"
+            onClick={onOpenSyllabus}
+          >
+            <span className="quick-action-icon tone-emerald">
+              <Sparkles size={14} />
             </span>
-            {todayClassCount > 0 && (
-              <span className="bento-tile-pill">{todayClassCount} today</span>
-            )}
-          </div>
-          <div className="bento-tile-title">Schedule</div>
-          <div className="bento-tile-sub">Day &amp; week timetable</div>
-        </button>
-
-        <button type="button" className="bento-tile bento-indigo" onClick={() => onOpenCourses?.()}>
-          <div className="bento-tile-top">
-            <span className="bento-tile-icon">
-              <BookOpen size={18} />
-            </span>
-            {courseCount > 0 && <span className="bento-tile-pill">{courseCount}</span>}
-          </div>
-          <div className="bento-tile-title">Courses</div>
-          <div className="bento-tile-sub">Modules &amp; Course AI</div>
-        </button>
-
-        <button type="button" className="bento-tile bento-rose" onClick={onOpenPlanner}>
-          <div className="bento-tile-top">
-            <span className="bento-tile-icon">
-              <Calendar size={18} />
-            </span>
-            {plannerDueCount > 0 && (
-              <span className="bento-tile-pill is-alert">{plannerDueCount} due</span>
-            )}
-          </div>
-          <div className="bento-tile-title">Planner &amp; Canvas</div>
-          <div className="bento-tile-sub">Calendar, sync &amp; scores</div>
-        </button>
-
-        {showCoding && (
-          <button type="button" className="bento-tile bento-emerald" onClick={onOpenCoding}>
-            <div className="bento-tile-top">
-              <span className="bento-tile-icon">
-                <Code2 size={18} />
-              </span>
-              <span className="bento-tile-pill">18 Langs</span>
-            </div>
-            <div className="bento-tile-title">Learn Coding</div>
-            <div className="bento-tile-sub">Guides, runner &amp; algo</div>
-          </button>
-        )}
-
-        {onOpenSubjects && (
-          <button type="button" className="bento-tile bento-indigo" onClick={onOpenSubjects}>
-            <div className="bento-tile-top">
-              <span className="bento-tile-icon">
-                <GraduationCap size={18} />
-              </span>
-              <span className="bento-tile-pill">MS 102</span>
-            </div>
-            <div className="bento-tile-title">Learn Subjects</div>
-            <div className="bento-tile-sub">Quant lab &amp; open docs</div>
-          </button>
-        )}
-
-        {showToolkit && (
-          <button type="button" className="bento-tile bento-violet" onClick={onOpenToolkit}>
-            <div className="bento-tile-top">
-              <span className="bento-tile-icon">
-                <Wrench size={18} />
-              </span>
-              <span className="bento-tile-pill">Offline</span>
-            </div>
-            <div className="bento-tile-title">IT Toolkit</div>
-            <div className="bento-tile-sub">Grapher, bugs &amp; tools</div>
+            <span>Syllabus AI</span>
           </button>
         )}
       </div>
@@ -1314,18 +1155,30 @@ export default function FoldersScreen({
         </>
       )}
 
-      {/* Subject Folders */}
-      <div className="section-heading">Subjects</div>
-      <div className="list-group folder-cards-group">
-        {folders.length === 0 ? (
+      {/* 5. 2-Column Subject Folders Grid */}
+      <div className="home-section-row">
+        <div className="section-heading" style={{ padding: 0 }}>Subjects</div>
+        <button
+          type="button"
+          className="row-action-chip"
+          onClick={handleNewFolder}
+        >
+          <FolderPlus size={12} /> New Folder
+        </button>
+      </div>
+
+      {folders.length === 0 ? (
+        <div className="list-group">
           <div className="list-item list-item-static">
-            <span className="list-item-subtitle">No folders yet — tap the + icon to add one.</span>
+            <span className="list-item-subtitle">No folders yet — tap New Folder to add one.</span>
           </div>
-        ) : (
-          folders.map(folder => (
+        </div>
+      ) : (
+        <div className="folder-grid-2col">
+          {folders.map(folder => (
             <div
               key={folder.id}
-              className="list-item"
+              className="folder-grid-card"
               role="button"
               tabIndex={0}
               onClick={() => {
@@ -1349,55 +1202,56 @@ export default function FoldersScreen({
                 setMenuFolder(folder);
               }}
             >
-              <span className={`list-item-icon folder-icon-badge ${getFolderBadgeClass(folder, vaultUnlocked)}`}>
-                {folder.locked && !vaultUnlocked ? <Lock size={15} /> : <Folder size={16} />}
-              </span>
-              <div className="list-item-body">
-                <div className="list-item-title">
-                  <span>{folder.name}</span>
-                  {folder.mode && folder.mode !== 'study' && (
-                    <span className={`mode-badge mode-${folder.mode}`}>
-                      {getModeMeta(folder.mode).badge}
-                    </span>
+              <div className="folder-grid-top">
+                <span className={`list-item-icon folder-icon-badge ${getFolderBadgeClass(folder, vaultUnlocked)}`}>
+                  {folder.locked && !vaultUnlocked ? <Lock size={15} /> : <Folder size={16} />}
+                </span>
+                <div className="flex items-center gap-4">
+                  {folder.noteCount > 0 && !(folder.locked && !vaultUnlocked) && folder.mode !== 'journal' && (
+                    <button
+                      type="button"
+                      className="row-icon-btn"
+                      aria-label={`Exam summary for ${folder.name}`}
+                      title="Exam summary & paper builder"
+                      onClick={e => {
+                        e.stopPropagation();
+                        onOpenExam?.(folder);
+                      }}
+                    >
+                      <GraduationCap size={15} />
+                    </button>
                   )}
-                </div>
-                <div className="list-item-subtitle">
-                  {folder.locked && !vaultUnlocked
-                    ? 'Private · PIN locked'
-                    : `${folder.noteCount} note${folder.noteCount === 1 ? '' : 's'}`}
-                </div>
-              </div>
-              <div className="list-item-meta">
-                {folder.noteCount > 0 && !(folder.locked && !vaultUnlocked) && folder.mode !== 'journal' && (
                   <button
                     type="button"
-                    className="row-action-chip"
+                    className="row-icon-btn"
+                    aria-label={`More actions for ${folder.name}`}
                     onClick={e => {
                       e.stopPropagation();
-                      onOpenExam?.(folder);
+                      setMenuFolder(folder);
                     }}
-                    title="Exam summary & paper builder"
                   >
-                    <GraduationCap size={14} /> Exam
+                    <MoreHorizontal size={16} />
                   </button>
+                </div>
+              </div>
+
+              <div className="folder-grid-name">{folder.name}</div>
+              <div className="folder-grid-meta">
+                <span>
+                  {folder.locked && !vaultUnlocked
+                    ? 'PIN locked'
+                    : `${folder.noteCount} note${folder.noteCount === 1 ? '' : 's'}`}
+                </span>
+                {folder.mode && folder.mode !== 'study' && (
+                  <span className={`mode-badge mode-${folder.mode}`}>
+                    {getModeMeta(folder.mode).badge}
+                  </span>
                 )}
-                <button
-                  type="button"
-                  className="row-icon-btn"
-                  aria-label={`More actions for ${folder.name}`}
-                  onClick={e => {
-                    e.stopPropagation();
-                    setMenuFolder(folder);
-                  }}
-                >
-                  <MoreHorizontal size={17} />
-                </button>
-                <ChevronRight size={17} className="list-item-chevron" />
               </div>
             </div>
-          ))
-        )}
-      </div>
+          ))}
+        </div>
+      )}
 
       {/* Tags */}
       {tags.length > 0 && (
@@ -1581,12 +1435,6 @@ export default function FoldersScreen({
             }}
             onClose={() => setPinRequest(null)}
           />
-        </Suspense>
-      )}
-
-      {focusOpen && (
-        <Suspense fallback={null}>
-          <FocusPomodoroSheet onClose={() => setFocusOpen(false)} />
         </Suspense>
       )}
 

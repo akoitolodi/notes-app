@@ -67,6 +67,7 @@ const KIND_ICONS = {
 const SmartDetectBar = memo(function SmartDetectBar({
   title = '',
   body,
+  selection = null,
   subject = 'General',
   currentNoteId = null,
   currentFolderId = null,
@@ -114,7 +115,7 @@ const SmartDetectBar = memo(function SmartDetectBar({
   }, [isZeroAi, enabled, debouncedBody, corpus]);
 
   const detections = useMemo(() => {
-    const base = detectBlankNoteIntents(debouncedBody, { isZeroAi, enabled });
+    const base = detectBlankNoteIntents(debouncedBody, { isZeroAi, enabled, selection });
     if (isZeroAi || !enabled || !corpus || debouncedBody.trim().length < 28) {
       return base;
     }
@@ -158,6 +159,7 @@ const SmartDetectBar = memo(function SmartDetectBar({
     return [...base, ...extra].slice(0, 3);
   }, [
     debouncedBody,
+    selection,
     title,
     isZeroAi,
     enabled,
@@ -225,15 +227,39 @@ const SmartDetectBar = memo(function SmartDetectBar({
   };
 
   const handleWrapCodeBlock = meta => {
-    if (!meta || meta.isFenced || typeof meta.startLine !== 'number') return;
-    const lines = String(body || '').replace(/\r\n?/g, '\n').split('\n');
+    if (!meta || meta.isFenced) return;
+    const normalizedBody = String(body || '').replace(/\r\n?/g, '\n');
+    const fenceTag = meta.langId === 'javascript' ? 'js' : meta.langId === 'python' ? 'py' : meta.langId;
+
+    if (meta.isSelection && meta.code) {
+      let start = typeof meta.selectionStart === 'number' ? meta.selectionStart : -1;
+      let end = typeof meta.selectionEnd === 'number' ? meta.selectionEnd : -1;
+      if (start < 0 || end <= start || normalizedBody.slice(start, end).trim() !== meta.code) {
+        const idx = normalizedBody.indexOf(meta.code);
+        if (idx !== -1) {
+          start = idx;
+          end = idx + meta.code.length;
+        }
+      }
+      if (start >= 0 && end > start) {
+        const before = normalizedBody.slice(0, start).replace(/\s+$/, '');
+        const after = normalizedBody.slice(end).replace(/^\s+/, '');
+        const wrapped = `\`\`\`${fenceTag}\n${meta.code}\n\`\`\``;
+        const next = [before, wrapped, after].filter(Boolean).join('\n\n');
+        onReplaceBody?.(next);
+        toast(`Wrapped selected ${meta.langName} block`, { type: 'success' });
+        return;
+      }
+    }
+
+    if (typeof meta.startLine !== 'number') return;
+    const lines = normalizedBody.split('\n');
     const before = lines.slice(0, meta.startLine);
     const codeSeg = lines.slice(meta.startLine, meta.endLine + 1);
     const after = lines.slice(meta.endLine + 1);
-    const fenceTag = meta.langId === 'javascript' ? 'js' : meta.langId === 'python' ? 'py' : meta.langId;
     const next = [...before, `\`\`\`${fenceTag}`, ...codeSeg, '```', ...after].join('\n');
     onReplaceBody?.(next);
-    toast(`Wrapped as ${meta.langName} block`, { type: 'success' });
+    toast(`Wrapped full ${meta.langName} block (${codeSeg.length} lines)`, { type: 'success' });
   };
 
   const handleAiAssist = async ({ mode, promptTitle, systemPrompt, userPrompt, insertHeading }) => {
@@ -242,11 +268,20 @@ const SmartDetectBar = memo(function SmartDetectBar({
     try {
       const plainInstruction =
         ' Format your reply in clean plain text only — do NOT use markdown asterisks (*, **), hashtags (#), or LaTeX dollar signs ($). Use simple numbered steps (1., 2., 3.) and plain symbols (×, ÷, =, →).';
+      const task =
+        mode === 'debug'
+          ? 'code'
+          : mode === 'translate'
+            ? 'fast'
+            : mode === 'math-steps' || mode === 'phys'
+              ? 'reasoning'
+              : 'balanced';
       const reply = await aiText({
         system: `${systemPrompt}${plainInstruction}`,
         user: userPrompt,
         maxTokens: 900,
         timeoutMs: 45000,
+        task,
       });
       const clean = cleanAiOutputText(reply, { preserveCode: mode === 'debug' });
       setOutputCard({

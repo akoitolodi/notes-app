@@ -97,12 +97,37 @@ const LANG_LABELS = {
   ruby: 'Ruby',
 };
 
-/** Score raw text for programming language fingerprints (works WITHOUT ``` backticks!). */
-export function detectRawCode(body) {
+/**
+ * Smart Full-Block Boundary Engine + Language Fingerprint Detector (works WITHOUT ``` backticks!).
+ * Respects explicit user text selection first, then detects full programs across blank lines,
+ * comments, unclosed delimiters ({} / () / [] / HTML tags), and mixed prose+code notes.
+ */
+export function detectRawCode(body, { selection = null } = {}) {
   const text = String(body || '');
   if (!text.trim()) return null;
 
-  // 1. Check explicit fenced code blocks first (use the most recent block)
+  // 0. Explicit text selection priority: if user highlighted code, Run/Wrap targets the exact selection
+  const selText = String(selection?.text || '').replace(/\r\n?/g, '\n').trim();
+  if (selText && selText.length >= 4) {
+    const selLines = selText.split('\n');
+    const hasCodeLine = selLines.some(l => isLikelyCodeLine(l));
+    const selLang = inferLanguageFromSnippet(selText);
+    if (selLang || (hasCodeLine && selLines.length >= 1)) {
+      const langId = selLang || 'javascript';
+      return {
+        langId,
+        langName: LANG_LABELS[langId] || langId,
+        code: selText,
+        isFenced: false,
+        isSelection: true,
+        selectionStart: typeof selection?.start === 'number' ? selection.start : null,
+        selectionEnd: typeof selection?.end === 'number' ? selection.end : null,
+        lineCount: selLines.length,
+      };
+    }
+  }
+
+  // 1. Check explicit fenced code blocks, and ALSO inspect any trailing unfenced code after the last fence
   const fenceRe = /```([a-zA-Z0-9+#_-]*)[ \t]*\r?\n([\s\S]*?)```/g;
   let lastFence = null;
   let fm;
@@ -119,6 +144,15 @@ export function detectRawCode(body) {
     }
   }
 
+  // If there is unfenced code AFTER the last closed fence, detect that new block instead of ignoring it
+  const scanSource = lastFence ? text.slice(lastFence.end) : text;
+  const lineOffset = lastFence ? text.slice(0, lastFence.end).split(/\r?\n/).length - 1 : 0;
+
+  if (scanSource.trim()) {
+    const unfenced = detectUnfencedFullBlock(scanSource, lineOffset);
+    if (unfenced) return unfenced;
+  }
+
   if (lastFence) {
     const inferred =
       FENCE_LANG_ALIASES[lastFence.rawLang] || inferLanguageFromSnippet(lastFence.code) || 'javascript';
@@ -127,35 +161,156 @@ export function detectRawCode(body) {
       langName: LANG_LABELS[inferred] || inferred,
       code: lastFence.code,
       isFenced: true,
+      lineCount: lastFence.code.split(/\r?\n/).length,
     };
   }
 
-  // 2. Detect unfenced raw code lines typed directly into a blank note!
-  const lines = text.split(/\r?\n/);
-  const codeLineFlags = lines.map(line => isLikelyCodeLine(line));
+  return null;
+}
 
-  // Find the most recent contiguous code segment (allowing 1 blank line between code lines)
+function classifyCodeLine(rawLine) {
+  const s = String(rawLine || '').trim();
+  if (!s) return 'blank';
+  if (/^#{1,6}\s+|^-\s*\[[ xX]\]|^https?:\/\//i.test(s)) return 'prose';
+  if (isStrongCodeLine(rawLine)) return 'strong';
+  if (isWeakCodeLine(rawLine)) return 'weak';
+  return 'prose';
+}
+
+function deltaDelimiters(rawLine) {
+  const s = String(rawLine || '').replace(/(["'`])(?:\\.|(?!\1).)*\1/g, '');
+  let braces = 0;
+  let parens = 0;
+  let brackets = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === '{') braces += 1;
+    else if (ch === '}') braces -= 1;
+    else if (ch === '(') parens += 1;
+    else if (ch === ')') parens -= 1;
+    else if (ch === '[') brackets += 1;
+    else if (ch === ']') brackets -= 1;
+  }
+  return { braces, parens, brackets };
+}
+
+function detectUnfencedFullBlock(rawText, lineOffset = 0) {
+  const lines = String(rawText || '').split(/\r?\n/);
+  const kinds = lines.map(classifyCodeLine);
+
+  const nonBlankIndices = [];
+  let strongCount = 0;
+  let codeishCount = 0;
+  for (let i = 0; i < lines.length; i++) {
+    if (kinds[i] === 'blank') continue;
+    nonBlankIndices.push(i);
+    if (kinds[i] === 'strong') strongCount += 1;
+    if (kinds[i] === 'strong' || kinds[i] === 'weak') codeishCount += 1;
+  }
+
+  if (strongCount === 0 || nonBlankIndices.length === 0) return null;
+
+  // Global density fast-path: if >= 60% of the note (ignoring an optional single title line at top)
+  // is code, capture the ENTIRE program from first code line to last code line!
+  const firstNonBlank = nonBlankIndices[0];
+  const afterTitleNonBlank =
+    kinds[firstNonBlank] === 'prose' && nonBlankIndices.length > 2
+      ? nonBlankIndices.slice(1)
+      : nonBlankIndices;
+  const codeAfterTitle = afterTitleNonBlank.filter(
+    i => kinds[i] === 'strong' || kinds[i] === 'weak'
+  ).length;
+  const density = afterTitleNonBlank.length > 0 ? codeAfterTitle / afterTitleNonBlank.length : 0;
+
+  let startIdx = -1;
   let endIdx = -1;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    if (codeLineFlags[i]) {
-      endIdx = i;
-      break;
-    }
-  }
-  if (endIdx === -1) return null;
 
-  let startIdx = endIdx;
-  let blanksSeen = 0;
-  for (let i = endIdx - 1; i >= 0; i--) {
-    if (codeLineFlags[i]) {
-      startIdx = i;
-      blanksSeen = 0;
-    } else if (!lines[i].trim() && blanksSeen < 1) {
-      blanksSeen += 1;
-    } else {
+  if (density >= 0.6) {
+    const firstCodeIdx = afterTitleNonBlank.find(i => kinds[i] === 'strong' || kinds[i] === 'weak');
+    const lastCodeIdx = [...afterTitleNonBlank]
+      .reverse()
+      .find(i => kinds[i] === 'strong' || kinds[i] === 'weak');
+    if (firstCodeIdx !== undefined && lastCodeIdx !== undefined && firstCodeIdx <= lastCodeIdx) {
+      startIdx = firstCodeIdx;
+      endIdx = lastCodeIdx;
+    }
+  }
+
+  // Otherwise, expand around the most recent code region bridging blank lines, comments, and unclosed delimiters
+  if (startIdx === -1) {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (kinds[i] === 'strong') {
+        endIdx = i;
+        break;
+      }
+    }
+    if (endIdx === -1) return null;
+
+    // Expand downward to include trailing weak code lines (closing braces, HTML closing tags, etc.)
+    for (let i = endIdx + 1; i < lines.length; i++) {
+      if (kinds[i] === 'strong' || kinds[i] === 'weak') {
+        endIdx = i;
+      } else if (kinds[i] === 'blank') {
+        // Peek ahead up to 2 lines for more code
+        const nextNonBlank = lines.slice(i + 1, i + 4).findIndex((_, idx) => kinds[i + 1 + idx] !== 'blank');
+        if (nextNonBlank !== -1 && (kinds[i + 1 + nextNonBlank] === 'strong' || kinds[i + 1 + nextNonBlank] === 'weak')) {
+          continue;
+        }
+        break;
+      } else {
+        break;
+      }
+    }
+
+    // Track structural balance upward so we never cut a function, class, or HTML tag in half
+    startIdx = endIdx;
+    let balance = { braces: 0, parens: 0, brackets: 0 };
+    const addBalance = idx => {
+      const d = deltaDelimiters(lines[idx]);
+      balance.braces += d.braces;
+      balance.parens += d.parens;
+      balance.brackets += d.brackets;
+    };
+    addBalance(endIdx);
+
+    for (let i = endIdx - 1; i >= 0; i--) {
+      const k = kinds[i];
+      const imbalanced = balance.braces < 0 || balance.parens < 0 || balance.brackets < 0;
+
+      if (k === 'strong' || k === 'weak') {
+        startIdx = i;
+        addBalance(i);
+        continue;
+      }
+
+      if (k === 'blank') {
+        // Bridge up to 3 blank lines if code continues above (or always while delimiter balance is open)
+        let look = i - 1;
+        let blanks = 1;
+        while (look >= 0 && kinds[look] === 'blank' && blanks < 4) {
+          blanks += 1;
+          look -= 1;
+        }
+        if (look >= 0 && (imbalanced || kinds[look] === 'strong' || kinds[look] === 'weak')) {
+          continue;
+        }
+        break;
+      }
+
+      // Prose line: only cross it if delimiters are clearly still unclosed above
+      if (imbalanced) {
+        startIdx = i;
+        addBalance(i);
+        continue;
+      }
       break;
     }
   }
+
+  // Trim leading/trailing blank lines
+  while (startIdx <= endIdx && kinds[startIdx] === 'blank') startIdx += 1;
+  while (endIdx >= startIdx && kinds[endIdx] === 'blank') endIdx -= 1;
+  if (startIdx > endIdx) return null;
 
   const segment = lines.slice(startIdx, endIdx + 1).join('\n').trim();
   if (!segment) return null;
@@ -168,45 +323,74 @@ export function detectRawCode(body) {
     langName: LANG_LABELS[inferred] || inferred,
     code: segment,
     isFenced: false,
-    startLine: startIdx,
-    endLine: endIdx,
+    startLine: startIdx + lineOffset,
+    endLine: endIdx + lineOffset,
+    lineCount: endIdx - startIdx + 1,
   };
 }
 
-function isLikelyCodeLine(rawLine) {
+function isStrongCodeLine(rawLine) {
   const s = String(rawLine || '').trim();
   if (!s) return false;
-  // Exclude markdown headings / checkboxes / plain URLs
   if (/^#{1,6}\s+|^-\s*\[[ xX]\]|^https?:\/\//i.test(s)) return false;
 
   const patterns = [
     /\bconsole\.(?:log|warn|error|table|info)\s*\(/,
-    /^(?:const|let|var)\s+[a-zA-Z_$][\w$]*\s*=/,
-    /^(?:async\s+)?function\s+[a-zA-Z_$][\w$]*\s*\(/,
+    /^(?:export\s+)?(?:default\s+)?(?:const|let|var)\s+[a-zA-Z_$][\w$]*\s*=/,
+    /^(?:export\s+)?(?:async\s+)?function\s+[a-zA-Z_$][\w$]*\s*\(/,
     /=>\s*\{|\)\s*=>\s*/,
     /^\s*print\s*\(.+\)\s*$/,
-    /^\s*def\s+[a-zA-Z_]\w*\s*\(.*\)\s*:\s*$/,
-    /^\s*(?:for|while|if|elif)\s+.+:\s*$/,
-    /^\s*(?:from\s+\w+\s+)?import\s+[a-zA-Z_][\w.*,\s]*$/,
-    /^#include\s*[<"][^>"]+[>"]/,
-    /\b(?:std::)?(?:cout|cin)\s*(?:<<|>>)/,
-    /\bprintf\s*\(|\bscanf\s*\(/,
-    /^\s*(?:public\s+)?(?:static\s+)?(?:void|int|double|float|String|char|bool)\s+\w+\s*\(/,
-    /^\s*public\s+class\s+\w+/,
-    /\bSystem\.out\.print(?:ln)?\s*\(/,
-    /^\s*Console\.Write(?:Line)?\s*\(/,
-    /^\s*(?:SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|CREATE\s+TABLE)\b.+\b(?:FROM|VALUES|SET|\()\b/i,
-    /^<\/?(?:html|head|body|div|span|p|h[1-6]|button|input|style|script|ul|ol|li|table|section|main|header|footer|a|img)\b[^>]*>/i,
-    /^\s*(?:package\s+main|func\s+main\s*\(|fmt\.Print)/,
-    /^\s*(?:fn\s+main\s*\(|println!\s*\()/,
-    /^<\?php\b|\becho\s+["']/,
-    /^\s*(?:for|while|if|else\s+if)\s*\([^)]*\)\s*\{/,
-    /^\s*return\s+[^;]+;\s*$/,
-    /^\s*[\]}];?\s*$/,
-    /^\s*(?:\/\/|\/\*|\*\/)/,
-    /^\s{2,}(?:print\s*\(|return\b|console\.|[a-zA-Z_]\w*\s*[+\-*/]?=\s*)/,
+    /^\s*(?:async\s+)?def\s+[a-zA-Z_]\w*\s*\(.*\)\s*(?:->\s*[^:]+)?:\s*$/,
+    /^\s*class\s+[a-zA-Z_]\w*(?:\s*\([^)]*\)|\s+extends\s+\w+|\s+implements\s+[\w,\s]+)?\s*[:{]?\s*$/,
+    /^\s*(?:for|while|if|elif|except\b.*|with\b.*)\s*.+:\s*$/,
+    /^\s*(?:else|try|finally)\s*:\s*$/,
+    /^\s*(?:from\s+[\w.]+\s+)?import\s+[\w.*,\s{}]+\s*;?\s*$/,
+    /^#(?:include|define|pragma|ifdef|ifndef|endif)\b/,
+    /^\s*(?:using\s+namespace\s+\w+|namespace\s+\w+|typedef\s+|struct\s+\w+|enum\s+\w+|template\s*<)/,
+    /\b(?:std::)?(?:cout|cin|cerr)\s*(?:<<|>>)/,
+    /\b(?:printf|scanf|fprintf|sprintf|malloc|calloc|free|strlen|strcpy)\s*\(/,
+    /^\s*(?:public|private|protected|static|final|abstract|override|virtual|inline|constexpr)?\s*(?:static\s+)?(?:void|int|double|float|long|short|byte|boolean|bool|char|String|string|auto|var|vec<[^>]+>|vector<[^>]+>)\s+\**[a-zA-Z_]\w*(?:\s*[=(;\[]|\s*$)/,
+    /^\s*(?:public|private|protected)?\s*(?:class|interface|record|enum)\s+\w+/,
+    /\bSystem\.out\.print(?:ln|f)?\s*\(/,
+    /\bConsole\.(?:WriteLine|Write|ReadLine)\s*\(/,
+    /^\s*(?:SELECT|INSERT\s+INTO|UPDATE|DELETE\s+FROM|CREATE\s+TABLE|ALTER\s+TABLE|DROP\s+TABLE|WITH\s+\w+\s+AS)\b/i,
+    /^\s*(?:FROM|WHERE|INNER\s+JOIN|LEFT\s+JOIN|RIGHT\s+JOIN|JOIN|GROUP\s+BY|ORDER\s+BY|HAVING|LIMIT|VALUES|SET)\b/i,
+    /^<!DOCTYPE\s+html>/i,
+    /^<\/?(?:html|head|body|meta|link|title|div|span|p|h[1-6]|button|input|textarea|select|option|form|label|style|script|ul|ol|li|table|thead|tbody|tr|th|td|section|main|header|footer|nav|article|a|img|canvas|svg)\b[^>]*>/i,
+    /^\s*(?:package\s+\w+|func\s+\w+\s*\(|fmt\.Print)/,
+    /^\s*(?:fn\s+\w+\s*\(|println!\s*\(|let\s+mut\s+)/,
+    /^<\?php\b|\becho\s+["'$]/,
+    /^\s*(?:for|while|if|else\s+if|switch|catch)\s*\([^)]*\)\s*\{?/,
+    /^\s*(?:else|try|do|finally)\s*\{/,
+    /^\s*return(?:\s+[^;]+)?;\s*$/,
+    /^\s*(?:break|continue|pass)\s*;?\s*$/,
+    /^\s*@[a-zA-Z_]\w*(?:\([^)]*\))?\s*$/,
+    /^\s*(?:[.#]?[a-zA-Z_-][\w-]*|body|html|\*)\s*\{\s*$/,
+    /^\s*[a-z-]+:\s*[^;]+;\s*$/,
   ];
   return patterns.some(re => re.test(s));
+}
+
+function isWeakCodeLine(rawLine) {
+  const s = String(rawLine || '').trim();
+  if (!s) return false;
+  if (/^#{1,6}\s+|^-\s*\[[ xX]\]|^https?:\/\//i.test(s)) return false;
+
+  const weakPatterns = [
+    /^\s*(?:[\]}]+|[\]}]+;|[)\]]+[;,]?)\s*$/,
+    /^\s*(?:\/\/|\/\*|\*\/|\*|<!--|-->|--\s|#(?![#!\s]*\s*\[))/,
+    /^\s*[a-zA-Z_$][\w$.\[\]]*\s*(?:[+\-*/%&|^]?=|\+\+|--)\s*[^=]/,
+    /^\s*[a-zA-Z_$][\w$.]*\s*\([^)]*\)\s*;?\s*$/,
+    /^\s*(?:case\s+[^:]+|default)\s*:/,
+    /^\s{2,}\S/,
+    /^\t+\S/,
+    /;\s*$/,
+  ];
+  return weakPatterns.some(re => re.test(rawLine));
+}
+
+function isLikelyCodeLine(rawLine) {
+  return isStrongCodeLine(rawLine) || isWeakCodeLine(rawLine);
 }
 
 export function inferLanguageFromSnippet(snippet) {
@@ -397,7 +581,7 @@ export function detectGoogleDocLink(body) {
  * Main Blank-Note Auto-Detector.
  * Strictly returns [] when `isZeroAi` is true or `enabled` is false!
  */
-export function detectBlankNoteIntents(body, { isZeroAi = false, enabled = true } = {}) {
+export function detectBlankNoteIntents(body, { isZeroAi = false, enabled = true, selection = null } = {}) {
   if (isZeroAi || !enabled) return [];
   const text = String(body || '');
   if (text.trim().length < 3) return [];
@@ -405,14 +589,19 @@ export function detectBlankNoteIntents(body, { isZeroAi = false, enabled = true 
   const detections = [];
 
   // 1. Code Detection (highest priority for CS/IT students)
-  const codeHit = detectRawCode(text);
+  const codeHit = detectRawCode(text, { selection });
   if (codeHit) {
+    const lineLabel = codeHit.lineCount ? ` (${codeHit.lineCount}L)` : '';
     detections.push({
       id: `code:${codeHit.langId}`,
       kind: 'code',
       badge: codeHit.langName,
-      title: `${codeHit.langName} code`,
-      summary: codeHit.isFenced ? 'Ready to run' : 'Run or wrap block',
+      title: `${codeHit.langName} code${codeHit.isSelection ? ' · Selection' : ''}`,
+      summary: codeHit.isFenced
+        ? `Ready to run${lineLabel}`
+        : codeHit.isSelection
+          ? `Run or wrap selected${lineLabel}`
+          : `Run or wrap full block${lineLabel}`,
       meta: codeHit,
     });
   }

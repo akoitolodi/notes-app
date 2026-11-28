@@ -6,8 +6,9 @@
  * - Automatic 429 / 503 backoff retry + optional failover to another saved free provider
  */
 import { getApiBase } from '../config';
-import { getAiMode, getDirectConfig, getAutoFallback, getFallbackProviders } from './aiConfig';
+import { getAiMode } from './aiConfig';
 import { getAdaptiveTimeouts } from './netResilience';
+import { selectCandidatesForTask, recordRouteOutcome } from './aiRouter';
 import { stripThinking } from '../../shared/aiParsers.js';
 
 /** ES2015-safe AbortController with timeout + optional parent signal forwarding. */
@@ -153,34 +154,18 @@ export async function testTermuxConnection() {
   }
 }
 
-/** Build candidate list of direct endpoints (primary first, then saved fallbacks if enabled). */
-function getDirectCandidates(modelOverride = null, useReasoning = false) {
-  const primary = getDirectConfig();
-  if (!primary.key) throw new Error('No API key configured. Set your key in Settings → AI backend.');
-  if (!primary.baseUrl) throw new Error('No base URL configured for the selected provider.');
+const REASONING_BOOST_NOTE =
+  '\n\nThink carefully step-by-step, check edge cases and arithmetic, and verify your logic before writing the final answer.';
 
-  const list = [
-    {
-      name: primary.preset?.name || primary.providerId,
-      baseUrl: primary.baseUrl,
-      key: primary.key,
-      model: (modelOverride || '').trim() || primary.model,
-      isFallback: false,
-    },
-  ];
-
-  if (getAutoFallback()) {
-    for (const fb of getFallbackProviders()) {
-      list.push({
-        name: fb.name,
-        baseUrl: fb.baseUrl,
-        key: fb.key,
-        model: useReasoning ? fb.reasonModel : fb.model,
-        isFallback: true,
-      });
-    }
+function withReasoningBoost(messages, candidate) {
+  if (!candidate?.degradedFromReasoning || !Array.isArray(messages) || messages.length === 0) {
+    return messages;
   }
-  return list;
+  const first = messages[0];
+  if (first?.role === 'system') {
+    return [{ ...first, content: `${first.content}${REASONING_BOOST_NOTE}` }, ...messages.slice(1)];
+  }
+  return [{ role: 'system', content: REASONING_BOOST_NOTE.trim() }, ...messages];
 }
 
 export async function aiText({
@@ -191,13 +176,25 @@ export async function aiText({
   history = [],
   modelOverride = null,
   useReasoning = false,
+  task = 'balanced',
   signal = null,
   onFallback = null,
+  onRouteSwitch = null,
 }) {
   const messages = buildMessages({ system, user, history });
 
   if (getAiMode() === 'direct') {
-    return directChatWithResilience(messages, maxTokens, timeoutMs, modelOverride, useReasoning, signal, onFallback);
+    return directChatWithResilience(
+      messages,
+      maxTokens,
+      timeoutMs,
+      modelOverride,
+      useReasoning,
+      task,
+      signal,
+      onFallback,
+      onRouteSwitch
+    );
   }
 
   return termuxChat(messages, maxTokens, timeoutMs, modelOverride, signal);
@@ -205,7 +202,7 @@ export async function aiText({
 
 /**
  * Streaming chat completion with progressive token callback `onToken(partialText)`.
- * Includes automatic 429/503 retry + free-tier provider failover before tokens start flowing.
+ * Includes automatic 429/503 retry, adaptive task routing, and Deep Think auto-switch.
  */
 export async function aiTextStream({
   system,
@@ -215,13 +212,27 @@ export async function aiTextStream({
   history = [],
   modelOverride = null,
   useReasoning = false,
+  task = 'balanced',
   signal = null,
   onToken = null,
   onStatus = null,
   onFallback = null,
+  onRouteSwitch = null,
 }) {
   if (!onToken) {
-    return aiText({ system, user, maxTokens, timeoutMs, history, modelOverride, useReasoning, signal, onFallback });
+    return aiText({
+      system,
+      user,
+      maxTokens,
+      timeoutMs,
+      history,
+      modelOverride,
+      useReasoning,
+      task,
+      signal,
+      onFallback,
+      onRouteSwitch,
+    });
   }
 
   const messages = buildMessages({ system, user, history });
@@ -241,47 +252,86 @@ export async function aiTextStream({
     });
   }
 
-  const candidates = getDirectCandidates(modelOverride, useReasoning);
+  const effectiveTask = useReasoning ? 'reasoning' : task || 'balanced';
+  const candidates = selectCandidatesForTask({
+    task: effectiveTask,
+    useReasoning,
+    modelOverride,
+  });
   const hasFallbacks = candidates.length > 1;
   let lastErr = null;
   let lastReasoningSeen = '';
+  let prevCandidate = null;
 
   for (let idx = 0; idx < candidates.length; idx++) {
     const c = candidates[idx];
     const moreLeft = idx < candidates.length - 1;
-    if (c.isFallback) onFallback?.(c.name);
+    if (idx > 0) {
+      onFallback?.(c.name);
+      onRouteSwitch?.({
+        reason: lastErr?.isFirstByteStall ? 'slow' : lastErr?.httpStatus === 429 ? 'rate-limit' : 'unavailable',
+        fromName: prevCandidate?.name || '',
+        fromModel: prevCandidate?.model || '',
+        toName: c.name,
+        toModel: c.model,
+        degraded: Boolean(c.degradedFromReasoning),
+      });
+    }
+    prevCandidate = c;
 
     const adaptive = getAdaptiveTimeouts();
     const effectiveTimeoutMs = Math.max(timeoutMs || 0, adaptive.aiTotalMs);
-    // Adaptive TTFT watchdog: widens automatically on Slow Internet Mode (2G/3G) so weak signal never triggers false failovers!
     const ttftWatchdogMs =
       hasFallbacks && moreLeft
-        ? useReasoning
+        ? effectiveTask === 'reasoning'
           ? adaptive.aiReasonFirstByteMs
           : adaptive.aiFirstByteMs
         : 0;
+    const reqMessages = withReasoningBoost(messages, c);
 
     for (let attempt = 0; attempt < (c.isFallback ? 1 : 2); attempt++) {
       const effectiveMax = computeEffectiveMaxTokens(c.model, maxTokens, useReasoning, attempt > 0);
+      const tStart = Date.now();
       try {
-        return await streamRequest({
+        const result = await streamRequest({
           url: `${c.baseUrl}/chat/completions`,
           headers: { Authorization: `Bearer ${c.key}`, 'Content-Type': 'application/json' },
-          bodyObj: { model: c.model, messages, temperature: 0.4, max_tokens: effectiveMax, stream: true },
+          bodyObj: { model: c.model, messages: reqMessages, temperature: 0.4, max_tokens: effectiveMax, stream: true },
           timeoutMs: effectiveTimeoutMs,
           firstByteTimeoutMs: ttftWatchdogMs,
           signal,
           onToken,
           onStatus,
           fallbackTextFn: () =>
-            directSingleCall(c, messages, computeEffectiveMaxTokens(c.model, effectiveMax, useReasoning, true), effectiveTimeoutMs, signal),
+            directSingleCall(
+              c,
+              reqMessages,
+              computeEffectiveMaxTokens(c.model, effectiveMax, useReasoning, true),
+              effectiveTimeoutMs,
+              signal
+            ),
         });
+        recordRouteOutcome({
+          providerId: c.providerId,
+          modelId: c.model,
+          ok: true,
+          totalMs: Date.now() - tStart,
+        });
+        return result;
       } catch (err) {
         if (err?.isCancelled) throw err;
-        // Treat transient network drops on slow Wi-Fi / mobile data as retryable
         if (err instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(String(err?.message || ''))) {
           err.retryable = true;
         }
+        recordRouteOutcome({
+          providerId: c.providerId,
+          modelId: c.model,
+          ok: false,
+          totalMs: Date.now() - tStart,
+          httpStatus: err?.httpStatus || 0,
+          isEmpty: Boolean(err?.isEmptyResponse),
+          isStall: Boolean(err?.isFirstByteStall),
+        });
         lastErr = err;
         if (err?.lastReasoning) lastReasoningSeen = err.lastReasoning;
         if (err?.retryable && !err?.isFirstByteStall && attempt === 0 && !c.isFallback) {
@@ -289,7 +339,6 @@ export async function aiTextStream({
           await sleep(err?.isEmptyResponse ? 300 : 750, signal);
           continue;
         }
-        // Fail over to backup provider on rate-limit / billing 402 / server error / stall / empty response / retired model
         if (
           !(
             err?.retryable ||
@@ -366,7 +415,7 @@ async function streamRequest({
       throw buildHttpError(res.status, text);
     }
 
-    const contentType = res.headers.get('content-type') || '';
+    const contentType = res.headers?.get?.('content-type') || '';
     if (!res.body?.getReader || !contentType.includes('event-stream')) {
       const data = await res.json().catch(() => null);
       const msgObj = data?.choices?.[0]?.message || {};
@@ -553,6 +602,7 @@ async function directSingleCall(candidate, messages, maxTokens, timeoutMs, signa
       if (ctrl.wasTimeout()) {
         const tErr = new Error('The AI took too long to answer on slow internet. Tap Retry.');
         tErr.retryable = true;
+        tErr.isTimeoutStall = true;
         throw tErr;
       }
       const cancelled = new Error('Cancelled');
@@ -574,24 +624,74 @@ async function directChatWithResilience(
   timeoutMs,
   modelOverride = null,
   useReasoning = false,
+  task = 'balanced',
   signal = null,
-  onFallback = null
+  onFallback = null,
+  onRouteSwitch = null
 ) {
-  const candidates = getDirectCandidates(modelOverride, useReasoning);
+  const effectiveTask = useReasoning ? 'reasoning' : task || 'balanced';
+  const candidates = selectCandidatesForTask({
+    task: effectiveTask,
+    useReasoning,
+    modelOverride,
+  });
+  const adaptive = getAdaptiveTimeouts();
   let lastErr = null;
   let lastReasoningSeen = '';
+  let prevCandidate = null;
 
-  for (const c of candidates) {
-    if (c.isFallback) onFallback?.(c.name);
+  for (let idx = 0; idx < candidates.length; idx++) {
+    const c = candidates[idx];
+    const moreLeft = idx < candidates.length - 1;
+    if (idx > 0) {
+      onFallback?.(c.name);
+      onRouteSwitch?.({
+        reason: lastErr?.isTimeoutStall ? 'slow' : lastErr?.httpStatus === 429 ? 'rate-limit' : 'unavailable',
+        fromName: prevCandidate?.name || '',
+        fromModel: prevCandidate?.model || '',
+        toName: c.name,
+        toModel: c.model,
+        degraded: Boolean(c.degradedFromReasoning),
+      });
+    }
+    prevCandidate = c;
+
+    // Balanced Deep Think stall guard on non-streaming calls when another candidate is ready
+    const perAttemptTimeoutMs =
+      effectiveTask === 'reasoning' && moreLeft
+        ? Math.min(timeoutMs || adaptive.aiReasonNonStreamMs, adaptive.aiReasonNonStreamMs)
+        : timeoutMs;
+    const reqMessages = withReasoningBoost(messages, c);
 
     for (let attempt = 0; attempt < (c.isFallback ? 1 : 2); attempt++) {
       const effectiveMax = computeEffectiveMaxTokens(c.model, maxTokens, useReasoning, attempt > 0);
+      const tStart = Date.now();
       try {
-        return await directSingleCall(c, messages, effectiveMax, timeoutMs, signal);
+        const out = await directSingleCall(c, reqMessages, effectiveMax, perAttemptTimeoutMs, signal);
+        recordRouteOutcome({
+          providerId: c.providerId,
+          modelId: c.model,
+          ok: true,
+          totalMs: Date.now() - tStart,
+        });
+        return out;
       } catch (err) {
         if (err?.isCancelled) throw err;
+        recordRouteOutcome({
+          providerId: c.providerId,
+          modelId: c.model,
+          ok: false,
+          totalMs: Date.now() - tStart,
+          httpStatus: err?.httpStatus || 0,
+          isEmpty: Boolean(err?.isEmptyResponse),
+          isStall: Boolean(err?.isTimeoutStall),
+        });
         lastErr = err;
         if (err?.lastReasoning) lastReasoningSeen = err.lastReasoning;
+        // Skip duplicate slow attempt on primary if reasoning stalled and a backup candidate exists
+        if (err?.isTimeoutStall && moreLeft) {
+          break;
+        }
         if (err?.retryable && attempt === 0 && !c.isFallback) {
           await sleep(err?.isEmptyResponse ? 350 : 1200, signal);
           continue;
@@ -649,7 +749,7 @@ export async function webSearch(query, apiKey, maxResults = 5, signal = null) {
   }
 }
 
-/** Vision request (image + prompt). Requires a vision-capable model. */
+/** Vision request (image + prompt). Automatically routes to a vision-capable free model. */
 export async function aiVision({
   system,
   user,
@@ -660,7 +760,7 @@ export async function aiVision({
 }) {
   const messages = buildMessages({ system, user, imageDataUrl });
   if (getAiMode() === 'direct') {
-    return directChatWithResilience(messages, maxTokens, timeoutMs, null, false, signal, null);
+    return directChatWithResilience(messages, maxTokens, timeoutMs, null, false, 'vision', signal, null, null);
   }
   return termuxChat(messages, maxTokens, timeoutMs, null, signal);
 }

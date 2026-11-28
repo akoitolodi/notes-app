@@ -114,6 +114,7 @@ export default function ChatSheet({
   const [pending, setPending] = useState(null);
   const [streamingText, setStreamingText] = useState('');
   const [statusLabel, setStatusLabel] = useState('');
+  const [routeNotice, setRouteNotice] = useState('');
   const [error, setError] = useState(null);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -209,6 +210,8 @@ export default function ChatSheet({
     setError(null);
     setPending(question);
     setStreamingText('');
+    setRouteNotice('');
+    let switchedRoute = '';
     setStatusLabel(
       useResearch
         ? 'Planning research queries…'
@@ -236,13 +239,21 @@ export default function ChatSheet({
         socratic: useSocratic,
         signal: controller.signal,
         onStatus: label => setStatusLabel(label),
-        onFallback: providerName => toast(`Rate limit hit — switched to ${providerName}`),
+        onFallback: providerName => toast(`Switched to ${providerName}`),
+        onRouteSwitch: info => {
+          const noteStr = info?.degraded
+            ? `Auto-switched to ${info.toName} (${info.toModel}) for speed`
+            : `Auto-switched to ${info.toName} (${info.toModel})`;
+          switchedRoute = noteStr;
+          setRouteNotice(noteStr);
+        },
         onToken: partial => setStreamingText(partial),
       });
 
       const assistantMsg = {
         role: 'assistant',
         content: res.text,
+        ...(switchedRoute ? { routeNote: switchedRoute } : {}),
         ...(res.reasoning ? { reasoning: res.reasoning, verified: res.verified } : {}),
         ...(res.sources?.length ? { sources: res.sources } : {}),
         ...(res.relatedNotes?.length ? { relatedNotes: res.relatedNotes } : {}),
@@ -381,6 +392,10 @@ export default function ChatSheet({
           <div key={i} className={`chat-msg ${m.role}`}>
             {m.role === 'assistant' ? (
               <>
+                {m.routeNote && (
+                  <div className="route-switch-pill">{m.routeNote}</div>
+                )}
+
                 {m.reasoning && (
                   <ReasoningDrawer reasoning={m.reasoning} verified={m.verified} />
                 )}
@@ -476,6 +491,7 @@ export default function ChatSheet({
 
         {busy && (
           <div className="chat-msg assistant">
+            {routeNotice && <div className="route-switch-pill">{routeNotice}</div>}
             {streamingText ? (
               <MarkdownContent text={streamingText} />
             ) : (

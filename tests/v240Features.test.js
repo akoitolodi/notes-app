@@ -110,10 +110,9 @@ describe('v2.4.0 Code Wrap Newlines, Free/Reasoning Models, DeepSeek, Fast Selec
     expect(extractPreCodeText(el('pre', []))).toBe('');
   });
 
-  it('registers DeepSeek, SambaNova, GitHub Models & HuggingFace and classifies Free vs Paid + Reasoning models', async () => {
-    expect(PROVIDERS.deepseek.baseUrl).toBe('https://api.deepseek.com/v1');
-    expect(PROVIDERS.deepseek.defaultModel).toBe('deepseek-chat');
-    expect(PROVIDERS.deepseek.reasonModel).toBe('deepseek-reasoner');
+  it('removes paid-only presets (OpenAI, DeepSeek), keeps free-tier presets, and classifies Free vs Paid + Reasoning models', async () => {
+    expect(PROVIDERS.openai).toBeUndefined();
+    expect(PROVIDERS.deepseek).toBeUndefined();
     expect(PROVIDERS.sambanova.free).toBe(true);
     expect(PROVIDERS.github.free).toBe(true);
     expect(PROVIDERS.huggingface.free).toBe(true);
@@ -126,7 +125,7 @@ describe('v2.4.0 Code Wrap Newlines, Free/Reasoning Models, DeepSeek, Fast Selec
     expect(isModelFree('mistral', 'mistral-small-latest')).toBe(true);
     expect(isModelFree('mistral', 'magistral-small-latest')).toBe(true);
     expect(isModelFree('mistral', 'mistral-large-latest')).toBe(false);
-    expect(isModelFree('deepseek', 'deepseek-chat')).toBe(false);
+    expect(isModelFree('kilo', 'openai/gpt-5.4')).toBe(false);
 
     // Reasoning model classification
     expect(isReasoningModelId('deepseek-reasoner')).toBe(true);
