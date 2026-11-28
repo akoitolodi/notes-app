@@ -831,7 +831,7 @@ export async function parseScheduleWithAI(rawText) {
     clean,
   ].join('\n');
 
-  const rawReply = await aiText(prompt, { maxTokens: 1800, temperature: 0.1 });
+  const rawReply = await aiText({ user: prompt, maxTokens: 1800 });
   const jsonMatch = /\{[\s\S]*\}/.exec(String(rawReply || ''));
   if (!jsonMatch) throw new Error('AI could not extract structured schedule JSON.');
 

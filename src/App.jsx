@@ -80,6 +80,7 @@ export default function App() {
   const [themesReturnTo, setThemesReturnTo] = useState('folders');
   const [syllabusReturnTo, setSyllabusReturnTo] = useState('folders');
   const [coursesInitialSection, setCoursesInitialSection] = useState('courses');
+  const [coursesOpenCanvasFiles, setCoursesOpenCanvasFiles] = useState(false);
   const [plannerInitialTab, setPlannerInitialTab] = useState('timetable');
   const [sharedImport, setSharedImport] = useState(null); // { file?, text?, title? } from Android Share Target
   const [onboardingModal, setOnboardingModal] = useState(null); // null | 'wizard' | 'guide'
@@ -181,11 +182,30 @@ export default function App() {
         .catch(() => {});
     }, 3000);
 
+    const tCanvasFiles = setTimeout(() => {
+      if (!alive) return;
+      const hasNative = typeof window !== 'undefined' && window.BaiNativeCanvas?.isAvailable?.();
+      let hasToken = false;
+      try {
+        hasToken = Boolean((localStorage.getItem('aicn:canvasToken') || '').trim());
+      } catch {
+        hasToken = false;
+      }
+      if (!hasNative && !hasToken) return;
+      import('./lib/canvasFiles')
+        .then(m => m.autoCheckCanvasFilesIfStale?.())
+        .then(res => {
+          if (alive && res?.ran && res.newlyDetected?.length > 0) bumpSidebar();
+        })
+        .catch(() => {});
+    }, 4200);
+
     return () => {
       alive = false;
       clearTimeout(tNotif);
       clearTimeout(tPurge);
       clearTimeout(tCanvas);
+      clearTimeout(tCanvasFiles);
     };
   }, [bumpSidebar]);
 
@@ -413,6 +433,7 @@ export default function App() {
         handleOpenPlanner('timetable');
         return;
       }
+      setCoursesOpenCanvasFiles(Boolean(opts?.openCanvasFiles));
       setCoursesInitialSection('courses');
       setScreen('courses');
       pushHistoryEntry('courses');
@@ -754,6 +775,8 @@ export default function App() {
             onChanged={bumpSidebar}
             onRegisterBack={registerOverlayBack}
             initialSection={coursesInitialSection}
+            initialOpenCanvasFiles={coursesOpenCanvasFiles}
+            onConsumedCanvasFilesOpen={() => setCoursesOpenCanvasFiles(false)}
           />
         </Suspense>
       );

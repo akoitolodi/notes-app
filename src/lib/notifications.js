@@ -562,6 +562,52 @@ export async function notifyNewCanvasAnnouncements(newAnnouncements = []) {
   }
 }
 
+/** Fire an immediate native/web notification when Canvas Files sync discovers newly uploaded prof files. */
+export async function notifyNewCanvasFiles(newFiles = []) {
+  if (!Array.isArray(newFiles) || newFiles.length === 0) return;
+  const cfg = getNotificationSettings();
+  if (!cfg.enabled) return;
+
+  const first = newFiles[0];
+  const courseLabel = first.courseCode || first.courseName || 'Canvas';
+  const title =
+    newFiles.length === 1
+      ? `📄 New File in ${courseLabel}`
+      : `📄 ${newFiles.length} New Professor Files on Canvas`;
+  const body =
+    newFiles.length === 1
+      ? `${first.displayName || first.fileName || 'Course Material'}${first.moduleName ? ` (${first.moduleName})` : ''}`
+      : newFiles
+          .slice(0, 3)
+          .map(f => `${f.courseCode ? `${f.courseCode}: ` : ''}${f.displayName || f.fileName}`)
+          .join(' · ');
+
+  try {
+    const { plugin: localNotifs } = await loadLocalNotifications();
+    if (localNotifs) {
+      const perm = await localNotifs.checkPermissions();
+      if (perm?.display === 'granted') {
+        await localNotifs.schedule({
+          notifications: [
+            {
+              id: stableNotifId(`cfile:${Date.now()}:${first.canvasFileId || first.fileName}`),
+              title,
+              body,
+              autoCancel: true,
+            },
+          ],
+        });
+      }
+      return;
+    }
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      new Notification(title, { body });
+    }
+  } catch {
+    // non-fatal
+  }
+}
+
 /** Compute live urgent deadlines & unread announcements for the persistent in-app banner. */
 export async function getInAppAlertSummary(prefetchedItems = null) {
   const todayKey = localDateKey();

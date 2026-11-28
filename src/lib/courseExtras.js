@@ -32,21 +32,29 @@ export const ATTENDANCE_PRESETS = [
 /** Classify an external URL into a clean badge label for the Course Links pinboard. */
 export function classifyCourseLink(url) {
   const u = String(url || '').toLowerCase();
+  const cleanPath = u.split(/[?#]/)[0];
   if (u.includes('chat.google.com')) return { kind: 'Google Chat', importable: false };
   if (u.includes('docs.google.com/document/')) return { kind: 'Google Doc', importable: true };
   if (u.includes('docs.google.com/presentation/')) return { kind: 'Google Slides', importable: true };
+  if (/drive\.google\.com\/(?:file\/d\/|open\?id=)/i.test(u)) {
+    return { kind: 'Google Drive File', importable: true };
+  }
   if (u.includes('drive.google.com')) return { kind: 'Google Drive', importable: false };
   if (u.includes('meet.google.com')) return { kind: 'Google Meet', importable: false };
   if (u.includes('zoom.us')) return { kind: 'Zoom', importable: false };
   if (u.includes('github.com')) return { kind: 'GitHub', importable: false };
+  if (/\.pdf$/i.test(cleanPath)) return { kind: 'PDF', importable: true, directFileExt: 'pdf' };
+  if (/\.pptx?$/i.test(cleanPath)) return { kind: 'Slides', importable: true, directFileExt: 'pptx' };
+  if (/\.docx?$/i.test(cleanPath)) return { kind: 'Word Doc', importable: true, directFileExt: 'docx' };
+  if (/\.(?:md|markdown|txt)$/i.test(cleanPath)) return { kind: 'Text', importable: true, directFileExt: 'md' };
   if (u.includes('instructure.com')) return { kind: 'Canvas', importable: false };
   if (u.includes('youtu.be') || u.includes('youtube.com')) return { kind: 'YouTube', importable: false };
   return { kind: 'Link', importable: false };
 }
 
 /**
- * Convert a public ("Anyone with link") Google Docs or Google Slides URL into its
- * clean plain-text export URL so Android phones can import it directly via CapacitorHttp!
+ * Convert a public ("Anyone with link") Google Docs, Slides, or Drive File URL into its
+ * clean export/download URL so Android phones can import it directly via CapacitorHttp!
  */
 export function getPublicGoogleExportUrl(rawUrl) {
   const u = String(rawUrl || '').trim();
@@ -66,7 +74,39 @@ export function getPublicGoogleExportUrl(rawUrl) {
       docId: slideMatch[1],
     };
   }
+  const driveFileMatch =
+    /drive\.google\.com\/(?:file\/d\/|open\?id=)([a-zA-Z0-9_-]+)/i.exec(u);
+  if (driveFileMatch) {
+    return {
+      exportUrl: `https://drive.google.com/uc?export=download&id=${driveFileMatch[1]}`,
+      kind: 'Google Drive File',
+      docId: driveFileMatch[1],
+    };
+  }
   return null;
+}
+
+/**
+ * Extract deduplicated importable document links (Google Docs/Slides/Drive File & direct PDF/PPTX/DOCX)
+ * from an announcement or assignment item or raw text.
+ */
+export function extractImportableFileLinks(itemOrText) {
+  const text =
+    typeof itemOrText === 'string'
+      ? itemOrText
+      : `${itemOrText?.url || ''}\n${itemOrText?.description || ''}`;
+  if (!text) return [];
+  const extracted = extractCourseLinks([{ description: text }]);
+  return extracted
+    .filter(lk => lk.importable)
+    .map(lk => {
+      const meta = classifyCourseLink(lk.url);
+      return {
+        ...lk,
+        isDirectFile: Boolean(meta.directFileExt),
+        isCanvasFile: /instructure\.com\/.*\/files\//i.test(lk.url),
+      };
+    });
 }
 
 /**

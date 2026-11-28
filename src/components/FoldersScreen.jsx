@@ -38,6 +38,7 @@ import {
   Mic,
   Sparkles,
   CalendarDays,
+  FileDown,
 } from 'lucide-react';
 import {
   db,
@@ -134,6 +135,25 @@ function writeHomeCache(payload) {
   }
 }
 
+function readCachedNewCanvasFileCount() {
+  try {
+    const catalog = JSON.parse(localStorage.getItem('aicn:canvasFilesCatalog:v1') || 'null');
+    const files = Array.isArray(catalog?.files) ? catalog.files : [];
+    if (files.length === 0) return 0;
+    const seen = new Set(JSON.parse(localStorage.getItem('aicn:canvasFilesSeenIds:v1') || '[]'));
+    const imported = JSON.parse(localStorage.getItem('aicn:canvasFilesImportedMap:v1') || '{}') || {};
+    let count = 0;
+    for (const f of files) {
+      if (f?.canvasFileId && !imported[f.canvasFileId] && !seen.has(f.canvasFileId)) {
+        count += 1;
+      }
+    }
+    return count;
+  } catch {
+    return 0;
+  }
+}
+
 function getStudioGreeting() {
   const hr = new Date().getHours();
   if (hr < 12) return 'Good morning';
@@ -202,6 +222,7 @@ export default function FoldersScreen({
   const [gecBanner, setGecBanner] = useState(() => initialCache?.gecBanner || null);
   const [syncingAnn, setSyncingAnn] = useState(false);
   const [alertSummary, setAlertSummary] = useState(null);
+  const [newCanvasFilesCount, setNewCanvasFilesCount] = useState(() => readCachedNewCanvasFileCount());
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
@@ -331,6 +352,7 @@ export default function FoldersScreen({
       setVaultMode(getVaultSessionMode());
       setCourseCount(nextCourseCount);
       setAlertSummary(alerts);
+      setNewCanvasFilesCount(readCachedNewCanvasFileCount());
       setAnnPreview(nextAnnPreview);
       setUpNextClass(nextUpSummary);
       setTodaySchedule(nextTodaySchedule);
@@ -362,6 +384,12 @@ export default function FoldersScreen({
   useEffect(() => {
     refresh();
   }, [refresh, refreshKey]);
+
+  useEffect(() => {
+    const onFilesUpdated = () => setNewCanvasFilesCount(readCachedNewCanvasFileCount());
+    window.addEventListener('bai-canvas-files-updated', onFilesUpdated);
+    return () => window.removeEventListener('bai-canvas-files-updated', onFilesUpdated);
+  }, []);
 
   useEffect(() => {
     return subscribeVault((unlocked, mode) => {
@@ -657,9 +685,6 @@ export default function FoldersScreen({
           <button className="navbar-btn navbar-glass-btn" aria-label="Settings" onClick={onOpenSettings}>
             <Settings size={18} />
           </button>
-          <button className="navbar-btn navbar-glass-btn" aria-label="New folder" onClick={handleNewFolder}>
-            <FolderPlus size={18} />
-          </button>
         </div>
       </header>
 
@@ -675,7 +700,7 @@ export default function FoldersScreen({
         <div className="home-hero-row">
           <h1 className="home-hero-title">Notes</h1>
           <span className="home-hero-sub">
-            {totalNotes} {totalNotes === 1 ? 'note' : 'notes'} · {folders.length}{' '}
+            {totalNotes} {totalNotes === 1 ? 'note' : 'notes'}, {folders.length}{' '}
             {folders.length === 1 ? 'subject' : 'subjects'}
           </span>
         </div>
@@ -760,8 +785,8 @@ export default function FoldersScreen({
         </div>
       )}
 
-      {/* 1. Compact 1-Line Smart Context Strip (Live/Next Class, Due Review, or Urgent Task) */}
-      {(upNextClass || dueCardsCount > 0 || urgentHeadline) && (
+      {/* 1. Compact 1-Line Smart Context Strip (Live/Next Class, Due Review, New Prof Files, or Urgent Task) */}
+      {(upNextClass || dueCardsCount > 0 || urgentHeadline || newCanvasFilesCount > 0) && (
         <div className="home-context-row">
           {urgentHeadline && (
             <button
@@ -771,6 +796,18 @@ export default function FoldersScreen({
             >
               <Bell size={13} />
               <span>{urgentHeadline}</span>
+            </button>
+          )}
+          {newCanvasFilesCount > 0 && onOpenCourses && (
+            <button
+              type="button"
+              className="home-context-pill is-files"
+              onClick={() => onOpenCourses({ openCanvasFiles: true })}
+            >
+              <FileDown size={13} />
+              <span>
+                {newCanvasFilesCount} new prof {newCanvasFilesCount === 1 ? 'file' : 'files'}
+              </span>
             </button>
           )}
           {upNextClass && (
@@ -805,225 +842,239 @@ export default function FoldersScreen({
         </div>
       )}
 
-      {/* 2. TOP SPOTLIGHT: Announcements Card — Easiest Seen Right at the Top! */}
-      {onOpenAnnouncements && (
-        <section
-          className={`home-ann-panel home-ann-spotlight${annPreview.unread > 0 ? ' has-unread' : ''}`}
-          aria-label="Class Announcements Spotlight"
-        >
-          <div className="home-ann-header">
-            <button
-              type="button"
-              className="home-ann-title-btn"
-              onClick={onOpenAnnouncements}
-            >
-              <span className="home-ann-icon home-ann-icon-spot">
-                <Megaphone size={18} />
-              </span>
-              <span className="home-ann-title">Announcements</span>
-              {annPreview.unread > 0 ? (
-                <span className="home-ann-badge is-new">{annPreview.unread} unread</span>
-              ) : annPreview.total > 0 ? (
-                <span className="home-ann-badge">{annPreview.total}</span>
-              ) : null}
-            </button>
-            <div className="flex items-center gap-6">
-              {annPreview.unread > 0 && alertSummary?.unreadAnnouncements?.length > 0 && (
+      {/* 2. Unified Campus Today Card (Announcements + Today's Schedule — 100% parity) */}
+      {(onOpenAnnouncements || onOpenPlanner) && (
+        <div className={`campus-today-card${annPreview.unread > 0 ? ' has-unread' : ''}`}>
+          {onOpenAnnouncements && (
+            <section className="campus-today-section" aria-label="Class Announcements Spotlight">
+              <div className="home-ann-header">
                 <button
                   type="button"
-                  className="row-action-chip"
-                  onClick={() => {
-                    markAllAnnouncementsRead(alertSummary.unreadAnnouncements);
-                    refresh();
-                  }}
-                >
-                  Mark read
-                </button>
-              )}
-              <button
-                type="button"
-                className="icon-btn"
-                aria-label="Sync announcements"
-                title="Sync Canvas announcements"
-                disabled={syncingAnn}
-                onClick={async () => {
-                  setSyncingAnn(true);
-                  try {
-                    const { autoSyncCanvasIfStale } = await import('../lib/canvasSync');
-                    const res = await autoSyncCanvasIfStale({ force: true });
-                    await refresh();
-                    if (res?.reason === 'unconfigured') {
-                      onOpenAnnouncements();
-                    } else if (res?.error) {
-                      toast(res.error, { type: 'error' });
-                    } else {
-                      toast(
-                        res?.added > 0
-                          ? `Synced — ${res.added} new post${res.added === 1 ? '' : 's'}`
-                          : 'Announcements up to date'
-                      );
-                    }
-                  } finally {
-                    setSyncingAnn(false);
-                  }
-                }}
-              >
-                <RefreshCw size={14} className={syncingAnn ? 'spin-icon' : ''} />
-              </button>
-              <button
-                type="button"
-                className="row-action-chip active-chip"
-                onClick={onOpenAnnouncements}
-              >
-                View All <ChevronRight size={13} />
-              </button>
-            </div>
-          </div>
-
-          {annPreview.latest.length === 0 ? (
-            <button
-              type="button"
-              className="home-ann-empty"
-              onClick={onOpenAnnouncements}
-            >
-              <span>Connect Canvas RSS feeds or paste teacher announcements so updates appear right here.</span>
-              <ChevronRight size={15} style={{ flexShrink: 0, opacity: 0.7 }} />
-            </button>
-          ) : (
-            <div className="home-ann-items">
-              {annPreview.latest.map(item => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={`home-ann-item${!item._read ? ' is-unread' : ''}`}
+                  className="home-ann-title-btn"
                   onClick={onOpenAnnouncements}
                 >
-                  <div className="home-ann-item-top">
-                    {!item._read && <span className="ann-unread-dot" />}
-                    {item.pinned && <Pin size={11} style={{ color: '#ff9f0a', flexShrink: 0 }} />}
-                    <span className="home-ann-course">{item.course || 'Canvas'}</span>
-                    <span className="home-ann-date">{item.timeLabel || item.dateKey}</span>
-                  </div>
-                  <div className="home-ann-item-title">{item.title}</div>
-                  {item._scheduleCompact && (
-                    <div className="home-ann-sched">
-                      <Clock size={11} style={{ flexShrink: 0 }} />
-                      <span>{item._scheduleCompact}</span>
-                    </div>
+                  <span className="home-ann-icon home-ann-icon-spot">
+                    <Megaphone size={16} />
+                  </span>
+                  <span className="home-ann-title">Announcements</span>
+                  {annPreview.unread > 0 ? (
+                    <span className="home-ann-badge is-new">{annPreview.unread} unread</span>
+                  ) : annPreview.total > 0 ? (
+                    <span className="home-ann-badge">{annPreview.total}</span>
+                  ) : null}
+                  {newCanvasFilesCount > 0 && onOpenCourses && (
+                    <span
+                      className="home-ann-badge is-new"
+                      style={{ cursor: 'pointer' }}
+                      onClick={e => {
+                        e.stopPropagation();
+                        onOpenCourses({ openCanvasFiles: true });
+                      }}
+                    >
+                      {newCanvasFilesCount} {newCanvasFilesCount === 1 ? 'file' : 'files'}
+                    </span>
                   )}
-                  <div className="flex items-center justify-between gap-6" style={{ flexWrap: 'wrap' }}>
-                    {item.author && (
-                      <div className="home-ann-item-sub">by {item.author}</div>
-                    )}
-                    {item._quickLink && (
-                      <a
-                        href={item._quickLink.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="home-ann-link-chip"
-                        onClick={e => e.stopPropagation()}
-                      >
-                        <ExternalLink size={10} /> {item._quickLink.label}
-                      </a>
-                    )}
-                  </div>
                 </button>
-              ))}
-            </div>
-          )}
-        </section>
-      )}
+                <div className="flex items-center gap-6">
+                  {annPreview.unread > 0 && alertSummary?.unreadAnnouncements?.length > 0 && (
+                    <button
+                      type="button"
+                      className="row-action-chip"
+                      onClick={() => {
+                        markAllAnnouncementsRead(alertSummary.unreadAnnouncements);
+                        refresh();
+                      }}
+                    >
+                      Mark read
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    aria-label="Sync announcements"
+                    title="Sync Canvas announcements"
+                    disabled={syncingAnn}
+                    onClick={async () => {
+                      setSyncingAnn(true);
+                      try {
+                        const { autoSyncCanvasIfStale } = await import('../lib/canvasSync');
+                        const res = await autoSyncCanvasIfStale({ force: true });
+                        await refresh();
+                        if (res?.reason === 'unconfigured') {
+                          onOpenAnnouncements();
+                        } else if (res?.error) {
+                          toast(res.error, { type: 'error' });
+                        } else {
+                          toast(
+                            res?.added > 0
+                              ? `Synced — ${res.added} new post${res.added === 1 ? '' : 's'}`
+                              : 'Announcements up to date'
+                          );
+                        }
+                      } finally {
+                        setSyncingAnn(false);
+                      }
+                    }}
+                  >
+                    <RefreshCw size={14} className={syncingAnn ? 'spin-icon' : ''} />
+                  </button>
+                  <button
+                    type="button"
+                    className="row-action-chip active-chip"
+                    onClick={onOpenAnnouncements}
+                  >
+                    View All <ChevronRight size={13} />
+                  </button>
+                </div>
+              </div>
 
-      {/* 2B. TODAY'S SCHEDULE SPOTLIGHT — 1-Tap Class Schedule & Live F2F/Virtual GEC Status */}
-      {onOpenPlanner && (
-        <section className="home-ann-panel home-sched-spotlight" aria-label="Today's Class Schedule Spotlight">
-          <div className="home-ann-header">
-            <button
-              type="button"
-              className="home-ann-title-btn"
-              onClick={() => onOpenPlanner('timetable')}
-            >
-              <span className="home-ann-icon home-sched-icon">
-                <CalendarDays size={18} />
-              </span>
-              <span className="home-ann-title">Today&apos;s Schedule</span>
-              {gecBanner && (
-                <span className={gecBanner.kind === 'special' ? 'gec-badge-special' : 'home-ann-badge'}>
-                  {gecBanner.text}
-                </span>
-              )}
-            </button>
-            <div className="flex items-center gap-6">
-              <button
-                type="button"
-                className="row-action-chip"
-                onClick={() => onOpenPlanner('calendar')}
-              >
-                School Cal
-              </button>
-              <button
-                type="button"
-                className="row-action-chip active-chip"
-                onClick={() => onOpenPlanner('timetable')}
-              >
-                Timetable <ChevronRight size={13} />
-              </button>
-            </div>
-          </div>
-
-          {todaySchedule.length > 0 ? (
-            <div className="home-sched-items">
-              {todaySchedule.map(cls => (
+              {annPreview.latest.length === 0 ? (
                 <button
-                  key={cls.id}
                   type="button"
-                  className={`home-sched-row${cls.isLive ? ' is-live' : ''}`}
-                  style={{ borderLeftColor: cls.color }}
+                  className="home-ann-empty"
+                  onClick={onOpenAnnouncements}
+                >
+                  <span>Connect Canvas RSS feeds or paste teacher announcements so updates appear right here.</span>
+                  <ChevronRight size={15} style={{ flexShrink: 0, opacity: 0.7 }} />
+                </button>
+              ) : (
+                <div className="home-ann-items">
+                  {annPreview.latest.map(item => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`home-ann-item${!item._read ? ' is-unread' : ''}`}
+                      onClick={onOpenAnnouncements}
+                    >
+                      <div className="home-ann-item-top">
+                        {!item._read && <span className="ann-unread-dot" />}
+                        {item.pinned && <Pin size={11} style={{ color: 'var(--mistake)', flexShrink: 0 }} />}
+                        <span className="home-ann-course">{item.course || 'Canvas'}</span>
+                        <span className="home-ann-date">{item.timeLabel || item.dateKey}</span>
+                      </div>
+                      <div className="home-ann-item-title">{item.title}</div>
+                      {item._scheduleCompact && (
+                        <div className="home-ann-sched">
+                          <Clock size={11} style={{ flexShrink: 0 }} />
+                          <span>{item._scheduleCompact}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between gap-6" style={{ flexWrap: 'wrap' }}>
+                        {item.author && (
+                          <div className="home-ann-item-sub">by {item.author}</div>
+                        )}
+                        {item._quickLink && (
+                          <a
+                            href={item._quickLink.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="home-ann-link-chip"
+                            onClick={e => e.stopPropagation()}
+                          >
+                            <ExternalLink size={10} /> {item._quickLink.label}
+                          </a>
+                        )}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+          )}
+
+          {onOpenAnnouncements && onOpenPlanner && <div className="campus-today-divider" />}
+
+          {onOpenPlanner && (
+            <section className="campus-today-section" aria-label="Today's Class Schedule Spotlight">
+              <div className="home-ann-header">
+                <button
+                  type="button"
+                  className="home-ann-title-btn"
                   onClick={() => onOpenPlanner('timetable')}
                 >
-                  <div className="home-sched-row-top">
-                    <span className="home-sched-code">{cls.code}</span>
-                    {cls.isLive && <span className="home-sched-live-dot">LIVE</span>}
-                    {cls.gecMod?.mode === 'f2f' && (
-                      <span className="gec-badge-f2f">F2F{cls.room ? ` · ${cls.room}` : ''}</span>
-                    )}
-                    {cls.gecMod?.mode === 'virtual' && (
-                      <span className="gec-badge-virtual">VIRTUAL</span>
-                    )}
-                    {cls.gecMod?.mode === 'special' && (
-                      <span className="gec-badge-special">{cls.gecMod.label}</span>
-                    )}
-                    {!cls.gecMod && cls.room && (
-                      <span className="home-sched-room">{cls.room}</span>
-                    )}
-                  </div>
-                  <div className="home-sched-time">{cls.timeRange} · {cls.kind}</div>
+                  <span className="home-ann-icon home-sched-icon">
+                    <CalendarDays size={16} />
+                  </span>
+                  <span className="home-ann-title">Today&apos;s Schedule</span>
+                  {gecBanner && (
+                    <span className={gecBanner.kind === 'special' ? 'gec-badge-special' : 'home-ann-badge'}>
+                      {gecBanner.text}
+                    </span>
+                  )}
                 </button>
-              ))}
-            </div>
-          ) : upNextClass ? (
-            <button
-              type="button"
-              className="home-ann-empty"
-              onClick={() => onOpenPlanner('timetable')}
-            >
-              <span>
-                No classes today · Next: <strong>{upNextClass.code}</strong> ({upNextClass.dayLabel} {upNextClass.timeRange}
-                {upNextClass.room ? ` · ${upNextClass.room}` : ''})
-              </span>
-              <ChevronRight size={15} style={{ flexShrink: 0, opacity: 0.7 }} />
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="home-ann-empty"
-              onClick={() => onOpenPlanner('timetable')}
-            >
-              <span>Import your Study Load PDF &amp; GEC F2F/Virtual sheet so today&apos;s classes appear right here.</span>
-              <ChevronRight size={15} style={{ flexShrink: 0, opacity: 0.7 }} />
-            </button>
+                <div className="flex items-center gap-6">
+                  <button
+                    type="button"
+                    className="row-action-chip"
+                    onClick={() => onOpenPlanner('calendar')}
+                  >
+                    School Cal
+                  </button>
+                  <button
+                    type="button"
+                    className="row-action-chip active-chip"
+                    onClick={() => onOpenPlanner('timetable')}
+                  >
+                    Timetable <ChevronRight size={13} />
+                  </button>
+                </div>
+              </div>
+
+              {todaySchedule.length > 0 ? (
+                <div className="home-sched-items">
+                  {todaySchedule.map(cls => (
+                    <button
+                      key={cls.id}
+                      type="button"
+                      className={`home-sched-row${cls.isLive ? ' is-live' : ''}`}
+                      style={{ borderLeftColor: cls.color }}
+                      onClick={() => onOpenPlanner('timetable')}
+                    >
+                      <div className="home-sched-row-top">
+                        <span className="home-sched-code">{cls.code}</span>
+                        {cls.isLive && <span className="home-sched-live-dot">LIVE</span>}
+                        {cls.gecMod?.mode === 'f2f' && (
+                          <span className="gec-badge-f2f">F2F{cls.room ? ` · ${cls.room}` : ''}</span>
+                        )}
+                        {cls.gecMod?.mode === 'virtual' && (
+                          <span className="gec-badge-virtual">VIRTUAL</span>
+                        )}
+                        {cls.gecMod?.mode === 'special' && (
+                          <span className="gec-badge-special">{cls.gecMod.label}</span>
+                        )}
+                        {!cls.gecMod && cls.room && (
+                          <span className="home-sched-room">{cls.room}</span>
+                        )}
+                      </div>
+                      <div className="home-sched-time">{cls.timeRange} · {cls.kind}</div>
+                    </button>
+                  ))}
+                </div>
+              ) : upNextClass ? (
+                <button
+                  type="button"
+                  className="home-ann-empty"
+                  onClick={() => onOpenPlanner('timetable')}
+                >
+                  <span>
+                    No classes today · Next: <strong>{upNextClass.code}</strong> ({upNextClass.dayLabel} {upNextClass.timeRange}
+                    {upNextClass.room ? ` · ${upNextClass.room}` : ''})
+                  </span>
+                  <ChevronRight size={15} style={{ flexShrink: 0, opacity: 0.7 }} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="home-ann-empty"
+                  onClick={() => onOpenPlanner('timetable')}
+                >
+                  <span>Import your Study Load PDF &amp; GEC F2F/Virtual sheet so today&apos;s classes appear right here.</span>
+                  <ChevronRight size={15} style={{ flexShrink: 0, opacity: 0.7 }} />
+                </button>
+              )}
+            </section>
           )}
-        </section>
+        </div>
       )}
 
       {/* Compact Setup & Tour Nudge for New Unconfigured Users */}

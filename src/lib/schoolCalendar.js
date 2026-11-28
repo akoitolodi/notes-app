@@ -702,7 +702,12 @@ Return JSON schema:
     { "term": "first", "title": "...", "startDate": "2026-07-08", "endDate": "2026-07-08", "kind": "milestone", "audience": "all" }
   ]
 }`;
-    const raw = await aiVision(finalImageUrl, userPrompt, sys);
+    const raw = await aiVision({
+      system: sys,
+      user: userPrompt,
+      imageDataUrl: finalImageUrl,
+      maxTokens: 3200,
+    });
     const json = safeParseJsonObject(raw);
     if (!json || !Array.isArray(json.events) || json.events.length === 0) {
       throw new Error('Could not extract calendar events from this image. Try a clearer photo or paste text.');
@@ -743,16 +748,10 @@ Return JSON schema:
     const existingList = (existingCalendar.events || [])
       .map(e => `- [${e.term}] ${e.title}: ${e.startDate} to ${e.endDate}`)
       .join('\n');
-    const raw = await aiText(
-      [
-        {
-          role: 'system',
-          content:
-            'You convert a school calendar revision memo into structured JSON patches against the existing calendar. Return ONLY JSON.',
-        },
-        {
-          role: 'user',
-          content: `Academic Year: ${existingCalendar.academicYear}, Active Term: ${existingCalendar.activeTerm}.
+    const raw = await aiText({
+      system:
+        'You convert a school calendar revision memo into structured JSON patches against the existing calendar. Return ONLY JSON.',
+      user: `Academic Year: ${existingCalendar.academicYear}, Active Term: ${existingCalendar.activeTerm}.
 Existing events:
 ${existingList}
 
@@ -761,10 +760,9 @@ ${docText}
 
 Return JSON:
 { "patches": [ { "action": "move"|"add"|"remove", "targetTitle": "existing title if move/remove", "term": "first"|"second"|"summer", "title": "...", "startDate": "YYYY-MM-DD", "endDate": "YYYY-MM-DD", "kind": "exam"|"holiday"|"no-class"|"milestone"|"event"|"deadline" } ] }`,
-        },
-      ],
-      { task: 'fast', temperature: 0.1 }
-    );
+      task: 'fast',
+      maxTokens: 2048,
+    });
     const json = safeParseJsonObject(raw);
     if (json && Array.isArray(json.patches) && json.patches.length > 0) {
       return {
@@ -792,20 +790,13 @@ Return JSON:
 
   if (docText.length >= 20) {
     const span = detectAcademicYearSpan(docText);
-    const raw = await aiText(
-      [
-        {
-          role: 'system',
-          content:
-            'Extract all official academic calendar dates into clean JSON. Infer year from AY header (Jul-Dec = startYear, Jan-Jun = endYear). Return ONLY valid JSON.',
-        },
-        {
-          role: 'user',
-          content: `Calendar text (${span.academicYear}):\n${docText.slice(0, 12000)}\n\nReturn:\n{ "schoolName": "...", "academicYear": "${span.academicYear}", "startYear": ${span.startYear}, "endYear": ${span.endYear}, "events": [{ "term": "first"|"second"|"summer", "title": "...", "startDate": "YYYY-MM-DD", "endDate": "YYYY-MM-DD", "kind": "exam"|"holiday"|"no-class"|"milestone"|"deadline"|"event", "audience": "all"|"undergrad"|"grad" }] }`,
-        },
-      ],
-      { task: 'fast', temperature: 0.1 }
-    );
+    const raw = await aiText({
+      system:
+        'Extract all official academic calendar dates into clean JSON. Infer year from AY header (Jul-Dec = startYear, Jan-Jun = endYear). Return ONLY valid JSON.',
+      user: `Calendar text (${span.academicYear}):\n${docText.slice(0, 12000)}\n\nReturn:\n{ "schoolName": "...", "academicYear": "${span.academicYear}", "startYear": ${span.startYear}, "endYear": ${span.endYear}, "events": [{ "term": "first"|"second"|"summer", "title": "...", "startDate": "YYYY-MM-DD", "endDate": "YYYY-MM-DD", "kind": "exam"|"holiday"|"no-class"|"milestone"|"deadline"|"event", "audience": "all"|"undergrad"|"grad" }] }`,
+      task: 'fast',
+      maxTokens: 3200,
+    });
     const json = safeParseJsonObject(raw);
     if (json && Array.isArray(json.events) && json.events.length > 0) {
       const sy = Number(json.startYear) || span.startYear;

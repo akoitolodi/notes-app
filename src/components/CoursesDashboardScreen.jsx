@@ -40,6 +40,8 @@ import {
   MapPin,
   User,
   Timer,
+  FileDown,
+  RefreshCw,
 } from 'lucide-react';
 import {
   db,
@@ -83,9 +85,17 @@ import { compressImage } from './ImageManager';
 import CourseGradesTab from './course/CourseGradesTab';
 import CourseAttendanceCard from './course/CourseAttendanceCard';
 import CourseScheduleView from './course/CourseScheduleView';
+import {
+  getCanvasFilesSnapshot,
+  importCanvasFileToCourse,
+  syncCanvasFilesCatalog,
+  formatFileSize,
+  CANVAS_FILES_UPDATED_EVENT,
+} from '../lib/canvasFiles';
 const DocumentViewerModal = lazy(() => import('./DocumentViewerModal'));
 const SchedulePdfImportSheet = lazy(() => import('./course/SchedulePdfImportSheet'));
 const FocusPomodoroSheet = lazy(() => import('./FocusPomodoroSheet'));
+const CanvasFilesSheet = lazy(() => import('./course/CanvasFilesSheet'));
 import MarkdownContent from './ui/MarkdownContent';
 import { useDialog } from './ui/DialogProvider';
 
@@ -123,6 +133,8 @@ export default function CoursesDashboardScreen({
   onChanged,
   onRegisterBack = null,
   initialSection = 'courses',
+  initialOpenCanvasFiles = false,
+  onConsumedCanvasFilesOpen = null,
 }) {
   const { confirm, toast } = useDialog();
 
@@ -138,6 +150,10 @@ export default function CoursesDashboardScreen({
   ); // courses | schedule
   const [scheduleImportOpen, setScheduleImportOpen] = useState(false);
   const [focusOpen, setFocusOpen] = useState(false);
+  const [canvasFilesOpen, setCanvasFilesOpen] = useState(Boolean(initialOpenCanvasFiles));
+  const [canvasSnap, setCanvasSnap] = useState(() => getCanvasFilesSnapshot());
+  const [trayBusyId, setTrayBusyId] = useState('');
+  const [traySyncing, setTraySyncing] = useState(false);
   const [gwaMode, setGwaMode] = useState('gwa'); // gwa | gpa
   const [courseTab, setCourseTab] = useState('overview'); // overview | modules | announcements | assignments | grades | ai
   const [showArchived, setShowArchived] = useState(false);
@@ -206,6 +222,19 @@ export default function CoursesDashboardScreen({
     return () => abortRef.current?.abort();
   }, [refreshAll]);
 
+  useEffect(() => {
+    const onCanvasFilesUpdated = () => setCanvasSnap(getCanvasFilesSnapshot());
+    window.addEventListener(CANVAS_FILES_UPDATED_EVENT, onCanvasFilesUpdated);
+    return () => window.removeEventListener(CANVAS_FILES_UPDATED_EVENT, onCanvasFilesUpdated);
+  }, []);
+
+  useEffect(() => {
+    if (initialOpenCanvasFiles) {
+      setCanvasFilesOpen(true);
+      onConsumedCanvasFilesOpen?.();
+    }
+  }, [initialOpenCanvasFiles, onConsumedCanvasFilesOpen]);
+
   const selectedCourse = useMemo(
     () => courses.find(c => c.id === selectedCourseId) || null,
     [courses, selectedCourseId]
@@ -222,6 +251,10 @@ export default function CoursesDashboardScreen({
   useEffect(() => {
     if (!onRegisterBack) return undefined;
     onRegisterBack(() => {
+      if (canvasFilesOpen) {
+        setCanvasFilesOpen(false);
+        return true;
+      }
       if (previewMaterial) {
         setPreviewMaterial(null);
         return true;
@@ -233,7 +266,7 @@ export default function CoursesDashboardScreen({
       return false;
     });
     return () => onRegisterBack(null);
-  }, [onRegisterBack, previewMaterial, scheduleImportOpen]);
+  }, [onRegisterBack, canvasFilesOpen, previewMaterial, scheduleImportOpen]);
 
   const courseStatsMap = useMemo(() => {
     const map = new Map();
@@ -882,6 +915,67 @@ export default function CoursesDashboardScreen({
   };
 
   // Shared Add / Edit Course Modal Sheet (with Units + Class Schedule Meetings)
+  const renderCanvasFilesSheet = () => {
+    if (!canvasFilesOpen) return null;
+    return (
+      <Suspense fallback={null}>
+        <CanvasFilesSheet
+          courses={courses}
+          initialCourseId={selectedCourseId}
+          onImported={async () => {
+            await refreshAll();
+            setCanvasSnap(getCanvasFilesSnapshot());
+            onChanged?.();
+          }}
+          onCoursesChanged={async () => {
+            await refreshAll();
+            setCanvasSnap(getCanvasFilesSnapshot());
+            onChanged?.();
+          }}
+          onClose={() => setCanvasFilesOpen(false)}
+        />
+      </Suspense>
+    );
+  };
+
+  const handleTrayImportFile = async fileRec => {
+    if (!selectedCourse || trayBusyId) return;
+    setTrayBusyId(fileRec.canvasFileId);
+    try {
+      await importCanvasFileToCourse(fileRec, selectedCourse);
+      setCanvasSnap(getCanvasFilesSnapshot());
+      await refreshAll();
+      onChanged?.();
+      toast(`Imported "${fileRec.displayName}" into ${fileRec.moduleName || 'Modules'}!`, {
+        type: 'success',
+      });
+    } catch (err) {
+      toast(`Import failed: ${err?.message || 'Check Canvas session'}`, { type: 'error' });
+    } finally {
+      setTrayBusyId('');
+    }
+  };
+
+  const handleTrayImportAll = async list => {
+    if (!selectedCourse || trayBusyId || !list?.length) return;
+    setTrayBusyId('__all__');
+    let importedCount = 0;
+    try {
+      for (const f of list.slice(0, 12)) {
+        await importCanvasFileToCourse(f, selectedCourse).catch(() => null);
+        importedCount += 1;
+      }
+      setCanvasSnap(getCanvasFilesSnapshot());
+      await refreshAll();
+      onChanged?.();
+      toast(`Imported ${importedCount} file${importedCount === 1 ? '' : 's'} into ${selectedCourse.code}!`, {
+        type: 'success',
+      });
+    } finally {
+      setTrayBusyId('');
+    }
+  };
+
   const renderCourseFormModal = () => {
     if (!addCourseOpen) return null;
     return (
@@ -1236,6 +1330,16 @@ export default function CoursesDashboardScreen({
               </button>
               <button
                 type="button"
+                className={`row-action-chip${canvasSnap.newCount > 0 ? ' active-chip' : ''}`}
+                onClick={() => setCanvasFilesOpen(true)}
+              >
+                <FileDown size={12} /> Canvas Files
+                {canvasSnap.newCount > 0 && (
+                  <span className="course-foot-badge">{canvasSnap.newCount}</span>
+                )}
+              </button>
+              <button
+                type="button"
                 className="row-action-chip"
                 onClick={() => setDashSection('schedule')}
               >
@@ -1397,6 +1501,11 @@ export default function CoursesDashboardScreen({
                         >
                           <Layers size={13} />
                           <span>Modules</span>
+                          {(canvasSnap.byCourseId.get(String(c.id))?.newCount || 0) > 0 && (
+                            <span className="course-foot-badge">
+                              {canvasSnap.byCourseId.get(String(c.id)).newCount}
+                            </span>
+                          )}
                         </button>
                         <button
                           type="button"
@@ -1431,6 +1540,7 @@ export default function CoursesDashboardScreen({
           </>
         )}
         {renderCourseFormModal()}
+        {renderCanvasFilesSheet()}
         {scheduleImportOpen && (
           <Suspense fallback={null}>
             <SchedulePdfImportSheet
@@ -1531,6 +1641,7 @@ export default function CoursesDashboardScreen({
       </div>
 
       {renderCourseFormModal()}
+      {renderCanvasFilesSheet()}
 
       {/* 6 Canvas-Style Workspace Tabs */}
       <div className="hub-tabs" role="tablist" style={{ marginTop: 10 }}>
@@ -1722,23 +1833,110 @@ export default function CoursesDashboardScreen({
       )}
 
       {/* ---- TAB 2: MODULES & FILES (Multi-File Batch + Google Link + Studied Checkmarks) ---- */}
-      {courseTab === 'modules' && (
+      {courseTab === 'modules' && (() => {
+        const courseCanvasBucket = canvasSnap.byCourseId.get(String(selectedCourse.id));
+        const unimportedCanvasFiles = (courseCanvasBucket?.files || []).filter(f => !f.isImported);
+        const courseNewCanvasCount = courseCanvasBucket?.newCount || 0;
+        return (
         <div style={{ paddingBottom: 20 }}>
-          <div style={{ padding: '4px 16px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+          <div style={{ padding: '4px 16px 10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <span className="settings-help" style={{ margin: 0 }}>
               {selectedMatIds.length > 0
                 ? `${selectedMatIds.length} file${selectedMatIds.length === 1 ? '' : 's'} selected for AI / Exam`
                 : `${stats.studiedCount}/${stats.materials.length} studied · Multi-file PDF/PPTX/DOCX supported`}
             </span>
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              style={{ flexShrink: 0 }}
-              onClick={() => setUploadOpen(v => !v)}
-            >
-              <Plus size={14} /> Add Material
-            </button>
+            <div className="flex items-center gap-6" style={{ flexShrink: 0 }}>
+              <button
+                type="button"
+                className={`row-action-chip${courseNewCanvasCount > 0 ? ' active-chip' : ''}`}
+                onClick={() => setCanvasFilesOpen(true)}
+              >
+                <FileDown size={12} /> Canvas Files
+                {courseNewCanvasCount > 0 && (
+                  <span className="course-foot-badge">{courseNewCanvasCount}</span>
+                )}
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                style={{ flexShrink: 0 }}
+                onClick={() => setUploadOpen(v => !v)}
+              >
+                <Plus size={14} /> Add Material
+              </button>
+            </div>
           </div>
+
+          {unimportedCanvasFiles.length > 0 && (
+            <div className="canvas-new-tray">
+              <div className="canvas-new-tray-head">
+                <div className="flex items-center gap-6" style={{ minWidth: 0 }}>
+                  <FileDown size={15} style={{ color: 'var(--accent-ink)', flexShrink: 0 }} />
+                  <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
+                    New from Canvas
+                  </span>
+                  <span className="course-foot-badge">{unimportedCanvasFiles.length}</span>
+                </div>
+                <div className="flex items-center gap-6" style={{ flexShrink: 0 }}>
+                  <button
+                    type="button"
+                    className="row-icon-btn"
+                    aria-label="Check Canvas files"
+                    disabled={traySyncing}
+                    onClick={async () => {
+                      setTraySyncing(true);
+                      try {
+                        const res = await syncCanvasFilesCatalog({ courses, notify: false });
+                        setCanvasSnap(getCanvasFilesSnapshot());
+                        if (res?.sessionExpired) setCanvasFilesOpen(true);
+                      } catch {
+                        setCanvasFilesOpen(true);
+                      } finally {
+                        setTraySyncing(false);
+                      }
+                    }}
+                  >
+                    <RefreshCw size={13} className={traySyncing ? 'spin-icon' : ''} />
+                  </button>
+                  {unimportedCanvasFiles.length > 1 && (
+                    <button
+                      type="button"
+                      className="row-action-chip active-chip"
+                      disabled={Boolean(trayBusyId)}
+                      onClick={() => handleTrayImportAll(unimportedCanvasFiles)}
+                    >
+                      <Download size={12} />{' '}
+                      {trayBusyId === '__all__' ? 'Importing…' : `Import All (${Math.min(12, unimportedCanvasFiles.length)})`}
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="canvas-new-tray-list">
+                {unimportedCanvasFiles.slice(0, 6).map(cf => (
+                  <div key={cf.canvasFileId} className="canvas-new-tray-row">
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div className="flex items-center gap-6">
+                        {cf.isNew && <span className="canvas-new-dot" />}
+                        <span className="canvas-file-title">{cf.displayName}</span>
+                      </div>
+                      <div className="canvas-file-meta">
+                        {cf.moduleName}
+                        {cf.size > 0 ? ` · ${formatFileSize(cf.size)}` : ''}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm"
+                      disabled={Boolean(trayBusyId)}
+                      onClick={() => handleTrayImportFile(cf)}
+                    >
+                      <Download size={12} /> {trayBusyId === cf.canvasFileId ? 'Importing…' : 'Import'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {selectedMatIds.length > 0 && (
             <div className="flex gap-8" style={{ padding: '0 16px 10px', flexWrap: 'wrap' }}>
@@ -2004,7 +2202,8 @@ export default function CoursesDashboardScreen({
             </Suspense>
           )}
         </div>
-      )}
+        );
+      })()}
 
       {/* ---- TAB 3: ANNOUNCEMENTS ---- */}
       {courseTab === 'announcements' && (

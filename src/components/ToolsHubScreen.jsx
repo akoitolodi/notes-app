@@ -66,11 +66,11 @@ export default function ToolsHubScreen({
         </div>
       </div>
 
-      <div className="tools-hub-grid">
+      <div className="tools-labs-list">
         {showCoding && (
-          <button type="button" className="tools-hub-card tone-emerald" onClick={onOpenCoding}>
+          <button type="button" className="tools-lab-row" onClick={onOpenCoding}>
             <div className="tools-hub-icon">
-              <Code2 size={20} />
+              <Code2 size={18} />
             </div>
             <div className="tools-hub-body">
               <div className="tools-hub-title">Learn Coding Studio</div>
@@ -81,9 +81,9 @@ export default function ToolsHubScreen({
         )}
 
         {showToolkit && (
-          <button type="button" className="tools-hub-card tone-violet" onClick={onOpenToolkit}>
+          <button type="button" className="tools-lab-row" onClick={onOpenToolkit}>
             <div className="tools-hub-icon">
-              <Wrench size={20} />
+              <Wrench size={18} />
             </div>
             <div className="tools-hub-body">
               <div className="tools-hub-title">Dev &amp; IT Toolkit</div>
@@ -93,9 +93,9 @@ export default function ToolsHubScreen({
           </button>
         )}
 
-        <button type="button" className="tools-hub-card tone-indigo" onClick={onOpenSyllabus}>
+        <button type="button" className="tools-lab-row" onClick={onOpenSyllabus}>
           <div className="tools-hub-icon">
-            <Sparkles size={20} />
+            <Sparkles size={18} />
           </div>
           <div className="tools-hub-body">
             <div className="tools-hub-title">AI Syllabus Studio</div>
@@ -104,9 +104,9 @@ export default function ToolsHubScreen({
           <ChevronRight size={17} className="tools-hub-chevron" />
         </button>
 
-        <button type="button" className="tools-hub-card tone-amber" onClick={onOpenSubjects}>
+        <button type="button" className="tools-lab-row" onClick={onOpenSubjects}>
           <div className="tools-hub-icon">
-            <GraduationCap size={20} />
+            <GraduationCap size={18} />
           </div>
           <div className="tools-hub-body">
             <div className="tools-hub-title">Subject Studio</div>
@@ -117,27 +117,25 @@ export default function ToolsHubScreen({
       </div>
 
       <div className="section-heading">Session Capture</div>
-      <div className="tools-hub-grid">
-        <button type="button" className="tools-hub-card tone-rose" onClick={() => setRecorderOpen(true)}>
+      <div className="tools-capture-grid">
+        <button type="button" className="tools-capture-card" onClick={() => setRecorderOpen(true)}>
           <div className="tools-hub-icon">
-            <Mic size={20} />
+            <Mic size={18} />
           </div>
           <div className="tools-hub-body">
             <div className="tools-hub-title">Record Lecture</div>
-            <div className="tools-hub-sub">Capture class audio &amp; convert to clean AI notes</div>
+            <div className="tools-hub-sub">Audio to clean AI notes</div>
           </div>
-          <ChevronRight size={17} className="tools-hub-chevron" />
         </button>
 
-        <button type="button" className="tools-hub-card tone-indigo" onClick={() => setFocusOpen(true)}>
+        <button type="button" className="tools-capture-card" onClick={() => setFocusOpen(true)}>
           <div className="tools-hub-icon">
-            <Timer size={20} />
+            <Timer size={18} />
           </div>
           <div className="tools-hub-body">
             <div className="tools-hub-title">Focus Pomodoro</div>
-            <div className="tools-hub-sub">Distraction-free study timer with ambient focus</div>
+            <div className="tools-hub-sub">Timed study sessions</div>
           </div>
-          <ChevronRight size={17} className="tools-hub-chevron" />
         </button>
       </div>
 

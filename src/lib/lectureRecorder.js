@@ -225,7 +225,7 @@ export async function formatLectureTranscriptToNotes({ transcript, subject = 'Le
       '',
       raw.slice(0, 8000),
     ].join('\n');
-    const reply = await aiText(prompt, { maxTokens: 1200, temperature: 0.25 });
+    const reply = await aiText({ user: prompt, maxTokens: 1200 });
     const clean = String(reply || '').trim();
     if (clean) {
       const firstLine = /^#\s+(.+)$/m.exec(clean);

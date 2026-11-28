@@ -1,12 +1,14 @@
 package com.philipjohn.aiclassnotes;
 
 import android.Manifest;
+import android.app.Dialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.database.Cursor;
 import android.graphics.Color;
+import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
 import android.media.MediaRecorder;
 import android.net.Uri;
@@ -21,12 +23,23 @@ import android.speech.SpeechRecognizer;
 import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.util.Base64;
+import android.util.TypedValue;
 import android.view.Display;
+import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
+import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebSettings;
 import android.webkit.WebView;
+import android.webkit.WebViewClient;
+import android.widget.Button;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.TextView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.content.FileProvider;
@@ -43,9 +56,14 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.lang.reflect.Method;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Locale;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -54,6 +72,8 @@ public class MainActivity extends BridgeActivity {
     private static final int MAX_SHARED_BYTES = 12 * 1024 * 1024; // 12 MB safety cap
     private static final int MAX_EXTERNAL_BYTES = 25 * 1024 * 1024; // 25 MB temp export cap
     private static final int MAX_RECORDER_BYTES = 24 * 1024 * 1024; // 24 MB Groq Whisper safety cap
+    private static final int MAX_CANVAS_FILE_BYTES = 20 * 1024 * 1024; // 20 MB Canvas module file cap
+    private static final int MAX_CANVAS_JSON_BYTES = 4 * 1024 * 1024; // 4 MB Canvas JSON cap
     private static final int REQ_RECORD_AUDIO = 4201;
     private static final int REQ_RECORDER_AUDIO = 4202;
     private TextToSpeech tts;
@@ -70,6 +90,9 @@ public class MainActivity extends BridgeActivity {
     private MediaRecorder nativeRecorder = null;
     private File nativeRecorderFile = null;
     private volatile boolean nativeRecorderActive = false;
+    private Dialog canvasLoginDialog = null;
+    private WebView canvasLoginWebView = null;
+    private final ConcurrentHashMap<String, String> canvasResultStore = new ConcurrentHashMap<>();
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     private static final String THEME_PREFS = "bai_theme_prefs";
@@ -110,6 +133,7 @@ public class MainActivity extends BridgeActivity {
         initNativeTts();
         initNativeSpeech();
         initNativeRecorder();
+        initNativeCanvas();
         if (getBridge() != null) {
             safeInsetWebViewListener = new WebViewListener() {
                 @Override
@@ -585,6 +609,8 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onDestroy() {
         cancelNativeAudioRecorder();
+        dismissCanvasLoginDialog();
+        canvasResultStore.clear();
         try {
             if (pendingSpeechRestart != null) {
                 mainHandler.removeCallbacks(pendingSpeechRestart);
@@ -1219,6 +1245,542 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public void cancel() {
             cancelNativeAudioRecorder();
+        }
+    }
+
+    // Native Android Canvas WebView session & authenticated file bridge (works even when Tokens are disabled)
+    private void initNativeCanvas() {
+        try {
+            if (getBridge() != null && getBridge().getWebView() != null) {
+                getBridge().getWebView().addJavascriptInterface(new AndroidCanvasBridge(), "BaiNativeCanvas");
+            }
+        } catch (Exception ignored) {
+            // ignore bridge attach error
+        }
+    }
+
+    private boolean isValidHttpsUrl(String raw) {
+        if (raw == null || raw.trim().isEmpty()) return false;
+        try {
+            URL u = new URL(raw.trim());
+            return "https".equalsIgnoreCase(u.getProtocol()) && u.getHost() != null && !u.getHost().isEmpty();
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private String extractHost(String raw) {
+        if (raw == null) return "";
+        String candidate = raw.trim();
+        if (!candidate.startsWith("http://") && !candidate.startsWith("https://")) {
+            candidate = "https://" + candidate;
+        }
+        try {
+            URL u = new URL(candidate);
+            if (!"https".equalsIgnoreCase(u.getProtocol()) || u.getHost() == null) return "";
+            return u.getHost().toLowerCase(Locale.US);
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private boolean isSameOrSubHost(String candidateHost, String originHost) {
+        if (candidateHost == null || originHost == null) return false;
+        String c = candidateHost.toLowerCase(Locale.US);
+        String o = originHost.toLowerCase(Locale.US);
+        return c.equals(o) || c.endsWith("." + o);
+    }
+
+    private String parseFilenameFromDisposition(String header) {
+        if (header == null || header.isEmpty()) return "";
+        try {
+            int starIdx = header.toLowerCase(Locale.US).indexOf("filename*=");
+            if (starIdx >= 0) {
+                String tail = header.substring(starIdx + 10).split(";")[0].trim();
+                int quoteTick = tail.indexOf("''");
+                if (quoteTick >= 0) tail = tail.substring(quoteTick + 2);
+                tail = tail.replace("\"", "").trim();
+                if (!tail.isEmpty()) return URLDecoder.decode(tail, "UTF-8");
+            }
+            int idx = header.toLowerCase(Locale.US).indexOf("filename=");
+            if (idx >= 0) {
+                String tail = header.substring(idx + 9).split(";")[0].trim().replace("\"", "").trim();
+                if (!tail.isEmpty()) return tail;
+            }
+        } catch (Exception ignored) {
+            // fallback to URL path
+        }
+        return "";
+    }
+
+    private JSONObject executeCanvasHttp(final String targetUrl, final boolean binary) {
+        JSONObject out = new JSONObject();
+        try {
+            if (!isValidHttpsUrl(targetUrl)) {
+                out.put("ok", false);
+                out.put("status", 0);
+                out.put("error", "Canvas URL must start with https://");
+                return out;
+            }
+
+            URL current = new URL(targetUrl.trim());
+            final String originHost = current.getHost() != null ? current.getHost().toLowerCase(Locale.US) : "";
+            final int maxBytes = binary ? MAX_CANVAS_FILE_BYTES : MAX_CANVAS_JSON_BYTES;
+
+            for (int hop = 0; hop < 6; hop++) {
+                HttpURLConnection conn = null;
+                try {
+                    conn = (HttpURLConnection) current.openConnection();
+                    conn.setInstanceFollowRedirects(false);
+                    conn.setConnectTimeout(15000);
+                    conn.setReadTimeout(25000);
+                    conn.setRequestMethod("GET");
+                    conn.setRequestProperty("User-Agent", "NotesByBai-Android");
+                    if (binary) {
+                        conn.setRequestProperty("Accept", "*/*");
+                    } else {
+                        conn.setRequestProperty("Accept", "application/json");
+                        conn.setRequestProperty("X-Requested-With", "XMLHttpRequest");
+                    }
+
+                    // Never forward Canvas session cookies to external S3 / CDN hosts on download redirects
+                    String currentHost = current.getHost() != null ? current.getHost().toLowerCase(Locale.US) : "";
+                    if (isSameOrSubHost(currentHost, originHost)) {
+                        String cookie = CookieManager.getInstance().getCookie(current.toString());
+                        if (cookie != null && !cookie.isEmpty()) {
+                            conn.setRequestProperty("Cookie", cookie);
+                        }
+                    }
+
+                    int status = conn.getResponseCode();
+                    if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
+                        String loc = conn.getHeaderField("Location");
+                        if (loc == null || loc.isEmpty()) {
+                            out.put("ok", false);
+                            out.put("status", status);
+                            out.put("error", "Missing redirect location");
+                            return out;
+                        }
+                        URL nextUrl = new URL(current, loc);
+                        if (!"https".equalsIgnoreCase(nextUrl.getProtocol())) {
+                            out.put("ok", false);
+                            out.put("status", status);
+                            out.put("error", "Blocked non-HTTPS redirect");
+                            return out;
+                        }
+                        current = nextUrl;
+                        continue;
+                    }
+
+                    InputStream stream = status >= 400 ? conn.getErrorStream() : conn.getInputStream();
+                    ByteArrayOutputStream buf = new ByteArrayOutputStream();
+                    if (stream != null) {
+                        byte[] chunk = new byte[16384];
+                        int total = 0;
+                        int n;
+                        while ((n = stream.read(chunk)) != -1) {
+                            total += n;
+                            if (total > maxBytes) {
+                                out.put("ok", false);
+                                out.put("status", 413);
+                                out.put("error", "File exceeds 20 MB in-app download cap");
+                                return out;
+                            }
+                            buf.write(chunk, 0, n);
+                        }
+                        stream.close();
+                    }
+
+                    byte[] bytes = buf.toByteArray();
+                    String contentType = conn.getContentType() != null ? conn.getContentType() : "";
+                    String disposition = conn.getHeaderField("Content-Disposition");
+                    String dispName = parseFilenameFromDisposition(disposition);
+
+                    out.put("ok", status >= 200 && status < 300);
+                    out.put("status", status);
+                    out.put("contentType", contentType);
+                    out.put("size", bytes.length);
+                    if (!dispName.isEmpty()) out.put("fileName", dispName);
+
+                    if (binary) {
+                        if (status >= 200 && status < 300) {
+                            out.put("base64", Base64.encodeToString(bytes, Base64.NO_WRAP));
+                        } else {
+                            out.put("error", "Canvas returned HTTP " + status);
+                        }
+                    } else {
+                        String text = new String(bytes, StandardCharsets.UTF_8);
+                        if (text.startsWith("while(1);")) {
+                            text = text.substring("while(1);".length());
+                        }
+                        out.put("body", text);
+                        if (status < 200 || status >= 300) {
+                            out.put("error", "Canvas returned HTTP " + status);
+                        }
+                    }
+                    return out;
+                } finally {
+                    if (conn != null) conn.disconnect();
+                }
+            }
+
+            out.put("ok", false);
+            out.put("status", 310);
+            out.put("error", "Too many redirects");
+            return out;
+        } catch (Exception e) {
+            try {
+                out.put("ok", false);
+                out.put("status", 0);
+                out.put("error", e.getMessage() != null ? e.getMessage() : "Canvas network error");
+            } catch (Exception ignored) {
+                // ignore
+            }
+            return out;
+        }
+    }
+
+    private JSONObject verifyCanvasSessionOnHost(final String host) {
+        JSONObject result = new JSONObject();
+        try {
+            JSONObject res = executeCanvasHttp("https://" + host + "/api/v1/users/self", false);
+            if (!res.optBoolean("ok", false)) {
+                result.put("ok", false);
+                return result;
+            }
+            String body = res.optString("body", "");
+            JSONObject user = new JSONObject(body);
+            if (!user.has("id")) {
+                result.put("ok", false);
+                return result;
+            }
+            result.put("ok", true);
+            result.put("host", host);
+            result.put("userName", user.optString("name", user.optString("short_name", "")));
+            return result;
+        } catch (Exception ignored) {
+            try {
+                result.put("ok", false);
+            } catch (Exception ignored2) {
+                // ignore
+            }
+            return result;
+        }
+    }
+
+    private void notifyCanvasJs(final String eventType, final String payloadJson) {
+        final String js =
+            "try { if (window.__baiCanvasCallback) window.__baiCanvasCallback("
+                + JSONObject.quote(eventType != null ? eventType : "")
+                + ", "
+                + JSONObject.quote(payloadJson != null ? payloadJson : "{}")
+                + "); } catch(e) {}";
+        mainHandler.post(() -> {
+            try {
+                if (getBridge() != null && getBridge().getWebView() != null) {
+                    getBridge().getWebView().evaluateJavascript(js, null);
+                }
+            } catch (Exception ignored) {
+                // ignore
+            }
+        });
+    }
+
+    private void notifyCanvasResultReady(final String reqId) {
+        final String js =
+            "try { if (window.__baiCanvasReady) window.__baiCanvasReady("
+                + JSONObject.quote(reqId != null ? reqId : "")
+                + "); } catch(e) {}";
+        mainHandler.post(() -> {
+            try {
+                if (getBridge() != null && getBridge().getWebView() != null) {
+                    getBridge().getWebView().evaluateJavascript(js, null);
+                }
+            } catch (Exception ignored) {
+                // ignore
+            }
+        });
+    }
+
+    private void dismissCanvasLoginDialog() {
+        Runnable closeTask = () -> {
+            try {
+                if (canvasLoginWebView != null) {
+                    canvasLoginWebView.stopLoading();
+                    canvasLoginWebView.destroy();
+                    canvasLoginWebView = null;
+                }
+            } catch (Exception ignored) {
+                canvasLoginWebView = null;
+            }
+            try {
+                if (canvasLoginDialog != null) {
+                    if (canvasLoginDialog.isShowing()) canvasLoginDialog.dismiss();
+                    canvasLoginDialog = null;
+                }
+            } catch (Exception ignored) {
+                canvasLoginDialog = null;
+            }
+        };
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            closeTask.run();
+        } else {
+            mainHandler.post(closeTask);
+        }
+    }
+
+    private int dp(int val) {
+        return Math.round(TypedValue.applyDimension(
+            TypedValue.COMPLEX_UNIT_DIP, val, getResources().getDisplayMetrics()
+        ));
+    }
+
+    private void openCanvasLoginDialog(final String rawHost) {
+        final String targetHost = extractHost(rawHost);
+        if (targetHost.isEmpty()) {
+            notifyCanvasJs("login", "{\"ok\":false,\"error\":\"Invalid school Canvas host.\"}");
+            return;
+        }
+        dismissCanvasLoginDialog();
+
+        SharedPreferences prefs = getSharedPreferences(THEME_PREFS, MODE_PRIVATE);
+        int uiNight = getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
+        boolean dark = prefs.getBoolean(PREF_IS_DARK, uiNight == Configuration.UI_MODE_NIGHT_YES);
+        int headerBg = Color.parseColor(dark ? "#141A22" : "#F5F6F3");
+        int headerText = Color.parseColor(dark ? "#EDF1F7" : "#11161C");
+        int subText = Color.parseColor(dark ? "#9AA5B4" : "#5A6573");
+        int accentColor = Color.parseColor(dark ? "#60A5FA" : "#1D4ED8");
+
+        final boolean[] completed = new boolean[] { false };
+        final Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(headerBg);
+
+        LinearLayout topBar = new LinearLayout(this);
+        topBar.setOrientation(LinearLayout.HORIZONTAL);
+        topBar.setGravity(Gravity.CENTER_VERTICAL);
+        topBar.setPadding(dp(12), dp(10), dp(12), dp(10));
+        topBar.setBackgroundColor(headerBg);
+
+        Button cancelBtn = new Button(this);
+        cancelBtn.setText("Cancel");
+        cancelBtn.setAllCaps(false);
+        cancelBtn.setBackgroundColor(Color.TRANSPARENT);
+        cancelBtn.setTextColor(subText);
+        cancelBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        cancelBtn.setPadding(dp(6), dp(4), dp(10), dp(4));
+
+        LinearLayout titleCol = new LinearLayout(this);
+        titleCol.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams titleColLp = new LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f
+        );
+        titleCol.setLayoutParams(titleColLp);
+
+        TextView titleView = new TextView(this);
+        titleView.setText("Sign in to Canvas");
+        titleView.setTypeface(Typeface.DEFAULT_BOLD);
+        titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        titleView.setTextColor(headerText);
+
+        TextView subView = new TextView(this);
+        subView.setText(targetHost);
+        subView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        subView.setTextColor(subText);
+
+        titleCol.addView(titleView);
+        titleCol.addView(subView);
+
+        Button doneBtn = new Button(this);
+        doneBtn.setText("Done");
+        doneBtn.setAllCaps(false);
+        doneBtn.setBackgroundColor(Color.TRANSPARENT);
+        doneBtn.setTextColor(accentColor);
+        doneBtn.setTypeface(Typeface.DEFAULT_BOLD);
+        doneBtn.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        doneBtn.setPadding(dp(10), dp(4), dp(6), dp(4));
+
+        topBar.addView(cancelBtn);
+        topBar.addView(titleCol);
+        topBar.addView(doneBtn);
+
+        ProgressBar progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progress.setIndeterminate(true);
+        progress.setLayoutParams(new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(3)
+        ));
+
+        WebView webView = new WebView(this);
+        webView.setLayoutParams(new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        ));
+
+        CookieManager cm = CookieManager.getInstance();
+        cm.setAcceptCookie(true);
+        cm.setAcceptThirdPartyCookies(webView, true);
+
+        WebSettings ws = webView.getSettings();
+        ws.setJavaScriptEnabled(true);
+        ws.setDomStorageEnabled(true);
+        ws.setDatabaseEnabled(true);
+        ws.setUseWideViewPort(true);
+        ws.setLoadWithOverviewMode(true);
+
+        Runnable checkAndComplete = () -> {
+            subView.setText("Verifying Canvas session...");
+            new Thread(() -> {
+                JSONObject verified = verifyCanvasSessionOnHost(targetHost);
+                if (verified.optBoolean("ok", false)) {
+                    mainHandler.post(() -> {
+                        if (completed[0]) return;
+                        completed[0] = true;
+                        dismissCanvasLoginDialog();
+                        notifyCanvasJs("login", verified.toString());
+                    });
+                } else {
+                    mainHandler.post(() -> subView.setText("Finish signing in on the page first"));
+                }
+            }).start();
+        };
+
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                Uri u = request != null ? request.getUrl() : null;
+                return u == null || !"https".equalsIgnoreCase(u.getScheme());
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                progress.setVisibility(View.GONE);
+                CookieManager.getInstance().flush();
+                if (completed[0] || url == null) return;
+                String pageHost = extractHost(url);
+                String lower = url.toLowerCase(Locale.US);
+                if (isSameOrSubHost(pageHost, targetHost)
+                        && !lower.contains("/login")
+                        && !lower.contains("/oauth")) {
+                    new Thread(() -> {
+                        JSONObject verified = verifyCanvasSessionOnHost(targetHost);
+                        if (verified.optBoolean("ok", false)) {
+                            mainHandler.post(() -> {
+                                if (completed[0]) return;
+                                completed[0] = true;
+                                dismissCanvasLoginDialog();
+                                notifyCanvasJs("login", verified.toString());
+                            });
+                        }
+                    }).start();
+                }
+            }
+        });
+
+        cancelBtn.setOnClickListener(v -> {
+            if (!completed[0]) {
+                completed[0] = true;
+                dismissCanvasLoginDialog();
+                notifyCanvasJs("login", "{\"ok\":false,\"cancelled\":true}");
+            }
+        });
+
+        doneBtn.setOnClickListener(v -> {
+            CookieManager.getInstance().flush();
+            checkAndComplete.run();
+        });
+
+        dialog.setOnCancelListener(d -> {
+            if (!completed[0]) {
+                completed[0] = true;
+                dismissCanvasLoginDialog();
+                notifyCanvasJs("login", "{\"ok\":false,\"cancelled\":true}");
+            }
+        });
+
+        root.addView(topBar);
+        root.addView(progress);
+        root.addView(webView);
+        dialog.setContentView(root);
+
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setLayout(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+            );
+            dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        }
+
+        canvasLoginDialog = dialog;
+        canvasLoginWebView = webView;
+        dialog.show();
+        webView.loadUrl("https://" + targetHost + "/login/canvas");
+    }
+
+    private final class AndroidCanvasBridge {
+
+        @JavascriptInterface
+        public boolean isAvailable() {
+            return true;
+        }
+
+        @JavascriptInterface
+        public boolean hasSession(final String rawHost) {
+            String host = extractHost(rawHost);
+            if (host.isEmpty()) return false;
+            try {
+                String cookie = CookieManager.getInstance().getCookie("https://" + host);
+                if (cookie == null || cookie.isEmpty()) return false;
+                return cookie.contains("canvas_session")
+                    || cookie.contains("_normandy_session")
+                    || cookie.contains("log_session_id");
+            } catch (Exception ignored) {
+                return false;
+            }
+        }
+
+        @JavascriptInterface
+        public void openLogin(final String rawHost) {
+            mainHandler.post(() -> openCanvasLoginDialog(rawHost));
+        }
+
+        @JavascriptInterface
+        public void clearSession(final String rawHost) {
+            mainHandler.post(() -> {
+                try {
+                    CookieManager cm = CookieManager.getInstance();
+                    cm.removeAllCookies(null);
+                    cm.flush();
+                } catch (Exception ignored) {
+                    // ignore
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void fetchJsonAsync(final String reqId, final String url) {
+            new Thread(() -> {
+                JSONObject res = executeCanvasHttp(url, false);
+                canvasResultStore.put(reqId, res.toString());
+                notifyCanvasResultReady(reqId);
+            }).start();
+        }
+
+        @JavascriptInterface
+        public void downloadFileAsync(final String reqId, final String url) {
+            new Thread(() -> {
+                JSONObject res = executeCanvasHttp(url, true);
+                canvasResultStore.put(reqId, res.toString());
+                notifyCanvasResultReady(reqId);
+            }).start();
+        }
+
+        @JavascriptInterface
+        public String takeResult(final String reqId) {
+            if (reqId == null) return "";
+            String v = canvasResultStore.remove(reqId);
+            return v != null ? v : "";
         }
     }
 

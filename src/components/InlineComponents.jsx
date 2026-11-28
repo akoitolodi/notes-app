@@ -245,7 +245,7 @@ export const NoteLine = memo(function NoteLine({
   return (
     <div className="note-line-wrap">
       <div
-        className={`note-line variant-${parsed.variant}${showMistake ? ' has-mistake' : ''}`}
+        className={`note-line variant-${parsed.variant}${hasExpl && !showMistake ? ' has-expl' : ''}${showMistake ? ' has-mistake' : ''}`}
         style={indentStyle}
         onClick={() => onLineTap?.(b, i)}
       >

@@ -1791,7 +1791,7 @@ export default function SettingsScreen({
           • <strong>Ctrl+S</strong> saves · <strong>Ctrl+Shift+S</strong> saves &amp; explains.
         </div>
         <div className="settings-tip" style={{ marginTop: 10, opacity: 0.7 }}>
-          Notes by Bai v2.6.0
+          Notes by Bai v2.7.0
         </div>
       </div>
 

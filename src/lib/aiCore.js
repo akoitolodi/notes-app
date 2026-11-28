@@ -120,20 +120,24 @@ function buildEmptyResponseError(lastReasoning = '') {
   return err;
 }
 
-function buildMessages({ system, user, imageDataUrl = null, history = [] }) {
+function buildMessages({ system, user, imageDataUrl = null, history = [] } = {}) {
   const messages = [];
-  if (system) messages.push({ role: 'system', content: system });
-  messages.push(...history);
+  if (system && String(system).trim()) messages.push({ role: 'system', content: String(system) });
+  if (Array.isArray(history) && history.length > 0) messages.push(...history);
+  const userText = String(user ?? '').trim();
+  if (!userText && !imageDataUrl) {
+    throw new Error('AI prompt content is empty');
+  }
   if (imageDataUrl) {
     messages.push({
       role: 'user',
       content: [
-        { type: 'text', text: user },
+        { type: 'text', text: userText || 'Analyze this image.' },
         { type: 'image_url', image_url: { url: imageDataUrl } },
       ],
     });
   } else {
-    messages.push({ role: 'user', content: user });
+    messages.push({ role: 'user', content: userText });
   }
   return messages;
 }

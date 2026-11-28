@@ -34,6 +34,7 @@ import { extractDocument, structureImportedTextWithAI } from '../lib/docImporter
 import { detectDocKind } from '../lib/docViewerParser';
 import { htmlToCleanMarkdown } from '../lib/htmlToMarkdown';
 import { getPublicGoogleExportUrl, importPublicGoogleLink } from '../lib/courseExtras';
+import { matchSharedFileToCourse } from '../lib/canvasFiles';
 import { ocrImage } from '../lib/aiFeatures';
 import { compressImage } from './ImageManager';
 import { useDialog } from './ui/DialogProvider';
@@ -61,6 +62,8 @@ export default function ImportSheet({
   );
   const [courseId, setCourseId] = useState('');
   const [moduleName, setModuleName] = useState('Module 1');
+  const [moduleManuallyEdited, setModuleManuallyEdited] = useState(false);
+  const [autoMatchedCourseName, setAutoMatchedCourseName] = useState('');
 
   // Mode 1: Multi-File
   const [selectedFiles, setSelectedFiles] = useState(() => (initialFile ? [initialFile] : []));
@@ -97,9 +100,21 @@ export default function ImportSheet({
         const activeCourses = crsList.filter(c => !c.archived);
         setCourses(activeCourses);
         if (activeCourses.length > 0) {
-          setCourseId(activeCourses[0].id);
-          // When opened via Android Share / Open With, default to Course Module if courses exist!
-          if (initialFile) setDestination('course');
+          if (initialFile) {
+            setDestination('course');
+            const matched = matchSharedFileToCourse(initialFile.name, initialTitle, activeCourses);
+            if (matched.course) {
+              setCourseId(matched.course.id);
+              setAutoMatchedCourseName(matched.course.nickname || matched.course.code || matched.course.name);
+            } else {
+              setCourseId(activeCourses[0].id);
+            }
+            if (matched.suggestedModule) {
+              setModuleName(matched.suggestedModule);
+            }
+          } else {
+            setCourseId(activeCourses[0].id);
+          }
         }
       })
       .catch(() => {});
@@ -111,6 +126,18 @@ export default function ImportSheet({
     if (list.length === 0) return;
     setSelectedFiles(list);
     setError(null);
+    if (courses.length > 0) {
+      const matched = matchSharedFileToCourse(list[0].name, initialTitle, courses);
+      if (matched.course) {
+        setCourseId(matched.course.id);
+        setAutoMatchedCourseName(matched.course.nickname || matched.course.code || matched.course.name);
+      } else {
+        setAutoMatchedCourseName('');
+      }
+      if (matched.suggestedModule && !moduleManuallyEdited) {
+        setModuleName(matched.suggestedModule);
+      }
+    }
   };
 
   const handleOcrFilesPick = e => {
@@ -541,29 +568,42 @@ export default function ImportSheet({
         )}
 
         {destination === 'course' && courses.length > 0 ? (
-          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 8, marginTop: 10 }}>
-            <select
-              className="ai-input"
-              style={{ marginTop: 0 }}
-              value={courseId}
-              disabled={busy}
-              onChange={e => setCourseId(Number(e.target.value))}
-              aria-label="Target Course"
-            >
-              {courses.map(c => (
-                <option key={c.id} value={c.id}>
-                  {c.nickname || c.code || c.name}
-                </option>
-              ))}
-            </select>
-            <input
-              className="ai-input"
-              style={{ marginTop: 0 }}
-              placeholder="Module 1"
-              value={moduleName}
-              disabled={busy}
-              onChange={e => setModuleName(e.target.value)}
-            />
+          <div>
+            {autoMatchedCourseName && (
+              <div className="import-automatch-badge" style={{ marginTop: 10 }}>
+                <Sparkles size={11} /> Auto-matched to <strong>{autoMatchedCourseName}</strong>
+              </div>
+            )}
+            <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 8, marginTop: autoMatchedCourseName ? 6 : 10 }}>
+              <select
+                className="ai-input"
+                style={{ marginTop: 0 }}
+                value={courseId}
+                disabled={busy}
+                onChange={e => {
+                  setCourseId(Number(e.target.value));
+                  setAutoMatchedCourseName('');
+                }}
+                aria-label="Target Course"
+              >
+                {courses.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.nickname || c.code || c.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                className="ai-input"
+                style={{ marginTop: 0 }}
+                placeholder="Module 1"
+                value={moduleName}
+                disabled={busy}
+                onChange={e => {
+                  setModuleManuallyEdited(true);
+                  setModuleName(e.target.value);
+                }}
+              />
+            </div>
           </div>
         ) : (
           folders.length > 0 && (

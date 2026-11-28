@@ -32,7 +32,7 @@ export const FONT_PRESETS = [
     name: 'Clean Sans',
     sample: 'Modern legible clarity',
     category: 'Sans-Serif',
-    stack: "'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif",
+    stack: "'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif",
     pdfFont: 'helvetica',
   },
   {
@@ -253,13 +253,13 @@ export const ACCENTS = {
     label: 'Amber · Gold',
   },
   blue: {
-    c: '#2563eb',
-    c2: '#06b6d4',
-    p: '#1d4ed8',
+    c: '#1d4ed8',
+    c2: '#0284c7',
+    p: '#1e40af',
     text: '#ffffff',
-    inkLight: '#1d4ed8',
-    tint: 'rgba(37, 99, 235, 0.14)',
-    label: 'Ocean · Cyan',
+    inkLight: '#1e40af',
+    tint: 'rgba(29, 78, 216, 0.11)',
+    label: 'Cobalt · Ink',
   },
   teal: {
     c: '#14b8a6',
@@ -350,7 +350,7 @@ export function getSettings() {
       theme: localStorage.getItem(THEME_KEY) || 'auto',
       themePreset: localStorage.getItem(THEME_PRESET_KEY) || 'default',
       surface: normalizeSurface(localStorage.getItem(SURFACE_KEY)),
-      accent: localStorage.getItem(ACCENT_KEY) || 'indigo',
+      accent: localStorage.getItem(ACCENT_KEY) || 'blue',
       size: localStorage.getItem(SIZE_KEY) || 'medium',
       paper: localStorage.getItem(PAPER_KEY) || 'blank',
       font: localStorage.getItem(FONT_KEY) || 'system',
@@ -363,7 +363,7 @@ export function getSettings() {
       theme: 'auto',
       themePreset: 'default',
       surface: 'studio',
-      accent: 'indigo',
+      accent: 'blue',
       size: 'medium',
       paper: 'blank',
       font: 'system',
@@ -395,8 +395,8 @@ function updateMetaThemeColor(dark, themeSetting = 'auto', presetObj = null) {
     : dark
       ? themeSetting === 'oled'
         ? '#000000'
-        : '#090a0e'
-      : '#f4f2ec';
+        : '#0a0e14'
+      : '#f5f6f3';
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.setAttribute('content', color);
   const statusMeta = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
@@ -449,7 +449,7 @@ export function applySettings() {
   }
 
   const dark = isDarkTheme();
-  const a = ACCENTS[accent] || ACCENTS.indigo;
+  const a = ACCENTS[accent] || ACCENTS.blue;
 
   root.style.setProperty('--accent', a.c);
   root.style.setProperty('--accent-2', a.c2 || a.c);

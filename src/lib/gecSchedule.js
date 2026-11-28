@@ -294,9 +294,10 @@ export async function extractGecFromInput({
 
   // 1. Parse Matrix (or combined image)
   if (finalMatrixImg) {
-    const raw = await aiVision(
-      finalMatrixImg,
-      `Extract the General Education (GEC) Face-to-Face and Virtual schedule table into clean JSON.
+    const raw = await aiVision({
+      system:
+        'You extract university GEC Face-to-Face vs Virtual schedules with exact dates and set labels. Return ONLY valid JSON.',
+      user: `Extract the General Education (GEC) Face-to-Face and Virtual schedule table into clean JSON.
 Rules:
 1. Extract every Set column (e.g., "Set A" with subjects ["Art", "Math", "Rizal", "World"], "Set B" with ["STS", "Self", "Com", "Hist", "Ethics"]).
 2. Extract EVERY date row in order, even split weeks like Dec 1-2 vs Dec 3-4! If a row omits the year, inherit the year from adjacent rows / header.
@@ -316,8 +317,9 @@ Return ONLY valid JSON:
   ],
   "masterClasses": []
 }`,
-      'You extract university GEC Face-to-Face vs Virtual schedules with exact dates and set labels. Return ONLY valid JSON.'
-    );
+      imageDataUrl: finalMatrixImg,
+      maxTokens: 3200,
+    });
     const json = safeParseJson(raw);
     if (json && Array.isArray(json.periods) && json.periods.length > 0) {
       matrixResult = {
@@ -346,16 +348,12 @@ Return ONLY valid JSON:
     if (offline.periods.length >= 2) {
       matrixResult = offline;
     } else {
-      const raw = await aiText(
-        [
-          { role: 'system', content: 'Convert this GEC F2F/Virtual schedule text to JSON. Return ONLY JSON.' },
-          {
-            role: 'user',
-            content: `${finalMatrixText.slice(0, 10000)}\n\nSchema: { "termLabel": "...", "sets": [{"id":"set-a","label":"Set A","subjects":[...]}], "periods": [{"startDate":"YYYY-MM-DD","endDate":"YYYY-MM-DD","specialLabel":"","modalities":{"set-a":"f2f","set-b":"virtual"}}] }`,
-          },
-        ],
-        { task: 'fast', temperature: 0.1 }
-      );
+      const raw = await aiText({
+        system: 'Convert this GEC F2F/Virtual schedule text to JSON. Return ONLY JSON.',
+        user: `${finalMatrixText.slice(0, 10000)}\n\nSchema: { "termLabel": "...", "sets": [{"id":"set-a","label":"Set A","subjects":[...]}], "periods": [{"startDate":"YYYY-MM-DD","endDate":"YYYY-MM-DD","specialLabel":"","modalities":{"set-a":"f2f","set-b":"virtual"}}] }`,
+        task: 'fast',
+        maxTokens: 2400,
+      });
       const json = safeParseJson(raw);
       if (json && Array.isArray(json.periods) && json.periods.length > 0) {
         matrixResult = json;
@@ -365,13 +363,14 @@ Return ONLY valid JSON:
 
   // 2. Parse optional separate Master GEC Room/Time Schedule
   if (finalMasterImg) {
-    const raw = await aiVision(
-      finalMasterImg,
-      `Extract all GEC class rows from this official Master GEC Class Schedule into JSON:
+    const raw = await aiVision({
+      system: 'You extract official class timetable tables accurately into JSON.',
+      user: `Extract all GEC class rows from this official Master GEC Class Schedule into JSON:
 { "classes": [ { "code": "GEC-UTS", "name": "Understanding the Self", "section": "A1", "days": "MWF", "startTime": "09:00", "endTime": "10:00", "room": "Room 204", "instructor": "" } ] }
 Use 24h HH:MM times. Return ONLY valid JSON.`,
-      'You extract official class timetable tables accurately into JSON.'
-    );
+      imageDataUrl: finalMasterImg,
+      maxTokens: 3200,
+    });
     const json = safeParseJson(raw);
     if (json && Array.isArray(json.classes)) {
       masterClasses = [

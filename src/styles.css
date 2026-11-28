@@ -1,55 +1,87 @@
 /**
- * Notes by Bai — Studio Design System (v2.0.1)
- * Warm Ivory Light · Deep Obsidian Dark · True-Black OLED
- * Unified hairline borders, soft layered depth shadows, frosted glass navbars,
- * Bento Studio Home, tactile Note Cards, and spring-elevated bottom sheets.
+ * Notes by Bai — Tactile Study Desk Design System (v2.7.0)
+ * Campus Paper Light · Midnight Desk Dark · True-Black OLED
+ * Self-hosted editorial typography (Newsreader + Plus Jakarta Sans + JetBrains Mono),
+ * Margin-Ink Note Reader, Unified Campus Today Brief, and Refined Liquid Glass.
  */
 
+@font-face {
+  font-family: 'Newsreader';
+  src: url('./assets/fonts/newsreader-latin.woff2') format('woff2');
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  src: url('./assets/fonts/plus-jakarta-sans-latin.woff2') format('woff2');
+  font-weight: 400 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  src: url('./assets/fonts/jetbrains-mono-latin.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* ============================================================
-   1. Design Tokens (Warm Ivory Light default, Deep Obsidian Dark)
+   1. Design Tokens (Campus Paper Light default, Midnight Desk Dark)
    ============================================================ */
 :root {
-  --bg: #fbfaf7;
-  --bg-grouped: #f4f2ec;
-  --bg-elevated: #eae7df;
+  --bg: #ffffff;
+  --bg-grouped: #f5f6f3;
+  --bg-elevated: #eaece7;
   --card-bg: #ffffff;
-  --panel-bg: #f6f5f1;
+  --panel-bg: #f5f6f3;
   --panel-card: #ffffff;
-  --fill: #efede7;
-  --press: #e7e4dc;
+  --fill: #eaece7;
+  --fill-secondary: #eaece7;
+  --press: #e2e5de;
   --seg-active: #ffffff;
-  --nav-bg: rgba(244, 242, 236, 0.84);
-  --nav-paper-bg: rgba(251, 250, 247, 0.88);
-  --bg-hover: #efede7;
-  --border: rgba(20, 21, 26, 0.1);
+  --nav-bg: #f5f6f3;
+  --nav-paper-bg: #ffffff;
+  --bg-hover: #eaece7;
+  --border: rgba(17, 22, 28, 0.1);
+  color-scheme: light;
 
-  --text: #14151a;
-  --text-secondary: #5c6270;
-  --text-tertiary: #8c92a0;
-  --divider: rgba(20, 21, 26, 0.1);
-  --border-subtle: rgba(20, 21, 26, 0.07);
+  --text: #11161c;
+  --text-secondary: #55606e;
+  --text-tertiary: #84909e;
+  --text-3: #84909e;
+  --divider: rgba(17, 22, 28, 0.09);
+  --border-subtle: rgba(17, 22, 28, 0.08);
+  --line: rgba(17, 22, 28, 0.1);
+  --sep: rgba(17, 22, 28, 0.09);
+  --surface: #ffffff;
+  --surface-2: #eaece7;
 
-  --accent: #6366f1;
-  --accent-pressed: #4f46e5;
+  --accent: #1d4ed8;
+  --accent-pressed: #1e40af;
   --accent-text: #ffffff;
-  --accent-ink: #4338ca;
-  --accent-tint: rgba(99, 102, 241, 0.14);
-  --focus: #4338ca;
+  --accent-ink: #1e40af;
+  --accent-tint: rgba(29, 78, 216, 0.1);
+  --focus: #1e40af;
 
   --ok: #15803d;
-  --ok-bg: rgba(22, 163, 74, 0.13);
+  --ok-bg: rgba(21, 128, 61, 0.11);
   --bad: #dc2626;
-  --bad-bg: rgba(220, 38, 38, 0.12);
+  --bad-bg: rgba(220, 38, 38, 0.11);
   --danger: #dc2626;
-  --mistake: #d97706;
+  --mistake: #b45309;
   --mistake-ink: #92400e;
-  --mistake-bg: #fef3c7;
+  --mistake-bg: rgba(180, 83, 9, 0.11);
 
-  --shadow: rgba(15, 23, 42, 0.06);
-  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 14px rgba(15, 23, 42, 0.035);
-  --shadow-strong: rgba(15, 23, 42, 0.18);
-  --panel-handle: #c4c1b8;
-  --search-bg: rgba(20, 21, 26, 0.07);
+  --shadow: rgba(17, 22, 28, 0.05);
+  --shadow-card: 0 1px 2px rgba(17, 22, 28, 0.04), 0 4px 12px rgba(17, 22, 28, 0.03);
+  --shadow-sm: 0 1px 2px rgba(17, 22, 28, 0.04);
+  --shadow-strong: rgba(17, 22, 28, 0.18);
+  --panel-handle: #c4c8c0;
+  --search-bg: rgba(17, 22, 28, 0.06);
 
   --fs-note: 17px;
   --fs-title: 28px;
@@ -61,91 +93,108 @@
   --nav-h: 52px;
   --safe-top: max(var(--native-safe-top, 0px), env(safe-area-inset-top, 0px));
   --safe-bottom: max(var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px));
-  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --font-display: 'Newsreader', 'Iowan Old Style', Georgia, Cambria, serif;
+  --font-ui: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
   --font-note: var(--font-ui);
-  --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --bg: #0d0f14;
-    --bg-grouped: #090a0e;
-    --bg-elevated: #1c202b;
-    --card-bg: #141720;
-    --panel-bg: #11131b;
-    --panel-card: #1a1e29;
-    --fill: #1c202c;
-    --press: #232837;
-    --seg-active: #272c3c;
-    --nav-bg: rgba(9, 10, 14, 0.82);
-    --nav-paper-bg: rgba(13, 15, 20, 0.86);
-    --bg-hover: #1c202c;
-    --border: rgba(255, 255, 255, 0.09);
+    --bg: #0d1117;
+    --bg-grouped: #0a0e14;
+    --bg-elevated: #1c232d;
+    --card-bg: #141a22;
+    --panel-bg: #11161e;
+    --panel-card: #18202a;
+    --fill: #1c232d;
+    --fill-secondary: #1c232d;
+    --press: #232c38;
+    --seg-active: #232c38;
+    --nav-bg: #0a0e14;
+    --nav-paper-bg: #0d1117;
+    --bg-hover: #1c232d;
+    --border: rgba(237, 241, 247, 0.1);
+    color-scheme: dark;
 
-    --text: #f3f4f8;
-    --text-secondary: #949ba8;
-    --text-tertiary: #666d7d;
-    --divider: rgba(255, 255, 255, 0.09);
-    --border-subtle: rgba(255, 255, 255, 0.07);
+    --text: #edf1f7;
+    --text-secondary: #8f9baa;
+    --text-tertiary: #647080;
+    --text-3: #647080;
+    --divider: rgba(237, 241, 247, 0.09);
+    --border-subtle: rgba(237, 241, 247, 0.08);
+    --line: rgba(237, 241, 247, 0.1);
+    --sep: rgba(237, 241, 247, 0.09);
+    --surface: #141a22;
+    --surface-2: #1c232d;
 
     --accent-ink: var(--accent);
     --focus: var(--accent);
 
     --ok: #34d399;
-    --ok-bg: rgba(52, 211, 153, 0.16);
+    --ok-bg: rgba(52, 211, 153, 0.14);
     --bad: #f87171;
-    --bad-bg: rgba(248, 113, 113, 0.16);
+    --bad-bg: rgba(248, 113, 113, 0.15);
     --danger: #f87171;
-    --mistake: #fbbf24;
-    --mistake-ink: #fcd34d;
-    --mistake-bg: rgba(251, 191, 36, 0.14);
+    --mistake: #f59e0b;
+    --mistake-ink: #fbbf24;
+    --mistake-bg: rgba(245, 158, 11, 0.14);
 
     --shadow: rgba(0, 0, 0, 0.35);
-    --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    --shadow-card: 0 2px 10px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    --shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.24);
     --shadow-strong: rgba(0, 0, 0, 0.65);
-    --panel-handle: #4b5263;
-    --search-bg: rgba(255, 255, 255, 0.08);
+    --panel-handle: #4b5563;
+    --search-bg: rgba(237, 241, 247, 0.07);
   }
 }
 
 :root[data-theme='dark'] {
-  --bg: #0d0f14;
-  --bg-grouped: #090a0e;
-  --bg-elevated: #1c202b;
-  --card-bg: #141720;
-  --panel-bg: #11131b;
-  --panel-card: #1a1e29;
-  --fill: #1c202c;
-  --press: #232837;
-  --seg-active: #272c3c;
-  --nav-bg: rgba(9, 10, 14, 0.82);
-  --nav-paper-bg: rgba(13, 15, 20, 0.86);
-  --bg-hover: #1c202c;
-  --border: rgba(255, 255, 255, 0.09);
+  --bg: #0d1117;
+  --bg-grouped: #0a0e14;
+  --bg-elevated: #1c232d;
+  --card-bg: #141a22;
+  --panel-bg: #11161e;
+  --panel-card: #18202a;
+  --fill: #1c232d;
+  --fill-secondary: #1c232d;
+  --press: #232c38;
+  --seg-active: #232c38;
+  --nav-bg: #0a0e14;
+  --nav-paper-bg: #0d1117;
+  --bg-hover: #1c232d;
+  --border: rgba(237, 241, 247, 0.1);
+  color-scheme: dark;
 
-  --text: #f3f4f8;
-  --text-secondary: #949ba8;
-  --text-tertiary: #666d7d;
-  --divider: rgba(255, 255, 255, 0.09);
-  --border-subtle: rgba(255, 255, 255, 0.07);
+  --text: #edf1f7;
+  --text-secondary: #8f9baa;
+  --text-tertiary: #647080;
+  --text-3: #647080;
+  --divider: rgba(237, 241, 247, 0.09);
+  --border-subtle: rgba(237, 241, 247, 0.08);
+  --line: rgba(237, 241, 247, 0.1);
+  --sep: rgba(237, 241, 247, 0.09);
+  --surface: #141a22;
+  --surface-2: #1c232d;
 
   --accent-ink: var(--accent);
   --focus: var(--accent);
 
   --ok: #34d399;
-  --ok-bg: rgba(52, 211, 153, 0.16);
+  --ok-bg: rgba(52, 211, 153, 0.14);
   --bad: #f87171;
-  --bad-bg: rgba(248, 113, 113, 0.16);
+  --bad-bg: rgba(248, 113, 113, 0.15);
   --danger: #f87171;
-  --mistake: #fbbf24;
-  --mistake-ink: #fcd34d;
-  --mistake-bg: rgba(251, 191, 36, 0.14);
+  --mistake: #f59e0b;
+  --mistake-ink: #fbbf24;
+  --mistake-bg: rgba(245, 158, 11, 0.14);
 
   --shadow: rgba(0, 0, 0, 0.35);
-  --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --shadow-card: 0 2px 10px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.24);
   --shadow-strong: rgba(0, 0, 0, 0.65);
-  --panel-handle: #4b5263;
-  --search-bg: rgba(255, 255, 255, 0.08);
+  --panel-handle: #4b5563;
+  --search-bg: rgba(237, 241, 247, 0.07);
 }
 
 html.fs-small {
@@ -7806,12 +7855,11 @@ a:hover {
 }
 
 :root[data-surface='glass-aurora'] {
-  --glass-base: #dfe7fa;
+  --glass-base: #eef2f6;
   --glass-wallpaper:
-    radial-gradient(92% 66% at 8% 4%, color-mix(in srgb, var(--accent) 38%, transparent), transparent 58%),
-    radial-gradient(86% 62% at 92% 14%, color-mix(in srgb, var(--accent-2, var(--accent)) 34%, transparent), transparent 56%),
-    radial-gradient(82% 62% at 16% 84%, rgba(56, 189, 248, 0.28), transparent 60%),
-    radial-gradient(76% 58% at 86% 88%, rgba(244, 114, 182, 0.24), transparent 58%);
+    radial-gradient(88% 60% at 10% 6%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 55%),
+    radial-gradient(80% 56% at 90% 16%, color-mix(in srgb, var(--accent-2, var(--accent)) 14%, transparent), transparent 54%),
+    radial-gradient(70% 50% at 16% 84%, rgba(56, 189, 248, 0.10), transparent 56%);
   --glass-card-bg: linear-gradient(138deg, rgba(255, 255, 255, 0.68) 0%, rgba(255, 255, 255, 0.34) 48%, rgba(255, 255, 255, 0.52) 100%);
   --glass-card-subtle: linear-gradient(138deg, rgba(255, 255, 255, 0.58) 0%, rgba(255, 255, 255, 0.28) 100%);
   --glass-capsule-bg: linear-gradient(146deg, rgba(255, 255, 255, 0.76) 0%, rgba(255, 255, 255, 0.38) 52%, rgba(255, 255, 255, 0.58) 100%);
@@ -7883,21 +7931,20 @@ a:hover {
 }
 
 :root[data-theme='dark'][data-surface='glass-aurora'] {
-  --glass-base: #050712;
+  --glass-base: #0a0e14;
   --glass-wallpaper:
-    radial-gradient(92% 66% at 10% 6%, color-mix(in srgb, var(--accent) 40%, transparent), transparent 58%),
-    radial-gradient(86% 62% at 90% 14%, color-mix(in srgb, var(--accent-2, var(--accent)) 36%, transparent), transparent 56%),
-    radial-gradient(78% 58% at 18% 86%, rgba(56, 189, 248, 0.24), transparent 60%),
-    radial-gradient(74% 56% at 86% 88%, rgba(244, 114, 182, 0.20), transparent 58%);
-  --glass-card-bg: linear-gradient(138deg, rgba(255, 255, 255, 0.19) 0%, rgba(16, 21, 38, 0.44) 46%, rgba(255, 255, 255, 0.08) 100%);
-  --glass-card-subtle: linear-gradient(138deg, rgba(255, 255, 255, 0.14) 0%, rgba(22, 28, 48, 0.36) 100%);
-  --glass-capsule-bg: linear-gradient(146deg, rgba(255, 255, 255, 0.24) 0%, rgba(16, 21, 36, 0.46) 52%, rgba(255, 255, 255, 0.10) 100%);
-  --glass-sheet-bg: linear-gradient(150deg, rgba(34, 42, 68, 0.72) 0%, rgba(12, 16, 28, 0.72) 55%, rgba(22, 28, 48, 0.68) 100%);
-  --glass-chrome-bg: rgba(15, 19, 30, 0.56);
-  --glass-paper-bg: rgba(11, 14, 22, 0.86);
-  --glass-border: rgba(255, 255, 255, 0.25);
-  --glass-capsule-border: rgba(255, 255, 255, 0.30);
-  --glass-border-subtle: rgba(255, 255, 255, 0.12);
+    radial-gradient(88% 60% at 10% 6%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 54%),
+    radial-gradient(80% 56% at 90% 14%, color-mix(in srgb, var(--accent-2, var(--accent)) 15%, transparent), transparent 54%),
+    radial-gradient(72% 52% at 18% 86%, rgba(56, 189, 248, 0.10), transparent 56%);
+  --glass-card-bg: linear-gradient(142deg, rgba(255, 255, 255, 0.08) 0%, rgba(16, 22, 30, 0.72) 50%, rgba(255, 255, 255, 0.04) 100%);
+  --glass-card-subtle: linear-gradient(142deg, rgba(255, 255, 255, 0.07) 0%, rgba(20, 26, 36, 0.58) 100%);
+  --glass-capsule-bg: linear-gradient(148deg, rgba(255, 255, 255, 0.14) 0%, rgba(16, 22, 30, 0.68) 54%, rgba(255, 255, 255, 0.06) 100%);
+  --glass-sheet-bg: linear-gradient(150deg, rgba(24, 31, 43, 0.88) 0%, rgba(14, 18, 26, 0.86) 55%, rgba(20, 26, 36, 0.84) 100%);
+  --glass-chrome-bg: rgba(13, 17, 23, 0.72);
+  --glass-paper-bg: rgba(13, 17, 23, 0.90);
+  --glass-border: rgba(237, 241, 247, 0.14);
+  --glass-capsule-border: rgba(237, 241, 247, 0.18);
+  --glass-border-subtle: rgba(237, 241, 247, 0.10);
   --glass-track-bg: rgba(0, 0, 0, 0.36);
   --glass-track-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.48), inset 0 -1px 0 rgba(255, 255, 255, 0.09);
   --glass-pill-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.30) 0%, rgba(255, 255, 255, 0.16) 100%);
@@ -7961,21 +8008,20 @@ a:hover {
       0 10px 26px rgba(0, 0, 0, 0.44);
   }
   :root:not([data-theme='light'])[data-surface='glass-aurora'] {
-    --glass-base: #050712;
+    --glass-base: #0a0e14;
     --glass-wallpaper:
-      radial-gradient(92% 66% at 10% 6%, color-mix(in srgb, var(--accent) 40%, transparent), transparent 58%),
-      radial-gradient(86% 62% at 90% 14%, color-mix(in srgb, var(--accent-2, var(--accent)) 36%, transparent), transparent 56%),
-      radial-gradient(78% 58% at 18% 86%, rgba(56, 189, 248, 0.24), transparent 60%),
-      radial-gradient(74% 56% at 86% 88%, rgba(244, 114, 182, 0.20), transparent 58%);
-    --glass-card-bg: linear-gradient(138deg, rgba(255, 255, 255, 0.19) 0%, rgba(16, 21, 38, 0.44) 46%, rgba(255, 255, 255, 0.08) 100%);
-    --glass-card-subtle: linear-gradient(138deg, rgba(255, 255, 255, 0.14) 0%, rgba(22, 28, 48, 0.36) 100%);
-    --glass-capsule-bg: linear-gradient(146deg, rgba(255, 255, 255, 0.24) 0%, rgba(16, 21, 36, 0.46) 52%, rgba(255, 255, 255, 0.10) 100%);
-    --glass-sheet-bg: linear-gradient(150deg, rgba(34, 42, 68, 0.72) 0%, rgba(12, 16, 28, 0.72) 55%, rgba(22, 28, 48, 0.68) 100%);
-    --glass-chrome-bg: rgba(15, 19, 30, 0.56);
-    --glass-paper-bg: rgba(11, 14, 22, 0.86);
-    --glass-border: rgba(255, 255, 255, 0.25);
-    --glass-capsule-border: rgba(255, 255, 255, 0.30);
-    --glass-border-subtle: rgba(255, 255, 255, 0.12);
+      radial-gradient(88% 60% at 10% 6%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 54%),
+      radial-gradient(80% 56% at 90% 14%, color-mix(in srgb, var(--accent-2, var(--accent)) 15%, transparent), transparent 54%),
+      radial-gradient(72% 52% at 18% 86%, rgba(56, 189, 248, 0.10), transparent 56%);
+    --glass-card-bg: linear-gradient(142deg, rgba(255, 255, 255, 0.08) 0%, rgba(16, 22, 30, 0.72) 50%, rgba(255, 255, 255, 0.04) 100%);
+    --glass-card-subtle: linear-gradient(142deg, rgba(255, 255, 255, 0.07) 0%, rgba(20, 26, 36, 0.58) 100%);
+    --glass-capsule-bg: linear-gradient(148deg, rgba(255, 255, 255, 0.14) 0%, rgba(16, 22, 30, 0.68) 54%, rgba(255, 255, 255, 0.06) 100%);
+    --glass-sheet-bg: linear-gradient(150deg, rgba(24, 31, 43, 0.88) 0%, rgba(14, 18, 26, 0.86) 55%, rgba(20, 26, 36, 0.84) 100%);
+    --glass-chrome-bg: rgba(13, 17, 23, 0.72);
+    --glass-paper-bg: rgba(13, 17, 23, 0.90);
+    --glass-border: rgba(237, 241, 247, 0.14);
+    --glass-capsule-border: rgba(237, 241, 247, 0.18);
+    --glass-border-subtle: rgba(237, 241, 247, 0.10);
     --glass-track-bg: rgba(0, 0, 0, 0.36);
     --glass-track-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.48), inset 0 -1px 0 rgba(255, 255, 255, 0.09);
     --glass-pill-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.30) 0%, rgba(255, 255, 255, 0.16) 100%);
@@ -11010,4 +11056,592 @@ a:hover {
   font-size: 9.5px;
   color: var(--text-secondary);
   line-height: 1.1;
+}
+
+
+/* ============================================================
+   v2.7.0 — Tactile Study Desk Design System
+   Editorial Notebook Typography · Margin-Ink Reader · Floating Study Dock ·
+   Unified Campus Today Brief · Disciplined 3-Step Radii (8 / 14 / 22px)
+   ============================================================ */
+
+/* 1. Editorial Serif Headings & Tabular Monospace Data */
+.large-title,
+.home-hero-title,
+.read-title,
+.editor-title {
+  font-family: var(--font-display);
+  font-weight: 500;
+  letter-spacing: -0.025em;
+}
+
+.home-hero-title,
+.large-title {
+  font-size: 31px;
+  line-height: 1.12;
+}
+
+.read-title,
+.editor-title {
+  line-height: 1.18;
+}
+
+.note-line.variant-h1,
+.note-line.variant-h2 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.018em;
+}
+
+.section-heading {
+  text-transform: none;
+  letter-spacing: -0.01em;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.recent-note-folder,
+.exam-countdown-eyebrow,
+.practical-goal-eyebrow {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.home-hero-sub,
+.recent-note-foot,
+.list-item-meta,
+.home-sched-time,
+.meta-pill,
+.pomodoro-clock,
+.course-grade-badge {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 2. Unified Campus Today Brief (Home Spotlight Consolidation) */
+.campus-today-card {
+  margin: 0 var(--gutter) 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border-subtle);
+  background: var(--card-bg);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+.split-shell.is-wide .split-sidebar .campus-today-card {
+  margin-left: 12px;
+  margin-right: 12px;
+}
+.campus-today-card.has-unread {
+  border-color: color-mix(in srgb, var(--mistake) 38%, var(--border-subtle));
+}
+.campus-today-section {
+  padding: 11px 14px;
+}
+.campus-today-divider {
+  height: 1px;
+  background: var(--divider);
+}
+.campus-today-card .home-ann-header {
+  margin-bottom: 6px;
+}
+.campus-today-card .home-ann-icon-spot {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--mistake-bg);
+  color: var(--mistake);
+}
+.campus-today-card .home-sched-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--accent-tint);
+  color: var(--accent-ink);
+}
+.campus-today-card .home-ann-item {
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+  background: var(--fill);
+}
+.campus-today-card .home-ann-item.is-unread {
+  border-left: 3px solid var(--mistake);
+}
+.campus-today-card .home-sched-row {
+  border-radius: 10px;
+  background: var(--fill);
+}
+.campus-today-card .home-sched-row.is-live {
+  border-color: color-mix(in srgb, var(--mistake) 45%, transparent);
+  background: var(--mistake-bg);
+}
+.home-sched-live-dot {
+  background: var(--mistake);
+}
+
+/* 3. Calm Home Surface Cards & Folder Grid (Monochrome Icon Discipline) */
+.recent-note-card {
+  border-radius: 14px;
+}
+.recent-note-card.is-pinned {
+  border-color: var(--border-subtle);
+  border-left: 3px solid var(--accent);
+}
+.folder-grid-card {
+  border-radius: 14px;
+}
+.folder-grid-card .folder-icon-badge {
+  background: var(--fill);
+  color: var(--text-secondary);
+}
+.quick-action-chip {
+  border-radius: 10px;
+}
+.quick-action-chip .quick-action-icon {
+  background: var(--fill) !important;
+  color: var(--text-secondary) !important;
+}
+
+/* 4. Note Reader — Reading Measure + Margin-Ink Bars */
+.note-page-wrap {
+  max-width: 100%;
+}
+.screen,
+.editor {
+  scrollbar-width: thin;
+  scrollbar-color: var(--divider) transparent;
+}
+.school-cal-hero .btn {
+  align-self: flex-start;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.cal-dot-todo {
+  background: var(--ok);
+}
+.course-card-code,
+.course-card-sec {
+  white-space: nowrap;
+}
+.note-lines {
+  padding-left: 0;
+}
+.note-line {
+  position: relative;
+  line-height: 1.66;
+  padding: 5px 10px 5px 14px;
+  margin-left: 0;
+  border-radius: 8px;
+}
+.note-line.has-expl::before,
+.note-line.has-mistake::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2.5px;
+  border-radius: 999px;
+}
+.note-line.has-expl::before {
+  background: var(--accent);
+}
+.note-line.has-mistake {
+  text-decoration: none;
+}
+.note-line.has-mistake::before {
+  background: var(--mistake);
+}
+.line-dot {
+  display: none;
+}
+.read-mode-pad-dock {
+  padding-bottom: calc(92px + var(--safe-bottom));
+}
+
+/* 5. Floating Bottom Study Dock (Read Mode) */
+.study-dock-float {
+  position: fixed;
+  left: 50%;
+  bottom: calc(16px + var(--safe-bottom));
+  transform: translateX(-50%);
+  z-index: 36;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 6px;
+  border-radius: 22px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 28px var(--shadow-strong);
+  max-width: calc(100vw - 24px);
+}
+.split-shell.is-wide .split-main .study-dock-float {
+  position: sticky;
+  align-self: center;
+  left: auto;
+  transform: none;
+  margin: 0 auto calc(14px + var(--safe-bottom));
+}
+.study-dock-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 16px;
+  font-size: 12.5px;
+  font-weight: 650;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.14s ease, color 0.14s ease, transform 0.1s ease;
+}
+.study-dock-btn:hover {
+  background: var(--fill);
+}
+.study-dock-btn:active {
+  transform: scale(0.95);
+}
+.study-dock-btn.is-primary {
+  background: var(--accent-tint);
+  color: var(--accent-ink);
+}
+
+/* 6. Hairline-Separated Notes List */
+.note-cards-list {
+  border-radius: 14px;
+}
+.note-card-item.is-pinned {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* 7. Docked 4-Tab AppNavShell with Top Ink Line Indicator */
+.app-nav-bar,
+:root[data-theme='dark'] .app-nav-bar {
+  background: var(--bg-grouped);
+  border-top: 1px solid var(--border);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.app-nav-btn {
+  position: relative;
+}
+.app-nav-bar .app-nav-btn.active::before {
+  content: '';
+  position: absolute;
+  top: -4px;
+  left: 26%;
+  right: 26%;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+.app-nav-badge {
+  background: var(--mistake);
+  box-shadow: none;
+}
+.fab.fab-pill {
+  border-radius: 999px;
+  padding: 0 16px;
+  height: 46px;
+  width: auto;
+  gap: 7px;
+  font-size: 13.5px;
+  font-weight: 650;
+  box-shadow: 0 6px 18px var(--shadow-strong);
+}
+
+/* 8. Tools Hub — Study Labs List & 2-Column Session Capture */
+.tools-labs-list {
+  margin: 0 var(--gutter) 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border-subtle);
+  background: var(--card-bg);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+.tools-lab-row {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 14px;
+  border: none;
+  border-bottom: 1px solid var(--divider);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.tools-lab-row:last-child {
+  border-bottom: none;
+}
+.tools-lab-row:hover {
+  background: var(--press);
+}
+.tools-lab-row .tools-hub-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--fill);
+  color: var(--text);
+}
+.tools-capture-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0 var(--gutter) 14px;
+}
+.tools-capture-card {
+  appearance: none;
+  -webkit-appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border-subtle);
+  background: var(--card-bg);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  box-shadow: var(--shadow-card);
+}
+.tools-capture-card .tools-hub-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--fill);
+  color: var(--accent-ink);
+}
+
+/* 9. Refined Sheet & Card Radius Consistency + Glass Parity */
+.export-sheet,
+.modal-card,
+.panel {
+  border-radius: 22px 22px 0 0;
+}
+@media (min-width: 640px) {
+  .modal-card {
+    border-radius: 22px;
+  }
+}
+.course-card,
+.school-cal-hero,
+.exam-countdown-card,
+.schedule-now-card {
+  border-radius: 14px;
+}
+:root[data-surface^='glass-'] .campus-today-card,
+:root[data-surface^='glass-'] .recent-note-card,
+:root[data-surface^='glass-'] .folder-grid-card,
+:root[data-surface^='glass-'] .tools-labs-list,
+:root[data-surface^='glass-'] .tools-capture-card {
+  background: var(--glass-card-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+:root[data-surface^='glass-'] .study-dock-float,
+:root[data-surface^='glass-'] .app-nav-bar {
+  background: var(--glass-capsule-bg);
+  border-color: var(--glass-capsule-border);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+}
+:root[data-reduce-motion='true'] .study-dock-float,
+:root[data-reduce-motion='true'] .app-nav-bar {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: var(--card-bg);
+}
+
+/* ==========================================================================
+   v2.7.1 — Canvas Course Files Sync & Smart Import Tray
+   ========================================================================== */
+
+.canvas-files-sheet {
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+}
+.canvas-sheet-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+.canvas-files-auth-card {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border-subtle);
+  background: var(--fill);
+}
+.canvas-web-note {
+  margin-top: 10px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+.canvas-files-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--border-subtle);
+  background: var(--fill);
+}
+.canvas-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--ok);
+  flex-shrink: 0;
+}
+.canvas-files-list {
+  margin-top: 6px;
+  border-radius: 14px;
+  border: 1px solid var(--border-subtle);
+  background: var(--card-bg);
+  overflow-y: auto;
+  max-height: 48vh;
+}
+.canvas-file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--divider);
+}
+.canvas-file-row:last-child {
+  border-bottom: none;
+}
+.canvas-file-badge {
+  flex-shrink: 0;
+  min-width: 40px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  background: var(--fill);
+  border: 1px solid var(--border-subtle);
+  color: var(--accent-ink);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: 0.03em;
+}
+.canvas-file-title {
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.canvas-file-meta {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.canvas-new-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+.row-action-chip.is-done-chip {
+  background: rgba(16, 185, 129, 0.14);
+  color: var(--ok);
+  border-color: rgba(16, 185, 129, 0.3);
+}
+.canvas-new-tray {
+  margin: 0 var(--gutter) 12px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, var(--border-subtle));
+  background: var(--card-bg);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+.canvas-new-tray-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--divider);
+  background: var(--fill);
+}
+.canvas-new-tray-list {
+  display: flex;
+  flex-direction: column;
+}
+.canvas-new-tray-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--divider);
+}
+.canvas-new-tray-row:last-child {
+  border-bottom: none;
+}
+.home-context-pill.is-files {
+  background: var(--accent-tint);
+  color: var(--accent-ink);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.course-foot-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+.import-automatch-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--accent-tint);
+  color: var(--accent-ink);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+:root[data-surface^='glass-'] .canvas-new-tray,
+:root[data-surface^='glass-'] .canvas-files-status-bar {
+  background: var(--glass-card-bg);
+  border-color: var(--glass-border);
+  box-shadow: var(--glass-shadow);
 }

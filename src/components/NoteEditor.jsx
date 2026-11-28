@@ -1447,37 +1447,6 @@ export default function NoteEditor({
         </button>
 
         <div className="flex items-center gap-6">
-          {!isZeroAi && (
-            <>
-              <button
-                type="button"
-                className="navbar-btn"
-                onClick={() => setAudioOpen(true)}
-                aria-label="Listen to note (Study Commute)"
-                title="Listen to note (Read Aloud / 2-Voice Study Podcast)"
-              >
-                <Headphones size={18} />
-              </button>
-              <button
-                type="button"
-                className="navbar-btn"
-                onClick={() => setChatOpen(true)}
-                aria-label="Chat with this note"
-                title="Ask AI about this note"
-              >
-                <MessageSquare size={19} />
-              </button>
-              <button
-                type="button"
-                className="navbar-btn"
-                onClick={onOpenStudy}
-                aria-label="Study mode"
-                title="Study mode (Cards, Quiz, Blanks, Practice)"
-              >
-                <GraduationCap size={20} />
-              </button>
-            </>
-          )}
           <button
             type="button"
             className={`navbar-btn${drawMode ? ' navbar-btn-active' : ''}`}
@@ -1519,7 +1488,7 @@ export default function NoteEditor({
         </div>
       )}
 
-      <div className={`editor${drawMode ? ' draw-padding' : ''}`}>
+      <div className={`editor${drawMode ? ' draw-padding' : !isZeroAi ? ' read-mode-pad-dock' : ''}`}>
         <div className="note-page-wrap">
           <div className="read-title">{title || 'New Note'}</div>
           <div className="read-meta-row">
@@ -1695,6 +1664,55 @@ export default function NoteEditor({
         >
           <Sparkles size={15} /> Explain Selection
         </button>
+      )}
+
+      {![isZeroAi, drawMode, panelOpen, chatOpen, audioOpen, moreOpen, exportOpen, selectionSnippet].some(Boolean) && (
+        <div className="study-dock-float" role="toolbar" aria-label="Note study tools">
+          <button
+            type="button"
+            className={`study-dock-btn${explBlocks.length > 0 ? ' is-primary' : ''}`}
+            disabled={isScanning}
+            onClick={() => {
+              if (explBlocks.length > 0) {
+                setSelectedLineId(explBlocks[0].id);
+                setPanelOpen(true);
+              } else {
+                handleSaveAndExplain();
+              }
+            }}
+            title={explBlocks.length > 0 ? 'View line explanations' : `Explain note (${activeModeMeta.actionLabel})`}
+          >
+            <Sparkles size={15} />
+            <span>{isScanning ? 'Scanning…' : 'Explain'}</span>
+          </button>
+          <button
+            type="button"
+            className="study-dock-btn"
+            onClick={() => setChatOpen(true)}
+            title="Ask AI about this note"
+          >
+            <MessageSquare size={15} />
+            <span>Chat</span>
+          </button>
+          <button
+            type="button"
+            className="study-dock-btn"
+            onClick={onOpenStudy}
+            title="Study mode (Cards, Quiz, Blanks, Practice)"
+          >
+            <GraduationCap size={16} />
+            <span>Study</span>
+          </button>
+          <button
+            type="button"
+            className="study-dock-btn"
+            onClick={() => setAudioOpen(true)}
+            title="Listen to note (Read Aloud / 2-Voice Study Podcast)"
+          >
+            <Headphones size={15} />
+            <span>Audio</span>
+          </button>
+        </div>
       )}
 
       {drawMode && (

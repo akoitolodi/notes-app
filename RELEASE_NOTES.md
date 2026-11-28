@@ -1,3 +1,21 @@
+## What's New in Notes by Bai v2.7.0
+
+### 1. Tactile Study Desk UI/UX Redesign (100% Feature Parity)
+- **Bundled Editorial Typography**: Offline **Newsreader** display headings, **Plus Jakarta Sans** UI typography, and **JetBrains Mono** tabular metadata/dates across Notes Home, Reader, Courses, Planner, and Tools.
+- **Calibrated Campus Paper & Midnight Desk Themes**: Refined ink contrast, unified **Campus Today** card (Announcements + Today's Schedule + GEC badges), clean Note Reader **Floating Study Dock** + Margin-Ink indicator bars, hairline notes list, and organized **Study Labs** + **Session Capture** tools hub—with Studio, Frosted Glass, and Aurora Glass parity across all 12 themes.
+
+### 2. Hybrid Canvas Professor Files Detection & Smart 1-Tap Import
+- **In-App Canvas Session (Works Without Personal Access Tokens)**: On Android, sign in directly on your school's official Canvas page inside Notes by Bai (`BaiNativeCanvas`) without ever storing your password—then automatically detect newly uploaded PDFs, PowerPoint decks, Word docs, and module links across enrolled courses even when professors hide the Files tab (`403` fallback).
+- **Selective 1-Tap Import & Notifications**: Shows new professor files across **Home**, **Courses Dashboard**, and each course's **Modules** tab (`New from Canvas` tray) with optional Android notifications and 1-tap RAG indexing for **Course AI Tutor**.
+- **Smart Share & Announcement File Links**: Sharing a file from Canvas/Downloads automatically matches the right subject & suggests its module name (`Module 4`, `Week 5`), and Announcements extract Google Docs/Slides/Drive & direct PDF/PPTX/DOCX links for 1-tap module import.
+
+### 3. School Calendar & GEC Photo Upload Bug Fix
+- Fixed `HTTP 400: missing field 'content'` errors when uploading Academic Calendar or GEC F2F/Virtual Schedule photos/PDFs, along with Lecture Recorder and Schedule PDF AI extraction calls.
+
+> **Update Note**: Install `Notes-by-Bai.apk` directly over your current version (do not uninstall).
+
+---
+
 ## What's New in Notes by Bai v2.6.0
 
 ### 1. Automatic Multi-Term School Calendar Maker & Mid-Semester Revision Updater

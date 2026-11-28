@@ -34,6 +34,7 @@ import {
   Copy,
   Link2,
   UserCheck,
+  Download,
 } from 'lucide-react';
 import { db, createNote, togglePinPlannerItem, localDateKey } from '../store/db';
 import {
@@ -53,6 +54,7 @@ import {
   getAnnouncementReplyMeta,
   markAnnouncementReplied,
 } from '../lib/announcementSchedule';
+import { extractImportableFileLinks } from '../lib/courseExtras';
 import { aiText } from '../lib/aiCore';
 import {
   isAnnouncementRead,
@@ -113,6 +115,7 @@ export default function AnnouncementsScreen({ onBack, onOpenNote, onChanged }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [expandedIds, setExpandedIds] = useState({});
   const [linkingItemId, setLinkingItemId] = useState(null);
+  const [importingFileUrl, setImportingFileUrl] = useState('');
 
   const [replyTarget, setReplyTarget] = useState(null);
   const [replyText, setReplyText] = useState('');
@@ -173,6 +176,7 @@ export default function AnnouncementsScreen({ onBack, onOpenNote, onChanged }) {
         item.detectedDateKey || detectDateInText(`${item.title || ''}\n${item.description || ''}`) || '';
       const scheduleMatch = matchAnnouncementToCourse(item, coursesList, scheduleRows, now);
       const quickLinks = extractQuickLinks(item.description);
+      const importableLinks = extractImportableFileLinks(item);
       const replyMeta = getAnnouncementReplyMeta(item);
       return {
         ...item,
@@ -180,6 +184,7 @@ export default function AnnouncementsScreen({ onBack, onOpenNote, onChanged }) {
         _detectedDate: detectedDate,
         _scheduleMatch: scheduleMatch,
         _quickLinks: quickLinks,
+        _importableLinks: importableLinks,
         _replyMeta: replyMeta,
       };
     });
@@ -457,7 +462,7 @@ export default function AnnouncementsScreen({ onBack, onOpenNote, onChanged }) {
       ]
         .filter(Boolean)
         .join('\n');
-      const draft = await aiText(prompt, { maxTokens: 160, temperature: 0.4 });
+      const draft = await aiText({ user: prompt, maxTokens: 160 });
       if (draft?.trim()) setReplyText(draft.trim());
     } catch (err) {
       toast(err?.message || 'AI draft failed', { type: 'error' });
@@ -513,6 +518,33 @@ export default function AnnouncementsScreen({ onBack, onOpenNote, onChanged }) {
     );
     if (targetUrl) {
       window.open(targetUrl, '_blank', 'noopener,noreferrer');
+    }
+  };
+
+  const handleImportAnnouncementFile = async (link, item) => {
+    if (!link?.url || importingFileUrl) return;
+    const targetCourse = item?._scheduleMatch?.course || coursesList[0] || null;
+    if (!targetCourse) {
+      toast('Create a course card first in Courses to import this file.', { type: 'info' });
+      return;
+    }
+    setImportingFileUrl(link.url);
+    try {
+      const { importExternalLinkToCourse } = await import('../lib/canvasFiles');
+      await importExternalLinkToCourse({
+        url: link.url,
+        title: link.label || item.title,
+        targetCourse,
+        moduleName: 'Shared Links',
+      });
+      onChanged?.();
+      toast(`Imported "${link.label}" into ${targetCourse.nickname || targetCourse.code}!`, {
+        type: 'success',
+      });
+    } catch (err) {
+      toast(err?.message || 'Could not import link', { type: 'error', duration: 4200 });
+    } finally {
+      setImportingFileUrl('');
     }
   };
 
@@ -912,10 +944,10 @@ export default function AnnouncementsScreen({ onBack, onOpenNote, onChanged }) {
                     </div>
                   )}
 
-                  {/* Quick-open Meeting / Chat / Drive pills */}
-                  {item._quickLinks?.length > 0 && (
+                  {/* Quick-open Meeting / Chat / Drive pills + 1-Tap Importable Files */}
+                  {(item._quickLinks?.length > 0 || item._importableLinks?.length > 0) && (
                     <div className="ann-quick-links">
-                      {item._quickLinks.map(ql => (
+                      {item._quickLinks?.map(ql => (
                         <a
                           key={ql.url}
                           href={ql.url}
@@ -925,6 +957,18 @@ export default function AnnouncementsScreen({ onBack, onOpenNote, onChanged }) {
                         >
                           <ExternalLink size={11} /> Open {ql.label}
                         </a>
+                      ))}
+                      {item._importableLinks?.map(fl => (
+                        <button
+                          key={`imp-${fl.url}`}
+                          type="button"
+                          className="row-action-chip active-chip"
+                          disabled={importingFileUrl === fl.url}
+                          onClick={() => handleImportAnnouncementFile(fl, item)}
+                        >
+                          <Download size={11} />{' '}
+                          {importingFileUrl === fl.url ? 'Importing…' : `Import ${fl.kind}`}
+                        </button>
                       ))}
                     </div>
                   )}
