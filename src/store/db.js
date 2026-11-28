@@ -102,6 +102,28 @@ db.version(9).stores({
   syllabusTopicCache: 'key, syllabusId, updatedAt',
 });
 
+// v10: additive Official School Academic Calendars (with mid-sem revisions) & GEC F2F/Virtual Schedules
+db.version(10).stores({
+  folders: '++id, name, createdAt',
+  notes: '++id, folderId, title, updatedAt, pinned, createdAt',
+  examCache: 'folderId',
+  attachments: 'id, noteId, createdAt',
+  learnerMemory: '++id, subject, topic, mastery, mistakesCount, lastPracticedAt',
+  codingCache: 'key, updatedAt',
+  plannerItems: '++id, type, dateKey, done, source, externalUid',
+  classSchedule: '++id, dayOfWeek, startTime, subject',
+  bugLogs: '++id, language, errorType, createdAt',
+  activityLog: 'dateKey',
+  courses: '++id, code, name, folderId, createdAt',
+  courseMaterials: '++id, courseId, moduleName, kind, createdAt',
+  materialChunks: '++id, courseId, materialId',
+  customTemplates: '++id, name, category, createdAt',
+  syllabi: '++id, courseId, code, createdAt, updatedAt',
+  syllabusTopicCache: 'key, syllabusId, updatedAt',
+  schoolCalendars: '++id, academicYear, active, updatedAt',
+  gecSchedules: '++id, termLabel, active, updatedAt',
+});
+
 export const COURSE_PALETTE = [
   '#0a84ff',
   '#28b44c',
@@ -1448,4 +1470,30 @@ export async function putSyllabusTopicCache(key, syllabusId, data) {
   };
   await db.syllabusTopicCache.put(record);
   return record;
+}
+
+// ---------- Official School Calendar & GEC Schedule Helpers (v2.6.0) ----------
+
+export async function getActiveSchoolCalendar() {
+  try {
+    const rows = await db.schoolCalendars.toArray();
+    if (!rows.length) return null;
+    const active = rows.find(r => r.active === 1 || r.active === true);
+    if (active) return active;
+    return rows.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
+  } catch {
+    return null;
+  }
+}
+
+export async function getActiveGecSchedule() {
+  try {
+    const rows = await db.gecSchedules.toArray();
+    if (!rows.length) return null;
+    const active = rows.find(r => r.active === 1 || r.active === true);
+    if (active) return active;
+    return rows.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
+  } catch {
+    return null;
+  }
 }

@@ -36,9 +36,41 @@ import {
 } from '../../lib/scheduleView';
 import { syncDeadlineNotifications } from '../../lib/notifications';
 
+import {
+  resolveGecModalityForDate,
+  getGecPeriodSummaryForDate,
+} from '../../lib/gecSchedule';
+import { getUpcomingCalendarHighlights } from '../../lib/schoolCalendar';
+import { localDateKey } from '../../store/db';
+
 const PALETTE_KEY = 'aicn:schedulePalette';
 const VIEW_MODE_KEY = 'aicn:scheduleViewMode';
 const SLOT_HEIGHT = 42; // px per 30-min row (60-min block = 84px, 90-min block = 126px)
+
+/** Compute the YYYY-MM-DD dateKey for weekday `dow` (0=Sun..6=Sat) in `nowDate + weekOffset*7`. */
+function dateKeyForWeekday(nowDate, dow, weekOffset = 0) {
+  const base = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate());
+  const curDow = base.getDay();
+  // Anchor Monday = start of school week
+  const mondayDiff = curDow === 0 ? -6 : 1 - curDow;
+  const targetOffsetFromMonday = dow === 0 ? 6 : dow - 1;
+  base.setDate(base.getDate() + mondayDiff + weekOffset * 7 + targetOffsetFromMonday);
+  return localDateKey(base);
+}
+
+function renderGecBadge(mod) {
+  if (!mod || mod.mode === 'unscheduled') return null;
+  if (mod.mode === 'special') {
+    return <span className="gec-badge-special">{mod.label}</span>;
+  }
+  if (mod.mode === 'f2f') {
+    return <span className="gec-badge-f2f">F2F</span>;
+  }
+  if (mod.mode === 'virtual') {
+    return <span className="gec-badge-virtual">VIRTUAL</span>;
+  }
+  return null;
+}
 
 function hexToSoftTint(hex, alpha = 0.24) {
   const clean = String(hex || '').replace('#', '');
@@ -52,10 +84,13 @@ function hexToSoftTint(hex, alpha = 0.24) {
 export default function CourseScheduleView({
   courses = [],
   scheduleRows = [],
+  gecSchedule = null,
+  schoolCalendar = null,
   onOpenCourse,
   onEditCourse,
   onAddCourseSchedule,
   onImportSchedulePdf = null,
+  onImportGec = null,
   onDeleteScheduleSlot = null,
   onCleanupSchedule = null,
 }) {
@@ -82,6 +117,7 @@ export default function CourseScheduleView({
   });
   const [nowDate, setNowDate] = useState(() => new Date());
   const [inspectBlock, setInspectBlock] = useState(null);
+  const [weekOffset, setWeekOffset] = useState(0); // 0 = This Week, 1 = Next Week, etc.
 
   // Tick every 60s so Live Now / Up Next / red time indicator line stays current
   useEffect(() => {
@@ -238,7 +274,16 @@ export default function CourseScheduleView({
                   className="btn btn-secondary btn-sm"
                   onClick={onImportSchedulePdf}
                 >
-                  Import Schedule PDF
+                  Import Study Load PDF
+                </button>
+              )}
+              {onImportGec && (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={onImportGec}
+                >
+                  GEC F2F/Virtual
                 </button>
               )}
               <button
@@ -314,6 +359,17 @@ export default function CourseScheduleView({
             </button>
           )}
 
+          {onImportGec && (
+            <button
+              type="button"
+              className={`row-action-chip${gecSchedule ? '' : ' active-chip'}`}
+              onClick={onImportGec}
+              title="Import or update GEC Set A/B F2F vs Virtual schedule"
+            >
+              {gecSchedule ? 'Update GEC' : '+ GEC F2F/Virtual'}
+            </button>
+          )}
+
           {viewMode === 'grid' && (
             <div className="feynman-lang-switch" role="group" aria-label="Timetable color style">
               <button
@@ -334,6 +390,49 @@ export default function CourseScheduleView({
           )}
         </div>
       </div>
+
+      {/* Optional Week Switcher + Active GEC / School Calendar Banner */}
+      {(gecSchedule || schoolCalendar) && entries.length > 0 && viewMode !== 'load' && (
+        <div className="gec-week-bar">
+          <div className="flex items-center gap-6" style={{ flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
+            <button
+              type="button"
+              className={`row-action-chip${weekOffset === 0 ? ' active-chip' : ''}`}
+              onClick={() => setWeekOffset(0)}
+            >
+              This Week
+            </button>
+            <button
+              type="button"
+              className={`row-action-chip${weekOffset === 1 ? ' active-chip' : ''}`}
+              onClick={() => setWeekOffset(1)}
+            >
+              Next Week
+            </button>
+            {weekOffset !== 0 && (
+              <span style={{ fontSize: 11.5, color: 'var(--text-secondary)', fontWeight: 600 }}>
+                ({dateKeyForWeekday(nowDate, selectedDay, weekOffset)})
+              </span>
+            )}
+          </div>
+          {(() => {
+            const viewKey = dateKeyForWeekday(nowDate, selectedDay, weekOffset);
+            const sum = getGecPeriodSummaryForDate(viewKey, gecSchedule);
+            const hl = getUpcomingCalendarHighlights(schoolCalendar, viewKey);
+            if (sum) {
+              return (
+                <span className={sum.kind === 'special' ? 'gec-badge-special' : 'gec-week-summary-pill'}>
+                  {sum.text}
+                </span>
+              );
+            }
+            if (hl.activeToday?.[0]) {
+              return <span className="gec-badge-special">{hl.activeToday[0].title}</span>;
+            }
+            return null;
+          })()}
+        </div>
+      )}
 
       {/* 3. Conflict Alert (if any genuine overlapping classes exist) */}
       {conflicts.length > 0 && (
@@ -426,22 +525,26 @@ export default function CourseScheduleView({
               </div>
             ) : (
               (entriesByDay.get(selectedDay) || []).map(cls => {
-                const isLive = nowState.currentClass?.id === cls.id;
-                const isNext = !isLive && nowState.nextClass?.id === cls.id;
+                const isLive = weekOffset === 0 && nowState.currentClass?.id === cls.id;
+                const isNext = weekOffset === 0 && !isLive && nowState.nextClass?.id === cls.id;
+                const dayDateKey = dateKeyForWeekday(nowDate, selectedDay, weekOffset);
+                const gecMod = resolveGecModalityForDate(cls, dayDateKey, gecSchedule);
+                const isVirtual = gecMod?.mode === 'virtual';
                 return (
                   <button
                     key={`${cls.id || cls.code}-${cls.dayOfWeek}-${cls.startMin}`}
                     type="button"
                     className={`schedule-day-card${isLive ? ' is-live' : ''}${isNext ? ' is-next' : ''}`}
                     style={{ borderLeftColor: cls.color || 'var(--accent)' }}
-                    onClick={() => setInspectBlock(cls)}
+                    onClick={() => setInspectBlock({ ...cls, _gecMod: gecMod, _dateKey: dayDateKey })}
                   >
-                    <div className="flex items-center justify-between gap-8" style={{ width: '100%' }}>
-                      <div className="flex items-center gap-6" style={{ minWidth: 0 }}>
+                    <div className="flex items-center justify-between gap-8" style={{ width: '100%', flexWrap: 'wrap' }}>
+                      <div className="flex items-center gap-6" style={{ minWidth: 0, flexWrap: 'wrap' }}>
                         <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)' }}>
                           {cls.code}
                         </span>
                         <span className="schedule-kind-tag">{cls.kind}</span>
+                        {renderGecBadge(gecMod)}
                       </div>
                       {isLive ? (
                         <span className="ann-next-badge" style={{ background: '#ef4444', color: '#fff' }}>
@@ -457,10 +560,16 @@ export default function CourseScheduleView({
                       <span>
                         <Clock size={12} /> {formatTimeRange12h(cls.startTime, cls.endTime)}
                       </span>
-                      {cls.room && (
-                        <span>
-                          <MapPin size={12} /> {cls.room}
+                      {isVirtual ? (
+                        <span style={{ color: '#6366f1', fontWeight: 600 }}>
+                          Online / Virtual{cls.room ? ` (${cls.room})` : ''}
                         </span>
+                      ) : (
+                        cls.room && (
+                          <span>
+                            <MapPin size={12} /> {cls.room}
+                          </span>
+                        )
                       )}
                       {cls.instructor && (
                         <span>
@@ -560,8 +669,10 @@ export default function CourseScheduleView({
                           const isSplitLane = Boolean(lane && lane.cols > 1);
                           const widthPct = lane ? 100 / lane.cols : 100;
                           const leftPct = lane ? lane.col * widthPct : 0;
-                          const isLiveNow = nowState.currentClass?.id === block.id;
+                          const isLiveNow = weekOffset === 0 && nowState.currentClass?.id === block.id;
                           const compactBlock = height < 62;
+                          const dayDateKey = dateKeyForWeekday(nowDate, d.idx, weekOffset);
+                          const gecMod = resolveGecModalityForDate(block, dayDateKey, gecSchedule);
 
                           const blockStyle =
                             paletteMode === 'course'
@@ -588,20 +699,37 @@ export default function CourseScheduleView({
                               type="button"
                               className={`timetable-block${paletteMode === 'course' ? ' is-course-tinted' : ''}${isLiveNow ? ' is-live' : ''}`}
                               style={blockStyle}
-                              onClick={() => setInspectBlock(block)}
+                              onClick={() => setInspectBlock({ ...block, _gecMod: gecMod, _dateKey: dayDateKey })}
                             >
                               <div className="timetable-block-head">
                                 <span className="timetable-block-code">{block.code}</span>
-                                {!compactBlock && !isSplitLane && block.kind === 'LAB' && (
+                                {!compactBlock && !isSplitLane && gecMod && gecMod.mode !== 'unscheduled' ? (
+                                  <span
+                                    className="timetable-block-badge"
+                                    style={
+                                      gecMod.mode === 'f2f'
+                                        ? { background: 'rgba(16,185,129,0.2)', color: '#059669' }
+                                        : gecMod.mode === 'virtual'
+                                          ? { background: 'rgba(99,102,241,0.2)', color: '#6366f1' }
+                                          : { background: 'rgba(245,158,11,0.2)', color: '#d97706' }
+                                    }
+                                  >
+                                    {gecMod.mode === 'f2f' ? 'F2F' : gecMod.mode === 'virtual' ? 'VIRT' : 'GEC'}
+                                  </span>
+                                ) : !compactBlock && !isSplitLane && block.kind === 'LAB' ? (
                                   <span className="timetable-block-badge">LAB</span>
-                                )}
+                                ) : null}
                               </div>
                               <div className="timetable-block-time">
                                 {formatTimeRange12h(block.startTime, block.endTime)}
                               </div>
                               {!compactBlock && (block.room || block.instructor) && (
                                 <div className="timetable-block-meta">
-                                  {block.room && <span>{block.room}</span>}
+                                  {gecMod?.mode === 'virtual' ? (
+                                    <span>Virtual</span>
+                                  ) : (
+                                    block.room && <span>{block.room}</span>
+                                  )}
                                   {block.room && block.instructor && <span> · </span>}
                                   {block.instructor && <span>{block.instructor}</span>}
                                 </div>
@@ -776,6 +904,7 @@ export default function CourseScheduleView({
                   {inspectBlock.code}
                 </span>
                 <span className="schedule-kind-tag">{inspectBlock.kind}</span>
+                {renderGecBadge(inspectBlock._gecMod)}
               </div>
               <button
                 type="button"

@@ -4498,6 +4498,144 @@ a:hover {
     margin: 0;
     line-height: 1.5;
   }
+  .print-doc-header {
+    padding-bottom: 12px;
+    margin-bottom: 16px;
+    border-bottom: 1.5px solid #1e3a8a;
+  }
+  .print-subject {
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #1e3a8a;
+    margin-bottom: 4px;
+  }
+  .print-md-heading {
+    margin: 14px 0 6px;
+    font-weight: 800;
+    color: #111827;
+    page-break-after: avoid;
+  }
+  .print-code-block {
+    background: #f4f6fa;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    margin: 10px 0;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .print-code-lang {
+    display: block;
+    font-size: 10px;
+    font-weight: 700;
+    margin-bottom: 4px;
+    opacity: 0.75;
+  }
+  .print-quote {
+    margin: 10px 0;
+    padding: 8px 12px;
+    border-left: 3px solid #1e3a8a;
+    background: #eff6ff;
+    font-style: italic;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .print-list-line {
+    display: flex;
+    gap: 8px;
+    font-size: 13.5px;
+    line-height: 1.5;
+    margin: 0 0 4px;
+  }
+  .print-hr {
+    border: none;
+    border-top: 1px solid #d1d5db;
+    margin: 12px 0;
+  }
+  /* Per-Theme Print Parity */
+  .print-theme-cheatsheet .print-doc-header {
+    background: #0f766e;
+    color: #ffffff;
+    padding: 12px 14px;
+    border-radius: 6px;
+    border-bottom: none;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .print-theme-cheatsheet .print-subject,
+  .print-theme-cheatsheet .print-meta {
+    color: #d1fae5;
+  }
+  .print-theme-cheatsheet .print-body {
+    column-count: 2;
+    column-gap: 18px;
+    font-size: 11px;
+  }
+  .print-theme-cheatsheet .print-line,
+  .print-theme-cheatsheet .print-list-line {
+    font-size: 11px;
+    line-height: 1.36;
+  }
+  .print-theme-technical .print-doc-header {
+    background: #0f172a;
+    color: #f8fafc;
+    padding: 14px 16px;
+    border-left: 5px solid #06b6d4;
+    border-bottom: none;
+    border-radius: 6px;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .print-theme-technical .print-subject,
+  .print-theme-technical .print-meta {
+    color: #22d3ee;
+    font-family: ui-monospace, monospace;
+  }
+  .print-theme-technical .print-md-heading {
+    font-family: ui-monospace, monospace;
+    border-bottom: 1px solid #06b6d4;
+    padding-bottom: 3px;
+  }
+  .print-theme-technical .print-code-block {
+    background: #111827;
+    color: #e2e8f0;
+    border-color: #06b6d4;
+    border-left-width: 4px;
+  }
+  .print-theme-editorial {
+    background: #fcfbf7 !important;
+    font-family: Georgia, "Times New Roman", serif !important;
+    color: #201c18 !important;
+    padding: 32px !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .print-theme-editorial .print-doc-header {
+    text-align: center;
+    border-bottom-color: #881337;
+  }
+  .print-theme-editorial .print-subject {
+    color: #881337;
+    font-style: italic;
+  }
+  .print-theme-editorial .print-quote {
+    background: #f5efe6;
+    border-left-color: #881337;
+  }
+  .print-theme-minimal .print-doc-header {
+    border-bottom: 1px solid #111111;
+  }
+  .print-theme-minimal .print-code-block,
+  .print-theme-minimal .print-quote {
+    background: #ffffff;
+    border-color: #777777;
+  }
 }
 
 
@@ -10550,3 +10688,326 @@ a:hover {
 
 
 
+
+/* ============================================================
+   v2.6.0 — Today's Schedule Spotlight, GEC F2F/Virtual Badges,
+            School Calendar & Diff Cards, PDF Style Preview Grid
+   ============================================================ */
+
+.home-sched-spotlight {
+  margin-top: 10px;
+}
+.home-sched-icon {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.16), rgba(59, 130, 246, 0.16));
+  color: #10b981;
+}
+.home-sched-items {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 8px;
+}
+.home-sched-row {
+  appearance: none;
+  border: 1px solid var(--border-subtle);
+  border-left: 4px solid var(--accent);
+  background: var(--fill-secondary, var(--fill));
+  border-radius: 12px;
+  padding: 9px 11px;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  color: var(--text);
+}
+.home-sched-row.is-live {
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.06);
+}
+.home-sched-row-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.home-sched-code {
+  font-size: 13.5px;
+  font-weight: 800;
+  color: var(--text);
+}
+.home-sched-room {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.home-sched-time {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+.home-sched-live-dot {
+  font-size: 10px;
+  font-weight: 800;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #ffffff;
+}
+
+/* GEC F2F / Virtual / Special Period Badges */
+.gec-badge-f2f,
+.gec-badge-virtual,
+.gec-badge-special,
+.gec-week-summary-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.gec-badge-f2f {
+  background: rgba(16, 185, 129, 0.16);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+[data-theme='dark'] .gec-badge-f2f {
+  color: #34d399;
+}
+.gec-badge-virtual {
+  background: rgba(99, 102, 241, 0.16);
+  color: #4f46e5;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+[data-theme='dark'] .gec-badge-virtual {
+  color: #a5b4fc;
+}
+.gec-badge-special {
+  background: rgba(245, 158, 11, 0.16);
+  color: #b45309;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+[data-theme='dark'] .gec-badge-special {
+  color: #fbbf24;
+}
+.gec-week-summary-pill {
+  background: var(--fill);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  font-weight: 700;
+}
+.gec-week-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  border-radius: 12px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-subtle);
+}
+
+/* School Calendar Hero Card & Term Tabs */
+.school-cal-hero {
+  margin: 10px var(--gutter) 0;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-sm);
+}
+.school-cal-term-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--sep);
+}
+.cal-cell.is-break {
+  background: rgba(245, 158, 11, 0.1);
+}
+.cal-dot-break {
+  background: #f59e0b;
+}
+
+/* Mid-Sem Revision Diff Cards */
+.school-cal-diff-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 11px;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  background: var(--fill);
+  cursor: pointer;
+}
+.school-cal-diff-card.is-moved {
+  border-color: rgba(245, 158, 11, 0.45);
+}
+.school-cal-diff-card.is-added {
+  border-color: rgba(16, 185, 129, 0.45);
+}
+.school-cal-diff-card.is-removed {
+  border-color: rgba(239, 68, 68, 0.4);
+}
+.diff-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9.5px;
+  font-weight: 800;
+  padding: 1px 6px;
+  border-radius: 6px;
+}
+.diff-tag.is-moved {
+  background: rgba(245, 158, 11, 0.18);
+  color: #b45309;
+}
+.diff-tag.is-added {
+  background: rgba(16, 185, 129, 0.18);
+  color: #047857;
+}
+.diff-tag.is-removed {
+  background: rgba(239, 68, 68, 0.18);
+  color: #b91c1c;
+}
+[data-theme='dark'] .diff-tag.is-moved { color: #fbbf24; }
+[data-theme='dark'] .diff-tag.is-added { color: #34d399; }
+[data-theme='dark'] .diff-tag.is-removed { color: #f87171; }
+
+/* GEC Enrolled Course Matcher Rows */
+.gec-match-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 11px;
+  border: 1px solid var(--border-subtle);
+  background: var(--fill);
+}
+.gec-set-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+.gec-set-pill {
+  appearance: none;
+  border: 1px solid var(--border-subtle);
+  background: var(--card-bg);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.gec-set-pill.active {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: var(--accent);
+}
+.gec-set-pill.active.is-none {
+  background: var(--text-secondary);
+  border-color: var(--text-secondary);
+}
+
+/* PDF Visual Design Picker Cards */
+.pdf-style-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+.pdf-style-card {
+  appearance: none;
+  border: 1.5px solid var(--border-subtle);
+  background: var(--fill);
+  border-radius: 12px;
+  padding: 6px 5px 7px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  color: var(--text);
+  transition: border-color 0.15s ease, transform 0.12s ease;
+}
+.pdf-style-card.active {
+  border-color: var(--accent);
+  background: rgba(99, 102, 241, 0.1);
+}
+.pdf-thumb {
+  width: 100%;
+  height: 44px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.pdf-thumb-head {
+  height: 7px;
+  border-radius: 2px;
+  width: 100%;
+}
+.pdf-thumb.is-minimal .pdf-thumb-head {
+  height: 2px;
+  margin-top: 2px;
+}
+.pdf-thumb-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2.5px;
+}
+.pdf-thumb-lines span {
+  height: 2.5px;
+  border-radius: 2px;
+  background: rgba(100, 116, 139, 0.35);
+}
+.pdf-thumb-box {
+  height: 11px;
+  border-radius: 2px;
+  border: 1px solid transparent;
+  width: 100%;
+}
+.pdf-thumb-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  flex: 1;
+}
+.pdf-thumb-cols > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pdf-thumb-cols > div span {
+  height: 5px;
+  border-radius: 2px;
+}
+.pdf-thumb-cols > div i {
+  display: block;
+  height: 2.5px;
+  border-radius: 2px;
+  background: rgba(100, 116, 139, 0.35);
+}
+.pdf-style-name {
+  font-size: 11.5px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+.pdf-style-tag {
+  font-size: 9.5px;
+  color: var(--text-secondary);
+  line-height: 1.1;
+}

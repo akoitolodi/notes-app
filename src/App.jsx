@@ -80,6 +80,7 @@ export default function App() {
   const [themesReturnTo, setThemesReturnTo] = useState('folders');
   const [syllabusReturnTo, setSyllabusReturnTo] = useState('folders');
   const [coursesInitialSection, setCoursesInitialSection] = useState('courses');
+  const [plannerInitialTab, setPlannerInitialTab] = useState('timetable');
   const [sharedImport, setSharedImport] = useState(null); // { file?, text?, title? } from Android Share Target
   const [onboardingModal, setOnboardingModal] = useState(null); // null | 'wizard' | 'guide'
   const [sidebarTick, setSidebarTick] = useState(0);
@@ -395,18 +396,28 @@ export default function App() {
     pushHistoryEntry('subjects');
   }, [pushHistoryEntry]);
 
-  const handleOpenPlanner = useCallback(() => {
-    setScreen('planner');
-    pushHistoryEntry('planner');
-  }, [pushHistoryEntry]);
+  const handleOpenPlanner = useCallback(
+    tab => {
+      if (typeof tab === 'string' && ['timetable', 'calendar', 'tasks'].includes(tab)) {
+        setPlannerInitialTab(tab);
+      }
+      setScreen('planner');
+      pushHistoryEntry('planner');
+    },
+    [pushHistoryEntry]
+  );
 
   const handleOpenCourses = useCallback(
     (opts = {}) => {
-      setCoursesInitialSection(opts?.section === 'schedule' ? 'schedule' : 'courses');
+      if (opts?.section === 'schedule') {
+        handleOpenPlanner('timetable');
+        return;
+      }
+      setCoursesInitialSection('courses');
       setScreen('courses');
       pushHistoryEntry('courses');
     },
-    [pushHistoryEntry]
+    [handleOpenPlanner, pushHistoryEntry]
   );
 
   const handleOpenAnnouncements = useCallback(() => {
@@ -716,10 +727,13 @@ export default function App() {
       return (
         <Suspense fallback={<ScreenLoading label="Loading School Planner…" />}>
           <StudentHubScreen
+            initialTab={plannerInitialTab}
             onBack={handleBackToFolders}
             onOpenNote={handleOpenNote}
             onOpenFolder={handleOpenFolder}
             onOpenExamPaper={handleOpenExamPaper}
+            onOpenCourses={handleOpenCourses}
+            onOpenAnnouncements={handleOpenAnnouncements}
             onChanged={bumpSidebar}
           />
         </Suspense>

@@ -37,10 +37,13 @@ import {
   Compass,
   Mic,
   Sparkles,
+  CalendarDays,
 } from 'lucide-react';
 import {
   db,
   getHomeSummary,
+  getActiveGecSchedule,
+  localDateKey,
   createFolder,
   deleteFolder,
   renameFolder,
@@ -195,6 +198,8 @@ export default function FoldersScreen({
     initialCache?.annPreview || { total: 0, unread: 0, pinned: 0, latest: [] }
   );
   const [upNextClass, setUpNextClass] = useState(() => initialCache?.upNextClass || null);
+  const [todaySchedule, setTodaySchedule] = useState(() => initialCache?.todaySchedule || []);
+  const [gecBanner, setGecBanner] = useState(() => initialCache?.gecBanner || null);
   const [syncingAnn, setSyncingAnn] = useState(false);
   const [alertSummary, setAlertSummary] = useState(null);
   const [searching, setSearching] = useState(false);
@@ -239,11 +244,12 @@ export default function FoldersScreen({
 
   const refresh = useCallback(async () => {
     try {
-      const [homeSum, pItems, crs, schedRows] = await Promise.all([
+      const [homeSum, pItems, crs, schedRows, activeGec] = await Promise.all([
         getHomeSummary(),
         db.plannerItems.toArray().catch(() => []),
         db.courses.toArray().catch(() => []),
         db.classSchedule.toArray().catch(() => []),
+        getActiveGecSchedule(),
       ]);
       const alerts = await getInAppAlertSummary(pItems);
       const nextDueCount = pItems.filter(it => !it.done && it.type !== 'announcement').length;
@@ -253,8 +259,31 @@ export default function FoldersScreen({
         resolveScheduleEntries(crs, schedRows),
         getScheduleFilterMode()
       );
-      const todayDow = new Date().getDay();
-      const nextTodayCount = resolvedEntries.filter(e => e.dayOfWeek === todayDow).length;
+      const nowObj = new Date();
+      const todayDow = nowObj.getDay();
+      const todayKey = localDateKey(nowObj);
+      const gecMod = activeGec ? await import('../lib/gecSchedule').catch(() => null) : null;
+      const nextGecBanner = gecMod ? gecMod.getGecPeriodSummaryForDate(todayKey, activeGec) : null;
+
+      const nowMins = nowObj.getHours() * 60 + nowObj.getMinutes();
+      const todayClassesRaw = resolvedEntries
+        .filter(e => e.dayOfWeek === todayDow)
+        .sort((a, b) => a.startMin - b.startMin);
+      const nextTodaySchedule = todayClassesRaw.slice(0, 4).map(e => {
+        const mod = gecMod ? gecMod.resolveGecModalityForDate(e, todayKey, activeGec) : null;
+        return {
+          id: e.id || `${e.code}-${e.startMin}`,
+          code: e.code,
+          title: e.courseName || e.title || e.code,
+          kind: e.kind,
+          room: e.room || '',
+          color: e.color || '#0a84ff',
+          timeRange: formatTimeRange12h(e.startTime, e.endTime),
+          isLive: nowMins >= e.startMin && nowMins <= e.endMin,
+          gecMod: mod,
+        };
+      });
+
       const nextRaw = getNextUpcomingClassAcrossWeek(resolvedEntries);
       const nextUpSummary = nextRaw
         ? {
@@ -304,12 +333,16 @@ export default function FoldersScreen({
       setAlertSummary(alerts);
       setAnnPreview(nextAnnPreview);
       setUpNextClass(nextUpSummary);
+      setTodaySchedule(nextTodaySchedule);
+      setGecBanner(nextGecBanner);
 
       writeHomeCache({
         summary: { ...homeSum, vaultFolders: [] },
         courseCount: nextCourseCount,
         annPreview: nextAnnPreview,
         upNextClass: nextUpSummary,
+        todaySchedule: nextTodaySchedule,
+        gecBanner: nextGecBanner,
       });
     } catch {
       const homeSum = await getHomeSummary().catch(() => EMPTY_SUMMARY);
@@ -321,6 +354,8 @@ export default function FoldersScreen({
       setAlertSummary(null);
       setAnnPreview({ total: 0, unread: 0, pinned: 0, latest: [] });
       setUpNextClass(null);
+      setTodaySchedule([]);
+      setGecBanner(null);
     }
   }, []);
 
@@ -742,7 +777,7 @@ export default function FoldersScreen({
             <button
               type="button"
               className={`home-context-pill${upNextClass.status === 'now' ? ' is-live' : ''}`}
-              onClick={() => onOpenCourses?.({ section: 'schedule' })}
+              onClick={() => onOpenPlanner?.('timetable')}
             >
               <Clock size={13} />
               <span>
@@ -895,6 +930,98 @@ export default function FoldersScreen({
                 </button>
               ))}
             </div>
+          )}
+        </section>
+      )}
+
+      {/* 2B. TODAY'S SCHEDULE SPOTLIGHT — 1-Tap Class Schedule & Live F2F/Virtual GEC Status */}
+      {onOpenPlanner && (
+        <section className="home-ann-panel home-sched-spotlight" aria-label="Today's Class Schedule Spotlight">
+          <div className="home-ann-header">
+            <button
+              type="button"
+              className="home-ann-title-btn"
+              onClick={() => onOpenPlanner('timetable')}
+            >
+              <span className="home-ann-icon home-sched-icon">
+                <CalendarDays size={18} />
+              </span>
+              <span className="home-ann-title">Today&apos;s Schedule</span>
+              {gecBanner && (
+                <span className={gecBanner.kind === 'special' ? 'gec-badge-special' : 'home-ann-badge'}>
+                  {gecBanner.text}
+                </span>
+              )}
+            </button>
+            <div className="flex items-center gap-6">
+              <button
+                type="button"
+                className="row-action-chip"
+                onClick={() => onOpenPlanner('calendar')}
+              >
+                School Cal
+              </button>
+              <button
+                type="button"
+                className="row-action-chip active-chip"
+                onClick={() => onOpenPlanner('timetable')}
+              >
+                Timetable <ChevronRight size={13} />
+              </button>
+            </div>
+          </div>
+
+          {todaySchedule.length > 0 ? (
+            <div className="home-sched-items">
+              {todaySchedule.map(cls => (
+                <button
+                  key={cls.id}
+                  type="button"
+                  className={`home-sched-row${cls.isLive ? ' is-live' : ''}`}
+                  style={{ borderLeftColor: cls.color }}
+                  onClick={() => onOpenPlanner('timetable')}
+                >
+                  <div className="home-sched-row-top">
+                    <span className="home-sched-code">{cls.code}</span>
+                    {cls.isLive && <span className="home-sched-live-dot">LIVE</span>}
+                    {cls.gecMod?.mode === 'f2f' && (
+                      <span className="gec-badge-f2f">F2F{cls.room ? ` · ${cls.room}` : ''}</span>
+                    )}
+                    {cls.gecMod?.mode === 'virtual' && (
+                      <span className="gec-badge-virtual">VIRTUAL</span>
+                    )}
+                    {cls.gecMod?.mode === 'special' && (
+                      <span className="gec-badge-special">{cls.gecMod.label}</span>
+                    )}
+                    {!cls.gecMod && cls.room && (
+                      <span className="home-sched-room">{cls.room}</span>
+                    )}
+                  </div>
+                  <div className="home-sched-time">{cls.timeRange} · {cls.kind}</div>
+                </button>
+              ))}
+            </div>
+          ) : upNextClass ? (
+            <button
+              type="button"
+              className="home-ann-empty"
+              onClick={() => onOpenPlanner('timetable')}
+            >
+              <span>
+                No classes today · Next: <strong>{upNextClass.code}</strong> ({upNextClass.dayLabel} {upNextClass.timeRange}
+                {upNextClass.room ? ` · ${upNextClass.room}` : ''})
+              </span>
+              <ChevronRight size={15} style={{ flexShrink: 0, opacity: 0.7 }} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="home-ann-empty"
+              onClick={() => onOpenPlanner('timetable')}
+            >
+              <span>Import your Study Load PDF &amp; GEC F2F/Virtual sheet so today&apos;s classes appear right here.</span>
+              <ChevronRight size={15} style={{ flexShrink: 0, opacity: 0.7 }} />
+            </button>
           )}
         </section>
       )}

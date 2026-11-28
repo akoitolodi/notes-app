@@ -75,7 +75,7 @@ import EditModeView from './editor/EditModeView';
 import AnnotateBar from './editor/AnnotateBar';
 import MarkdownContent from './ui/MarkdownContent';
 import { useDialog } from './ui/DialogProvider';
-import { PDF_STYLES, detectPdfStyle } from '../lib/pdfThemes';
+import { PDF_STYLES, detectPdfStyle, parseNoteBlocksForPrint } from '../lib/pdfThemes';
 import { isDarkTheme, HINT_KEY } from '../theme';
 
 const ChatSheet = lazy(() => import('./ChatSheet'));
@@ -1221,6 +1221,10 @@ export default function NoteEditor({
 
   const handlePrintPdf = async withExpl => {
     setExportOpen(false);
+    const resolvedStyle =
+      pdfStyle === 'auto'
+        ? detectPdfStyle({ title, body, noteMode: activeNoteMode })
+        : pdfStyle;
     const resolvedImgs = [];
     for (const img of images) {
       const url = await resolveImageDataUrl(img);
@@ -1229,6 +1233,8 @@ export default function NoteEditor({
     const drawingPreview = renderStrokesToCanvas(drawings, 620, { dark: false });
     setPrintPayload({
       title: title || 'New Note',
+      subject: subject || '',
+      style: resolvedStyle,
       body,
       withExpl,
       images: resolvedImgs,
@@ -1255,14 +1261,17 @@ export default function NoteEditor({
   const printPortal =
     printPayload && typeof document !== 'undefined' && document.body
       ? createPortal(
-          <div className="print-root">
-            <h1 className="print-title">{printPayload.title}</h1>
-            <div className="print-meta">
-              {new Date().toLocaleDateString([], {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-              })}
+          <div className={`print-root print-theme-${printPayload.style || 'academic'}`}>
+            <div className="print-doc-header">
+              {printPayload.subject && <div className="print-subject">{printPayload.subject}</div>}
+              <h1 className="print-title">{printPayload.title}</h1>
+              <div className="print-meta">
+                {new Date().toLocaleDateString([], {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                })}
+              </div>
             </div>
             {printPayload.images.length > 0 && (
               <div className="print-images">
@@ -1272,11 +1281,58 @@ export default function NoteEditor({
               </div>
             )}
             <div className="print-body">
-              {printPayload.body.split('\n').map((l, i) => (
-                <p key={i} className="print-line">
-                  {l || '\u00A0'}
-                </p>
-              ))}
+              {parseNoteBlocksForPrint(printPayload.body).map((blk, i) => {
+                if (blk.type === 'hr') return <hr key={i} className="print-hr" />;
+                if (blk.type === 'heading') {
+                  const Tag = blk.level === 1 ? 'h2' : blk.level === 2 ? 'h3' : 'h4';
+                  return (
+                    <Tag key={i} className="print-md-heading">
+                      {blk.text}
+                    </Tag>
+                  );
+                }
+                if (blk.type === 'code') {
+                  return (
+                    <pre key={i} className="print-code-block">
+                      {blk.lang && <span className="print-code-lang">{blk.lang.toUpperCase()}</span>}
+                      <code>{blk.code}</code>
+                    </pre>
+                  );
+                }
+                if (blk.type === 'quote') {
+                  return (
+                    <blockquote key={i} className="print-quote">
+                      {blk.text}
+                    </blockquote>
+                  );
+                }
+                if (blk.type === 'checkbox') {
+                  return (
+                    <div key={i} className="print-list-line">
+                      <span>{blk.checked ? '☑' : '☐'}</span> <span>{blk.text}</span>
+                    </div>
+                  );
+                }
+                if (blk.type === 'bullet') {
+                  return (
+                    <div key={i} className="print-list-line">
+                      <span>•</span> <span>{blk.text}</span>
+                    </div>
+                  );
+                }
+                if (blk.type === 'ordered') {
+                  return (
+                    <div key={i} className="print-list-line">
+                      <strong>{blk.num}.</strong> <span>{blk.text}</span>
+                    </div>
+                  );
+                }
+                return (
+                  <p key={i} className="print-line">
+                    {blk.text}
+                  </p>
+                );
+              })}
             </div>
             {printPayload.drawingUrl && (
               <div className="print-drawing">
@@ -1837,18 +1893,56 @@ export default function NoteEditor({
                   ? `Auto: ${PDF_STYLES.find(p => p.id === detectPdfStyle({ title, body, noteMode: activeNoteMode }))?.label || 'Academic'}`
                   : PDF_STYLES.find(p => p.id === pdfStyle)?.label})
               </div>
-              <div className="mode-picker-row">
-                {PDF_STYLES.map(st => (
-                  <button
-                    key={st.id}
-                    type="button"
-                    className={`mode-pick-chip${pdfStyle === st.id ? ' active' : ''}`}
-                    style={{ flex: '0 0 auto', minWidth: 0, padding: '6px 10px', fontSize: 12 }}
-                    onClick={() => setPdfStyle(st.id)}
-                  >
-                    {st.label}
-                  </button>
-                ))}
+              <div className="pdf-style-grid" role="radiogroup" aria-label="Choose PDF layout style">
+                {PDF_STYLES.map(st => {
+                  const pv = st.preview || {};
+                  const active = pdfStyle === st.id;
+                  return (
+                    <button
+                      key={st.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      className={`pdf-style-card${active ? ' active' : ''}`}
+                      onClick={() => setPdfStyle(st.id)}
+                    >
+                      <div
+                        className={`pdf-thumb${pv.cols === 2 ? ' is-two-col' : ''}${pv.minimal ? ' is-minimal' : ''}`}
+                        style={{ background: pv.paper || '#fff' }}
+                        aria-hidden="true"
+                      >
+                        <div className="pdf-thumb-head" style={{ background: pv.header || '#1e3a8a' }} />
+                        {pv.cols === 2 ? (
+                          <div className="pdf-thumb-cols">
+                            <div>
+                              <span style={{ background: pv.accent }} />
+                              <i /><i />
+                            </div>
+                            <div>
+                              <span style={{ background: pv.accent }} />
+                              <i /><i />
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="pdf-thumb-lines">
+                            <span style={{ width: '78%' }} />
+                            <span style={{ width: '56%' }} />
+                            <div
+                              className="pdf-thumb-box"
+                              style={{
+                                background: pv.darkCode ? '#111827' : pv.minimal ? 'transparent' : '#e2e8f0',
+                                borderColor: pv.minimal ? '#888' : pv.accent,
+                              }}
+                            />
+                            <span style={{ width: '68%' }} />
+                          </div>
+                        )}
+                      </div>
+                      <span className="pdf-style-name">{st.label}</span>
+                      <span className="pdf-style-tag">{st.tagline}</span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 

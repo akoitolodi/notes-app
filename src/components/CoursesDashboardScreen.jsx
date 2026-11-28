@@ -1122,7 +1122,7 @@ export default function CoursesDashboardScreen({
           style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingRight: 16 }}
         >
           <span>Course Dashboard</span>
-          {archivedCourses.length > 0 && dashSection === 'courses' && (
+          {archivedCourses.length > 0 && (
             <button
               type="button"
               className={`row-action-chip${showArchived ? ' active-chip' : ''}`}
@@ -1133,30 +1133,9 @@ export default function CoursesDashboardScreen({
           )}
         </div>
 
-        {/* Section Switcher: Courses vs Weekly Schedule */}
-        <div className="view-switcher" role="tablist" aria-label="Course dashboard sections">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={dashSection === 'courses'}
-            className={`view-switch-btn${dashSection === 'courses' ? ' active' : ''}`}
-            onClick={() => setDashSection('courses')}
-          >
-            Courses ({activeCourses.length})
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={dashSection === 'schedule'}
-            className={`view-switch-btn${dashSection === 'schedule' ? ' active' : ''}`}
-            onClick={() => setDashSection('schedule')}
-          >
-            Schedule ({schedule.length})
-          </button>
-        </div>
-
-        {(onOpenSyllabus || onOpenReview || onOpenSubjects) && (
-          <div className="quick-action-row" style={{ marginTop: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+        {/* Clean Action Shortcuts: Syllabus AI, Daily Review, Subject Labs & Full Timetable in Planner */}
+        {(onOpenSyllabus || onOpenReview || onOpenSubjects || onOpenPlanner) && (
+          <div className="quick-action-row" style={{ marginTop: 4, marginBottom: 6, flexWrap: 'wrap' }}>
             {onOpenSyllabus && (
               <button type="button" className="row-action-chip active-chip" onClick={onOpenSyllabus}>
                 <Sparkles size={12} /> AI Syllabus Studio
@@ -1172,10 +1151,15 @@ export default function CoursesDashboardScreen({
                 <GraduationCap size={12} /> Subject Labs
               </button>
             )}
+            {onOpenPlanner && (
+              <button type="button" className="row-action-chip" onClick={() => onOpenPlanner('timetable')}>
+                <Clock size={12} /> Timetable &amp; Cal →
+              </button>
+            )}
           </div>
         )}
 
-        {dashSection === 'schedule' ? (
+        {false ? (
           <div style={{ padding: '10px var(--gutter) 20px' }}>
             <CourseScheduleView
               courses={courses}

@@ -1,3 +1,25 @@
+## What's New in Notes by Bai v2.6.0
+
+### 1. Automatic Multi-Term School Calendar Maker & Mid-Semester Revision Updater
+- **Full Academic Year Extraction**: Upload your school’s official academic calendar photo, PDF, or text to extract all 3 terms (**1st Sem**, **2nd Sem**, **Summer**), infer cross-year dates (Jul–Dec vs Jan–Jun) and cross-month ranges, and auto-separate Undergrad/Non-Grad exams from Grad-only dates.
+- **Safe Mid-Sem Revision Diff**: When the school revises dates mid-semester, upload the updated calendar or paste a quick memo — inspect **`Moved`**, **`Added`**, and **`Removed`** changes with checkboxes before syncing without ever wiping personal tasks or Canvas items.
+
+### 2. GEC Set A / Set B F2F vs. Virtual Auto-Matcher
+- **Smart Enrolled-Course Matching**: Upload your GEC F2F/Virtual weekly matrix (plus optional Master GEC Room Schedule), automatically match only your enrolled GEC subjects via aliases (with 1-tap **Set A | Set B | Not GEC** pills), and resolve split-week shifts (`Dec 1–2` vs `Dec 3–4`) & merged special periods (`Adjustment Period`, `Midterm Exam`, `University Days`, `Holy Days`, `Final Exam`).
+- **Live Modality Badges**: Shows green **`F2F · Room`**, indigo **`VIRTUAL`**, and amber **Period** badges across Notes Home, Timetable (**This Week / Next Week**), and School Calendar.
+
+### 3. Instant Schedule Spotlight & Unified Planner vs. Courses UX
+- **Today's Schedule Spotlight on Notes Home**: Paired right beneath **Announcements Spotlight** with today's classes, live GEC F2F/Virtual tags, and 1-tap jumps to **Timetable** and **School Cal**.
+- **Clean Planner vs. Courses Split**: Unified **Planner** around *WHEN* (**Timetable**, **School Cal**, **Tasks & Canvas**) while keeping **Courses** focused on *WHAT* (Subjects, Modules, AI Syllabus Studio, Course Grades/GWA, Daily Review).
+
+### 4. Distinct PDF Export Designs, Visual Previews & Formatted Print
+- **5 Distinct Layouts**: Redesigned **Academic** (navy university handout), **Cheat Sheet** (true 2-column dense card grid), **Code & Tech** (dark slate banner & dark `#111827` code blocks), **Editorial** (warm `#FCFBF7` ivory cream paper + locked Times serif), and **Minimal** (pure B&W Swiss ink-saver).
+- **Mini Visual Preview Cards & Print Parity**: Preview each layout visually right inside the Export sheet, and **`Print / system PDF`** now renders formatted Markdown matching the selected PDF theme.
+
+> **Update Note**: Install `Notes-by-Bai.apk` directly over your current version (do not uninstall).
+
+---
+
 ## What's New in Notes by Bai v2.5.0
 
 ### 1. Smart Task-Based AI Router (`BAI-Route`) & Deep Think Auto-Switch
